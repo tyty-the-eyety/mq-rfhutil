@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,6 +88,7 @@ protected:
 
     static void SetUpTestSuite()
     {
+        signal(SIGPIPE, SIG_IGN);   // a runmqsc that exits early must not kill the tests
         queuesReady = runMqsc(std::string("DEFINE QLOCAL(") + kQueue + ") DEFSOPT(SHARED) SHARE REPLACE\n"
                               "DEFINE QLOCAL(" + kEmptyQueue + ") REPLACE");
     }

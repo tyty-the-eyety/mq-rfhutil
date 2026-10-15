@@ -54,7 +54,9 @@ namespace rfh
 
 			// libmqm_r is in the runtime package that client-only installations share;
 			// a queue manager is present only when the server package put strmqm there.
-			const bool server = (access((home + "/bin/strmqm").c_str(), X_OK) == 0);
+			// existence, not X_OK: strmqm is executable only by the mqm group, yet any
+			// authorised user can connect in bindings mode
+			const bool server = (access((home + "/bin/strmqm").c_str(), F_OK) == 0);
 			return { { home + "/lib64/libmqm_r.so", true, server }, { home + "/lib64/libmqic_r.so", false, false } };
 #endif
 		}
@@ -65,7 +67,11 @@ namespace rfh
 			typedef HMODULE LibHandle;
 			LibHandle openLibrary(const std::string & path, std::string & error)
 			{
-				HMODULE h = LoadLibraryA(path.c_str());
+				// A path with a directory is loaded with its own directory searched for
+				// its dependencies (mqe.dll, ...); a bare name uses the normal search.
+				const bool absolute = (path.find_first_of("\\/") != std::string::npos);
+				HMODULE h = absolute ? LoadLibraryExA(path.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH)
+				                     : LoadLibraryA(path.c_str());
 				if (h == NULL)
 				{
 					error = path + ": LoadLibrary error " + std::to_string((unsigned long)GetLastError());
@@ -134,7 +140,15 @@ namespace rfh
 				found.bindingsAvailable = c.serverLibrary && c.bindingsAvailable;
 				found.libraryPath = c.path;
 				api = found;
-				return Result::success();
+
+				// Keep what failed before this library loaded, so a fallback to
+				// another installation is visible.
+				Result loaded = Result::success();
+				if (!errors.empty())
+				{
+					loaded.warnings.push_back("IBM MQ library fallback: " + errors);
+				}
+				return loaded;
 			}
 
 			return Result::failure("IBM MQ library not found: " + errors);
@@ -162,9 +176,10 @@ namespace rfh
 		LoaderState & state = loaderState();
 		std::lock_guard<std::mutex> lock(state.mutex);
 
+		Result r = Result::success();
 		if (!state.loaded)
 		{
-			Result r = detail::loadFrom(detail::libraryCandidates(installationPath), state.api);
+			r = detail::loadFrom(detail::libraryCandidates(installationPath), state.api);
 			if (!r.ok())
 			{
 				return r;
@@ -173,6 +188,6 @@ namespace rfh
 		}
 
 		api = state.api;
-		return Result::success();
+		return r;
 	}
 }

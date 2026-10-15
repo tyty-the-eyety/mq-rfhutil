@@ -76,7 +76,9 @@ TEST(MqLoader, LoadsServerLibraryWithAllEntryPoints)
 #ifndef _WIN32
     if (api.libraryPath.compare(0, 9, "/opt/mqm/") == 0)
     {
-        EXPECT_EQ(api.serverLibrary && access("/opt/mqm/bin/strmqm", X_OK) == 0, api.bindingsAvailable);
+        // existence, not X_OK: strmqm is executable only by the mqm group, yet any
+        // authorised user can connect in bindings mode
+        EXPECT_EQ(api.serverLibrary && access("/opt/mqm/bin/strmqm", F_OK) == 0, api.bindingsAvailable);
     }
 #endif
 }
