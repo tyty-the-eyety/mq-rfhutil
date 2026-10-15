@@ -99,6 +99,35 @@ namespace
 			{ 923, "ISO-8859-15" },
 			{ 1089, "ISO-8859-6" },
 			{ 1208, "UTF-8" },
+			// Windows code page numbers that differ from the IBM CCSID
+			{ 20127, "ASCII" },
+			{ 65001, "UTF-8" },
+			{ 28591, "ISO-8859-1" },
+			{ 28592, "ISO-8859-2" },
+			{ 28593, "ISO-8859-3" },
+			{ 28594, "ISO-8859-4" },
+			{ 28595, "ISO-8859-5" },
+			{ 28596, "ISO-8859-6" },
+			{ 28597, "ISO-8859-7" },
+			{ 28598, "ISO-8859-8" },
+			{ 28599, "ISO-8859-9" },
+			{ 28603, "ISO-8859-13" },
+			{ 28605, "ISO-8859-15" },
+			{ 20273, "IBM273" },
+			{ 20277, "IBM277" },
+			{ 20278, "IBM278" },
+			{ 20280, "IBM280" },
+			{ 20284, "IBM284" },
+			{ 20285, "IBM285" },
+			{ 20290, "IBM290" },
+			{ 20297, "IBM297" },
+			{ 20420, "IBM420" },
+			{ 20423, "IBM423" },
+			{ 20424, "IBM424" },
+			{ 20871, "IBM871" },
+			{ 20880, "IBM880" },
+			{ 20905, "IBM905" },
+			{ 20924, "IBM1047" },		// glibc has no IBM924; 1047 differs only in two code points
 		};
 
 		std::vector<std::string> names;
@@ -120,11 +149,26 @@ namespace
 	// Failures are cached as (iconv_t)-1 so a missing code page is probed once.
 	iconv_t converterFor(int fromCcsid, int toCcsid)
 	{
-		thread_local std::map<std::pair<int, int>, iconv_t> cache;
+		struct Cache
+		{
+			std::map<std::pair<int, int>, iconv_t> handles;
+
+			~Cache()
+			{
+				for (auto & entry : handles)
+				{
+					if (entry.second != (iconv_t)-1)
+					{
+						iconv_close(entry.second);
+					}
+				}
+			}
+		};
+		thread_local Cache cache;
 
 		auto key = std::make_pair(fromCcsid, toCcsid);
-		auto it = cache.find(key);
-		if (it != cache.end())
+		auto it = cache.handles.find(key);
+		if (it != cache.handles.end())
 		{
 			return it->second;
 		}
@@ -147,7 +191,7 @@ namespace
 			}
 		}
 
-		cache[key] = cd;
+		cache.handles[key] = cd;
 		return cd;
 	}
 }
@@ -209,6 +253,7 @@ int rfh_convert_char(int fromCcsid, int toCcsid, const char * input, char * outp
 			return 1;
 		}
 
+		// EINVAL (incomplete multibyte sequence) and E2BIG deliberately return 0
 		return 0;
 	}
 
@@ -219,25 +264,22 @@ int rfh_ucs2_to_c_locale(const RFH_UCS2 * ucs, char * mbs, int mbsBytes)
 {
 	int count = 0;
 
-	while (ucs[count] != 0)
+	// like wcstombs: stop after mbsBytes bytes without looking further
+	while (count < mbsBytes)
 	{
 		if (ucs[count] > 0xFF)
 		{
 			return -1;
 		}
 
-		if (count >= mbsBytes)
+		mbs[count] = (char)ucs[count];
+
+		if (ucs[count] == 0)
 		{
 			return count;
 		}
 
-		mbs[count] = (char)ucs[count];
 		count++;
-	}
-
-	if (count < mbsBytes)
-	{
-		mbs[count] = 0;
 	}
 
 	return count;

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <stdlib.h>
 #include <string>
 #include <vector>
 
@@ -92,6 +93,44 @@ TEST(Platform_Codepage, CommonCodePagesAreInstalled)
     EXPECT_TRUE(rfh_is_codepage_installed(1252));
 }
 
+TEST(Platform_Codepage, WindowsAliasesAreInstalled)
+{
+#ifdef _WIN32
+    GTEST_SKIP() << "installed code pages depend on the Windows host";
+#endif
+    EXPECT_TRUE(rfh_is_codepage_installed(20273));
+    EXPECT_TRUE(rfh_is_codepage_installed(28591));
+}
+
+TEST(Platform_Codepage, ConvertsWindowsEbcdicAliasToAnsi)
+{
+    REQUIRE_CODEPAGE(20273);
+    char out[2] = { 0, 0 };
+    const char in[1] = { (char)0xC1 };   // 'A' in EBCDIC 273
+    ASSERT_EQ(1, rfh_convert_char(20273, 1252, in, out, 2));
+    EXPECT_EQ('A', out[0]);
+}
+
+TEST(Platform_Codepage, ConvertsWindowsLatin1Alias)
+{
+    REQUIRE_CODEPAGE(28591);
+    char out[2] = { 0, 0 };
+    const char in[1] = { (char)0xE9 };
+    ASSERT_EQ(1, rfh_convert_char(28591, 1252, in, out, 2));
+    EXPECT_EQ((char)0xE9, out[0]);
+}
+
+TEST(Platform_Codepage, OutputTooSmallConvertsNothing)
+{
+#ifdef _WIN32
+    GTEST_SKIP() << "Windows installed code pages and buffer handling differ";
+#endif
+    REQUIRE_CODEPAGE(1252);
+    char out[2] = { 0, 0 };
+    const char in[1] = { (char)0xE9 };   // U+00E9 needs 2 bytes in UTF-8
+    EXPECT_EQ(0, rfh_convert_char(1252, 1208, in, out, 1));
+}
+
 TEST(Platform_Codepage, UnknownCodePageIsNotInstalled)
 {
     EXPECT_FALSE(rfh_is_codepage_installed(99999));
@@ -144,6 +183,49 @@ TEST(Platform_Codepage, Ucs2ToCLocaleIsLatin1Identity)
     EXPECT_EQ(0, mbs[3]);
 }
 
+TEST(Platform_Codepage, Ucs2ToCLocaleStopsAtOutputLimit)
+{
+    const RFH_UCS2 ucs[] = { 'A', 'B', 0x20AC, 0 };
+    char mbs[4] = { 'x', 'x', 'S', 'x' };
+    EXPECT_EQ(2, rfh_ucs2_to_c_locale(ucs, mbs, 2));
+    EXPECT_EQ('A', mbs[0]);
+    EXPECT_EQ('B', mbs[1]);
+    EXPECT_EQ('S', mbs[2]);   // no terminator written, nothing past the limit touched
+}
+
+TEST(Platform_Codepage, Ucs2ToCLocaleExactFitHasNoTerminator)
+{
+    const RFH_UCS2 ucs[] = { 'A', 'B', 0 };
+    char mbs[3] = { 'x', 'x', 'S' };
+    EXPECT_EQ(2, rfh_ucs2_to_c_locale(ucs, mbs, 2));
+    EXPECT_EQ('S', mbs[2]);
+}
+
+TEST(Platform_Codepage, CLocaleToUcs2ExactFitHasNoTerminator)
+{
+    RFH_UCS2 ucs[3] = { 'x', 'x', 'S' };
+    EXPECT_EQ(2, rfh_c_locale_to_ucs2("AB", ucs, 2));
+    EXPECT_EQ((RFH_UCS2)'S', ucs[2]);
+}
+
+#ifndef _WIN32
+TEST(Platform_Codepage, GetAcpHonoursEnvironment)
+{
+    const char * old = getenv("RFHUTIL_ACP");
+    std::string saved = old ? old : "";
+    bool had = (old != nullptr);
+
+    setenv("RFHUTIL_ACP", "437", 1);
+    EXPECT_EQ(437, rfh_get_acp());
+    unsetenv("RFHUTIL_ACP");
+    EXPECT_EQ(1252, rfh_get_acp());
+    setenv("RFHUTIL_ACP", "abc", 1);
+    EXPECT_EQ(1252, rfh_get_acp());
+
+    if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
+}
+#endif
+
 TEST(Platform_Codepage, Ucs2ToCLocaleRejectsAbove255)
 {
     const RFH_UCS2 ucs[] = { 'M', 0x20AC, 0 };
@@ -173,8 +255,39 @@ namespace
         std::vector<std::string> lines;
         BOOL isTraceEnabled() override { return TRUE; }
         void logTraceEntry(const char * traceInfo) override { lines.push_back(traceInfo); }
+        std::string dumpLabel;
+        unsigned int dumpLength = 0;
+        void dumpTraceData(const char * label, const unsigned char *, unsigned int length) override { dumpLabel = label; dumpLength = length; }
+    };
+
+    class VerboseTrace : public RfhTrace
+    {
+    public:
+        VerboseTrace() { verboseTrace = TRUE; }
+        BOOL isTraceEnabled() override { return TRUE; }
+        void logTraceEntry(const char *) override {}
         void dumpTraceData(const char *, const unsigned char *, unsigned int) override {}
     };
+}
+
+TEST(Platform_Trace, InheritedVerboseFlagIsVisible)
+{
+    VerboseTrace sink;
+    rfhSetTrace(&sink);
+    BOOL verbose = rfhGetTrace()->verboseTrace;
+    rfhSetTrace(nullptr);
+    EXPECT_TRUE(verbose);
+}
+
+TEST(Platform_Trace, DumpIsPassedThrough)
+{
+    RecordingTrace recorder;
+    const unsigned char data[3] = { 1, 2, 3 };
+    rfhSetTrace(&recorder);
+    rfhGetTrace()->dumpTraceData("lbl", data, 3);
+    rfhSetTrace(nullptr);
+    EXPECT_EQ("lbl", recorder.dumpLabel);
+    EXPECT_EQ(3u, recorder.dumpLength);
 }
 
 TEST(Platform_Trace, DefaultSinkIsDisabledNoOp)

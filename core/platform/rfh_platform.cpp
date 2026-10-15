@@ -98,8 +98,8 @@ uint64_t rfh_hrtime_frequency()
 
 RfhUtcTime rfh_utc_now()
 {
-	struct timespec ts;
-	struct tm utc;
+	struct timespec ts = {0, 0};
+	struct tm utc = {};
 
 	clock_gettime(CLOCK_REALTIME, &ts);
 	gmtime_r(&ts.tv_sec, &utc);

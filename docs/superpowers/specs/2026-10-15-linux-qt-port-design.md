@@ -301,3 +301,6 @@ void setTraceSink(TraceSink);
   edge converts to display text.
 - **Upstream acceptance is uncertain:** the core extraction is still useful
   to the fork if IBM declines it.
+- **Code page display:** Linux uses '.' where Windows `WideCharToMultiByte`
+  may choose a best-fit character, and Linux accepts IBM CCSIDs (e.g. 273)
+  that Windows rejects. Both affect display only, never message or file bytes.
