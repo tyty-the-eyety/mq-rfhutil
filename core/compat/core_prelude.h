@@ -6,7 +6,12 @@
 // sources only needed Names.h from that include chain.
 #pragma once
 
+#include <limits.h>
+
 #include "stdafx.h"
 #include "Names.h"
+
+// The shared parsers compare plain char with MSVC (signed) semantics.
+static_assert(CHAR_MIN < 0, "shared RFHUtil sources need signed plain char (-fsigned-char)");
 
 #define AFX_RFHUTIL_H__96F2439F_AE02_4650_8A3E_EE7F0EC7E72C__INCLUDED_

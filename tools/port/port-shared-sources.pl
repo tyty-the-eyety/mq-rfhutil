@@ -84,7 +84,7 @@ my $license;
     edit($f, \$t, 'GetACP', 1, sub { $t =~ s/\bGetACP\(\)/rfh_get_acp()/g });
     edit($f, \$t, 'wchar_t', 5, sub { $t =~ s/\bwchar_t\b/RFH_UCS2/g });
     edit($f, \$t, '%I64d', 4, sub { $t =~ s/%I64d/%" PRId64 "/g });
-    edit($f, \$t, 'empty literal after PRId64', 0, sub { ($t =~ s/ PRId64 ""/ PRId64/g) || 0 });
+    edit($f, \$t, 'empty literal after PRId64', 4, sub { ($t =~ s/ PRId64 ""/ PRId64/g) || 0 });
     portTrace($f, \$t);
     portPointerTrace($f, \$t, 3);
     save($f, $t, $crlf);

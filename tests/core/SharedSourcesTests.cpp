@@ -182,7 +182,10 @@ TEST(SharedSources_Ucs2, FindCrLfWReturnsIndexOfFirstLineBreak)
 {
     const RFH_UCS2 text[] = { 'a', 'b', '\r', '\n', 0 };
     EXPECT_EQ(2, findcrlfW(text, 4));
-    EXPECT_EQ(2, findcrlfW(text, 2));   // no break in range: returns maxchar
+
+    // no line break in range: returns maxchar, not an index
+    const RFH_UCS2 none[] = { 'a', 'b', 'c', 0 };
+    EXPECT_EQ(3, findcrlfW(none, 3));
 }
 
 TEST(SharedSources_Ucs2, FindDelimWReturnsIndexAfterDelimiter)

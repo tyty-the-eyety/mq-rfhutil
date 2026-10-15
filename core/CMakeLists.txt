@@ -1,5 +1,9 @@
 # librfhcore: the portable RFHUtil core (no MFC, no Qt).
 
+if(CMAKE_CXX_BYTE_ORDER STREQUAL "BIG_ENDIAN")
+    message(FATAL_ERROR "the shared RFHUtil sources assume a little-endian host")
+endif()
+
 # Shared sources that also build into the Windows MFC application. They stay in
 # RFHUtil/ so the Visual Studio projects keep their paths.
 set(RFHUTIL_SHARED_SOURCES
@@ -29,7 +33,7 @@ if(NOT WIN32)
     # Windows. Supply the portable stand-ins: compat/ provides stdafx.h and the
     # prelude blocks rfhutil.h (the technique tests/UnitTests/prelude.h uses).
     # -fsigned-char: the shared parsers were written for MSVC, where plain char is
-    # signed (as on x86-64 Linux); aarch64, ppc64le and s390x default to unsigned.
+    # signed (as on x86-64 Linux); aarch64 and ppc64le default to unsigned.
     target_include_directories(rfhcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/compat)
     set_source_files_properties(${RFHUTIL_SHARED_SOURCES} PROPERTIES
         COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/compat/core_prelude.h;-fsigned-char")
