@@ -33,7 +33,8 @@ char * rfh_strupr(char * str);
 size_t rfh_ucs2len(const RFH_UCS2 * str);
 
 // High-resolution monotonic counter and its frequency in ticks per second.
-// Windows: QueryPerformanceCounter/QueryPerformanceFrequency. Linux: CLOCK_MONOTONIC in ns.
+// Windows: QueryPerformanceCounter/QueryPerformanceFrequency. Linux: CLOCK_MONOTONIC
+// in 100 ns units (10 MHz, like a typical Windows QPC, so DiffTime cannot overflow).
 uint64_t rfh_hrtime_now();
 uint64_t rfh_hrtime_frequency();
 

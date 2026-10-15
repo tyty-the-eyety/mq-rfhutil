@@ -57,8 +57,11 @@ sub includeAtTop {
 
 # ---------------------------------------------------------------- comsubs.cpp
 my $backspace;
+my $license;
 {
     my $f = 'RFHUtil/comsubs.cpp'; my ($t, $crlf) = load($f);
+    # the IBM licence header, reused for the new uisubs files
+    edit($f, \$t, 'licence header', 1, sub { ($t =~ /\A(\/\*.*?\*\/\n)/s) ? do { $license = $1; 1 } : 0 });
     edit($f, \$t, 'dump file', 1, sub { $t =~ s/#define DUMP_FILE_NAME "c:\\\\rfhdump\.txt"/#define DUMP_FILE_NAME rfh_dump_path("rfhdump.txt")/ });
     includeAfter($f, \$t, 'comsubs.h', "#include \"rfh_trace.h\"\n#include \"rfh_codepage.h\"\n");
     edit($f, \$t, 'code page globals', 1, sub { $t =~ s/\n\tBOOL\tccsidInstalled;[^\n]*\n\tint\t\tccsidInsCheck;[^\n]*\n/\n/ });
@@ -81,6 +84,7 @@ my $backspace;
     edit($f, \$t, 'GetACP', 1, sub { $t =~ s/\bGetACP\(\)/rfh_get_acp()/g });
     edit($f, \$t, 'wchar_t', 5, sub { $t =~ s/\bwchar_t\b/RFH_UCS2/g });
     edit($f, \$t, '%I64d', 4, sub { $t =~ s/%I64d/%" PRId64 "/g });
+    edit($f, \$t, 'empty literal after PRId64', 0, sub { ($t =~ s/ PRId64 ""/ PRId64/g) || 0 });
     portTrace($f, \$t);
     portPointerTrace($f, \$t, 3);
     save($f, $t, $crlf);
@@ -90,8 +94,8 @@ my $backspace;
 {
     # new files follow the repository's LF storage
     my $crlf = 0;
-    save('RFHUtil/uisubs.h', "// uisubs.h - MFC-only helpers moved out of comsubs so comsubs stays portable.\n\n#pragma once\n\nvoid processBackspace(CWnd *wnd);\n", $crlf);
-    save('RFHUtil/uisubs.cpp', "// uisubs.cpp - MFC-only helpers moved out of comsubs.cpp so comsubs stays portable.\n\n#include \"stdafx.h\"\n#include \"uisubs.h\"\n\n$backspace", $crlf);
+    save('RFHUtil/uisubs.h', "$license\n// uisubs.h - MFC-only helpers moved out of comsubs so comsubs stays portable.\n\n#pragma once\n\nvoid processBackspace(CWnd *wnd);\n", $crlf);
+    save('RFHUtil/uisubs.cpp', "$license\n// uisubs.cpp - MFC-only helpers moved out of comsubs.cpp so comsubs stays portable.\n\n#include \"stdafx.h\"\n#include \"uisubs.h\"\n\n$backspace", $crlf);
     for my $f (qw(CICS.cpp General.cpp MQMDPAGE.cpp pscr.cpp Ims.cpp Dlq.cpp PubSub.cpp jms.cpp RFH.cpp PS.cpp)) {
         my $p = "RFHUtil/$f"; my ($t, $c) = load($p);
         includeAfter($p, \$t, 'comsubs.h', "#include \"uisubs.h\"\n");

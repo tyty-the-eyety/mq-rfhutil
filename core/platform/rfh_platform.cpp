@@ -88,12 +88,14 @@ uint64_t rfh_hrtime_now()
 		return 0;
 	}
 
-	return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+	// 100 ns units, the same rate as a typical Windows QueryPerformanceCounter, so
+	// DiffTime's (end - start) * 1000000 overflows only after about 10 days, not 2.5 hours
+	return (uint64_t)ts.tv_sec * 10000000ULL + (uint64_t)ts.tv_nsec / 100ULL;
 }
 
 uint64_t rfh_hrtime_frequency()
 {
-	return 1000000000ULL;
+	return 10000000ULL;
 }
 
 RfhUtcTime rfh_utc_now()

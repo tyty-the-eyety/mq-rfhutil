@@ -28,9 +28,11 @@ if(NOT WIN32)
     # The shared sources include "stdafx.h" and "rfhutil.h", which pull in MFC on
     # Windows. Supply the portable stand-ins: compat/ provides stdafx.h and the
     # prelude blocks rfhutil.h (the technique tests/UnitTests/prelude.h uses).
+    # -fsigned-char: the shared parsers were written for MSVC, where plain char is
+    # signed (as on x86-64 Linux); aarch64, ppc64le and s390x default to unsigned.
     target_include_directories(rfhcore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/compat)
     set_source_files_properties(${RFHUTIL_SHARED_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/compat/core_prelude.h")
+        COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/compat/core_prelude.h;-fsigned-char")
 
     # New core code is held to a clean warning level; the shared sources keep
     # their historic warnings, which are only in trace formatting.

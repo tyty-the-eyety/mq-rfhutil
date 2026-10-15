@@ -5623,7 +5623,7 @@ void * rfhMalloc(size_t length, const char * tag)
 		if (app->isTraceEnabled())
 		{
 			// create the trace line
-			sprintf(traceInfo, "rfhMalloc() - malloc failed %8.8s length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64 "", tag, length, mallocReqs, totalBytes);
+			sprintf(traceInfo, "rfhMalloc() - malloc failed %8.8s length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64, tag, length, mallocReqs, totalBytes);
 
 			// trace entry to rfhMalloc
 			app->logTraceEntry(traceInfo);
@@ -5658,7 +5658,7 @@ void * rfhMalloc(size_t length, const char * tag)
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering rfhMalloc() %8.8s ptr=%8.8X length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64 "", tag, (unsigned int)(uintptr_t)ptr, length, mallocReqs, totalBytes);
+		sprintf(traceInfo, "Entering rfhMalloc() %8.8s ptr=%8.8X length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64, tag, (unsigned int)(uintptr_t)ptr, length, mallocReqs, totalBytes);
 
 		// trace entry to rfhMalloc
 		app->logTraceEntry(traceInfo);
@@ -5707,7 +5707,7 @@ void rfhFree(void * ptr)
 		if (app->isTraceEnabled())
 		{
 			// create the trace line
-			sprintf(traceInfo, "Entering rfhFree() %8.8s ptr=%8.8X realPtr=%8.8X len=%d freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64 "", tagData, (unsigned int)(uintptr_t)ptr, (unsigned int)(uintptr_t)realPtr, len, freeReqs, freeBytes, currBytes);
+			sprintf(traceInfo, "Entering rfhFree() %8.8s ptr=%8.8X realPtr=%8.8X len=%d freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64, tagData, (unsigned int)(uintptr_t)ptr, (unsigned int)(uintptr_t)realPtr, len, freeReqs, freeBytes, currBytes);
 
 			// trace entry to rfhMalloc
 			app->logTraceEntry(traceInfo);
@@ -5728,7 +5728,7 @@ void rfhTraceStats()
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering rfhTraceStats() mallocReqs=%" PRId64 " totalBytes=%" PRId64 " freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64 " maxBytes=%" PRId64 "", mallocReqs, totalBytes, freeReqs, freeBytes, currBytes, maxBytes);
+		sprintf(traceInfo, "Entering rfhTraceStats() mallocReqs=%" PRId64 " totalBytes=%" PRId64 " freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64 " maxBytes=%" PRId64, mallocReqs, totalBytes, freeReqs, freeBytes, currBytes, maxBytes);
 
 		// trace entry to rfhMalloc
 		app->logTraceEntry(traceInfo);
