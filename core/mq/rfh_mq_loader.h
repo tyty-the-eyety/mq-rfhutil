@@ -1,10 +1,17 @@
 // rfh_mq_loader.h - loads the IBM MQ library at run time.
 //
 // One binary serves both connection modes. The server library (libmqm_r /
-// mqm.dll) makes local and client connections, chosen per MQCONNX with
-// MQCNO_LOCAL_BINDING or MQCNO_CLIENT_BINDING. A client-only installation has
-// just the client library (libmqic_r / mqic.dll), which makes client connections.
-// Only one library is loaded per process, so the two never share a process.
+// mqm.dll) can make local and client connections, chosen per MQCONNX with
+// MQCNO_LOCAL_BINDING or MQCNO_CLIENT_BINDING. Having it does not mean a queue
+// manager is installed: on Linux libmqm_r belongs to the runtime package, which
+// client-only installations also have. The client library (libmqic_r / mqic.dll)
+// makes client connections only. Only one library is loaded per process.
+//
+// Search order: the installation directory is the load argument, else the
+// MQ_INSTALLATION_PATH environment variable. On Linux the default is /opt/mqm and
+// the libraries are <home>/lib64/libmqm_r.so then libmqic_r.so. On Windows,
+// when a directory is given, <home>\bin64\mqm.dll and mqic.dll (<home>\bin for a
+// 32-bit process) are tried first, then the bare names through PATH.
 #pragma once
 
 #include <cmqc.h>
@@ -25,7 +32,11 @@ namespace rfh
 		decltype(&::MQGET) get = nullptr;
 		decltype(&::MQINQ) inq = nullptr;
 
-		bool supportsBindings = false;	// false when only the client library is available
+		bool serverLibrary = false;		// the library can make local connections (mqm); false for the client library
+		// A local queue manager can be reached: serverLibrary and, on Linux,
+		// <home>/bin/strmqm exists. On Windows this equals serverLibrary; the presence
+		// of a local queue manager is not detected there.
+		bool bindingsAvailable = false;
 		std::string libraryPath;		// the library the entry points came from
 	};
 

@@ -3,7 +3,9 @@
 // MqSession owns its connection handle and at most one open queue handle for
 // put/get/browse. depth() and purge() use their own short-lived handles so they
 // never disturb a browse cursor. A session is not thread-safe: use it from one
-// thread only (the Qt application gives it a dedicated worker thread).
+// thread only (the Qt application gives it a dedicated worker thread). Use it,
+// including destroying it, from one thread only: MQ connection handles are bound
+// to the thread that created them.
 #pragma once
 
 #include <cmqc.h>
@@ -34,7 +36,9 @@ namespace rfh
 		MQLONG keepAlive = MQKAI_AUTO;
 
 		// Credentials are sent only when a password is given (the IDPWOS rule).
-		// The password is never traced, logged, or kept after connect().
+		// MqSession does not copy or trace the password; it is referenced only during
+		// MQCONNX. The caller owns the string and should clear it when done (a future
+		// reconnect option will need the caller to supply credentials again).
 		std::string userId;
 		std::string password;
 	};
@@ -57,7 +61,8 @@ namespace rfh
 	struct GetOptions
 	{
 		GetMode mode = GetMode::Destructive;
-		MQLONG waitMs = 0;			// 0 returns at once when no message is available
+		MQLONG waitMs = 0;			// 0 returns at once when no message is available.
+									// MQWI_UNLIMITED waits until a message arrives or cancel is set.
 		bool convert = false;		// MQGMO_CONVERT using the MQMD CodedCharSetId/Encoding
 		bool matchMsgId = false;	// match msgId below
 		bool matchCorrelId = false;	// match correlId below
@@ -89,10 +94,12 @@ namespace rfh
 
 		// Gets or browses one message from queue into message. A browse continues on
 		// the same queue handle; switching queue or putting closes it and resets the
-		// browse position. BrowsePrevious re-browses from the first message.
+		// browse position. BrowsePrevious re-browses from the first message, so each
+		// step costs one MQGET per position, and lands on a different message if other
+		// applications change the queue meanwhile.
 		Result get(const std::string & queue, Message & message, const GetOptions & options);
 
-		Result depth(const std::string & queue, MQLONG & depth);
+		Result depth(const std::string & queue, MQLONG & count);
 
 		// Removes every message from queue with destructive gets; count receives how many.
 		Result purge(const std::string & queue, MQLONG & count);

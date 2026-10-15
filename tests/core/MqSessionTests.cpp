@@ -9,9 +9,13 @@
 //   MQ_HOST, MQ_PORT, MQ_CHANNEL, MQ_QMGR, MQ_USER, MQ_PASSWORD, MQ_CLIENT_QUEUE
 //   (defaults: localhost, 1414, -, QM1, app, passw0rd, DEV.QUEUE.1), e.g. the
 //   queue manager from tests/docker/compose.yaml.
+//
+// Tests skip when MQ is not available. Set RFHUTIL_REQUIRE_MQ=1 to make those
+// skips failures (for CI machines that must have MQ).
 
 #include <gtest/gtest.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,23 +37,33 @@ namespace
         return (v != nullptr && v[0] != 0) ? v : def;
     }
 
+    bool requireMq() { return env("RFHUTIL_REQUIRE_MQ", "") == "1"; }
+
     std::string bindingsQm() { return env("MQ_BINDINGS_QMGR", "TEST_QM"); }
 
     const char * kQueue = "RFHUTIL.TEST.Q";
     const char * kEmptyQueue = "RFHUTIL.TEST.EMPTY";
 
     // Runs MQSC commands against the bindings queue manager; returns true on success.
+    // The commands go to runmqsc's standard input; only validated names reach the shell.
     bool runMqsc(const std::string & commands)
     {
         const std::string qm = bindingsQm();
-        if (!std::regex_match(qm, std::regex("[A-Za-z0-9._%/]{1,48}")))
+        const std::string bin = env("MQ_INSTALLATION_PATH", "/opt/mqm") + "/bin/runmqsc";
+        if (!std::regex_match(qm, std::regex("[A-Za-z0-9._%/]{1,48}")) ||
+            !std::regex_match(bin, std::regex("[A-Za-z0-9._/+-]+")))
         {
             return false;   // never pass an unexpected name to the shell
         }
 
-        const std::string bin = env("MQ_INSTALLATION_PATH", "/opt/mqm") + "/bin/runmqsc";
-        const std::string cmd = "printf '%s\\n' \"" + commands + "\" | " + bin + " " + qm + " >/dev/null 2>&1";
-        return system(cmd.c_str()) == 0;
+        FILE * pipe = popen((bin + " " + qm + " >/dev/null 2>&1").c_str(), "w");
+        if (pipe == nullptr)
+        {
+            return false;
+        }
+
+        const bool written = fputs((commands + "\n").c_str(), pipe) >= 0;
+        return pclose(pipe) == 0 && written;
     }
 
     Message textMessage(const std::string & text)
@@ -86,7 +100,12 @@ protected:
     {
         if (!queuesReady)
         {
-            GTEST_SKIP() << "queue manager " << bindingsQm() << " is not available for bindings tests";
+            const std::string why = "queue manager " + bindingsQm() + " is not available for bindings tests";
+            if (requireMq())
+            {
+                FAIL() << why;
+            }
+            GTEST_SKIP() << why;
         }
 
         ConnectOptions options;
@@ -97,6 +116,7 @@ protected:
 
         MQLONG purged = 0;
         ASSERT_TRUE(session.purge(kQueue, purged).ok());
+        ASSERT_TRUE(session.purge(kEmptyQueue, purged).ok());
     }
 
     MqSession session;
@@ -120,12 +140,18 @@ TEST(MqSession, UnknownQueueManagerFails)
     options.mode = Mode::Bindings;
     options.qmName = "RFHUTIL_NO_SUCH_QM";
 
-    Result r = session.connect(options);
-    if (!r.ok() && r.rc == MQRC_NONE)
+    MqApi api;
+    Result loaded = MqLoader::load(api);
+    if (!loaded.ok())
     {
-        GTEST_SKIP() << r.text;   // no MQ library on this machine
+        if (requireMq())
+        {
+            FAIL() << loaded.text;
+        }
+        GTEST_SKIP() << loaded.text;   // no MQ library on this machine
     }
 
+    Result r = session.connect(options);
     EXPECT_EQ(MQCC_FAILED, r.cc);
     EXPECT_TRUE(r.rc == MQRC_Q_MGR_NAME_ERROR || r.rc == MQRC_Q_MGR_NOT_AVAILABLE) << r.text;
     EXPECT_FALSE(session.isConnected());

@@ -18,6 +18,9 @@ namespace rfh
 		std::string text;			// human-readable outcome, empty on plain success
 		std::vector<std::string> warnings;
 
+		// MQCC_WARNING counts as ok. A caller inspecting a get must still look at rc:
+		// for example MQRC_TRUNCATED_MSG_FAILED (2080) is a warning where no message
+		// was removed. MqSession grows its buffer, so callers normally never see 2080.
 		bool ok() const { return cc != MQCC_FAILED; }
 
 		static Result success() { return Result(); }

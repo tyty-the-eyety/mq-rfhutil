@@ -6,9 +6,14 @@
 
 #include "mqerror.h"
 
-// cmqstrc.h defines its lookup functions in the header, so include it in exactly
-// one translation unit.
-#include <cmqstrc.h>
+// cmqstrc.h defines its lookup functions in the header, with external linkage.
+// This file is the only owner of cmqstrc.h: other code asks rfh_result for names
+// (reasonName). The anonymous namespace keeps the symbols private to this file, so
+// another translation unit that includes the header still links.
+namespace
+{
+#include <cmqstrc.h>	// IBM defines non-inline functions here; internal linkage keeps them private to this file
+}
 
 namespace rfh
 {

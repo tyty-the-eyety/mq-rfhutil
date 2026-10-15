@@ -4,6 +4,11 @@
 
 #include "rfh_result.h"
 
+// cmqstrc.h defines non-inline functions with external linkage. This translation
+// unit includes it on purpose: if rfhcore exported those symbols, linking this test
+// would fail with "multiple definition".
+#include <cmqstrc.h>
+
 using rfh::Result;
 
 TEST(Result, SuccessIsOkWithoutText)
@@ -50,4 +55,10 @@ TEST(Result, UnknownReasonCodeIsNamedUnknown)
     EXPECT_STREQ("MQRC_UNKNOWN", rfh::reasonName(987654));
     Result r = Result::fromMq("MQOPEN", MQCC_FAILED, 987654);
     EXPECT_EQ("MQOPEN cc=2 rc=987654 MQRC_UNKNOWN", r.text);
+}
+
+TEST(Result, ReasonNameDoesNotExportCmqstrcSymbols)
+{
+    // The link of this executable is the proof; see the include of <cmqstrc.h> above.
+    EXPECT_STREQ(MQRC_STR(MQRC_NO_MSG_AVAILABLE), rfh::reasonName(MQRC_NO_MSG_AVAILABLE));
 }

@@ -60,5 +60,5 @@ if(NOT WIN32)
         mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp
         PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
     # cmqstrc.h returns string literals as char *.
-    set_source_files_properties(mq/rfh_result.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-write-strings")
+    set_source_files_properties(mq/rfh_result.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-write-strings;-Wno-unused-function")
 endif()
