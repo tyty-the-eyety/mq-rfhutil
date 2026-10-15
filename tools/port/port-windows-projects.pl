@@ -14,6 +14,7 @@ sub load { my $t = slurp($_[0]); my $crlf = ($t =~ /\r\n/); $t =~ s/\r\n/\n/g; r
 sub save { my ($f, $t, $crlf) = @_; $t =~ s/\n/\r\n/g if $crlf; spew($f, $t); }
 sub edit {
     my ($file, $label, $expected, $count) = @_;
+    $count = 0 + $count;   # s/// returns "" on no match
     die "$file: edit '$label' matched $count time(s), expected $expected\n" unless $count == $expected;
 }
 
@@ -23,6 +24,19 @@ sub edit {
     edit($f, 'include dirs', 4, scalar($t =~ s/<AdditionalIncludeDirectories>\$\(MQ_HOME\)\\tools\\c\\include;/<AdditionalIncludeDirectories>..\\core\\platform;\$(MQ_HOME)\\tools\\c\\include;/g));
     edit($f, 'sources', 1, scalar($t =~ s/^(\s*)<ClCompile Include="comsubs\.cpp" \/>\n/$1<ClCompile Include="comsubs.cpp" \/>\n$1<ClCompile Include="uisubs.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_platform.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_codepage.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_trace.cpp" \/>\n/m));
     edit($f, 'headers', 1, scalar($t =~ s/^(\s*)<ClInclude Include="comsubs\.h" \/>\n/$1<ClInclude Include="comsubs.h" \/>\n$1<ClInclude Include="uisubs.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_platform.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_codepage.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_trace.h" \/>\n/m));
+    save($f, $t, $crlf);
+}
+
+# ---------------------------------------------------------------- RFHUtil.vcxproj.filters
+{
+    my $f = 'RFHUtil/RFHUtil.vcxproj.filters'; my ($t, $crlf) = load($f);
+    my $entry = sub {
+        my ($tag, $filter, $indent, @names) = @_;
+        return join('', map { "$indent<$tag Include=\"$_\">\n$indent  <Filter>$filter</Filter>\n$indent</$tag>\n" } @names);
+    };
+    my @plat = ('..\core\platform\rfh_platform', '..\core\platform\rfh_codepage', '..\core\platform\rfh_trace');
+    edit($f, 'filter headers', 1, scalar($t =~ s{^([ \t]*)(<ClInclude Include="comsubs\.h">\n.*?</ClInclude>\n)}{$1 . $2 . $entry->('ClInclude', 'Header Files', $1, 'uisubs.h', map { "$_.h" } @plat)}mse));
+    edit($f, 'filter sources', 1, scalar($t =~ s{^([ \t]*)(<ClCompile Include="comsubs\.cpp">\n.*?</ClCompile>\n)}{$1 . $2 . $entry->('ClCompile', 'Source Files', $1, 'uisubs.cpp', map { "$_.cpp" } @plat)}mse));
     save($f, $t, $crlf);
 }
 
@@ -54,7 +68,14 @@ sub edit {
 static_assert(std::is_same<decltype(&CRfhutilApp::verboseTrace), BOOL RfhTrace::*>::value,
               "CRfhutilApp must not shadow RfhTrace::verboseTrace");
 GUARD
-    edit($f, 'verboseTrace guard', 1, scalar($t =~ s/^(#include "rfhutil\.h"[^\n]*\n)/$1$guard/m));
+    # placed after the last #include of the top include block (the wincrypt pair)
+    edit($f, 'verboseTrace guard', 1, scalar($t =~ s/^(#pragma comment\(lib, "Crypt32\.lib"\)[^\n]*\n)/$1\n$guard/m));
+    # uninstall the sink and clear the closed trace file before members are destroyed
+    edit($f, 'destructor', 1, scalar($t =~ s{^(CRfhutilApp::~CRfhutilApp\(\)\n\{\n)(.*?)(^\}\n)}{
+        my ($open, $body, $close) = ($1, $2, $3);
+        edit($f, 'uninstall trace', 1, scalar($body =~ s/^(\tchar\ttraceInfo\[128\];\n)/\t\/\/ stop the shared core sources tracing through this object\n\trfhSetTrace(NULL);\n\n$1/m));
+        edit($f, 'clear traceFile', 1, scalar($body =~ s/^(\t\tfclose\(traceFile\);\n)/$1\t\ttraceFile = NULL;\n/m));
+        $open . $body . $close }mse));
     save($f, $t, $crlf);
 }
 

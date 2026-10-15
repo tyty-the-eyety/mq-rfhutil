@@ -25,4 +25,5 @@ RfhTrace * rfhGetTrace();
 
 // Installs the process-wide trace sink. NULL restores the built-in no-op sink.
 // Not synchronised: install the sink before starting threads that trace.
+// The sink must stay valid until it is replaced or uninstalled.
 void rfhSetTrace(RfhTrace * trace);

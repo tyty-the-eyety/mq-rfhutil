@@ -3,6 +3,7 @@
 // the iconv/POSIX ones, against the same expectations.
 
 #include <gtest/gtest.h>
+#include "gtest_compat.h"
 
 #include <stdlib.h>
 #include <string>

@@ -3,6 +3,7 @@
 // and these tests pin that the results are the ones Windows produced.
 
 #include <gtest/gtest.h>
+#include "gtest_compat.h"
 
 #include <stdio.h>
 #include <stdlib.h>

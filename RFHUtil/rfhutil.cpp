@@ -18,12 +18,6 @@ Jim MacNair - Initial Contribution
 
 #include "stdafx.h"
 #include "rfhutil.h"
-#include <type_traits>
-
-// CRfhutilApp must use the verboseTrace it inherits from RfhTrace: a member of its
-// own would hide it, and the shared sources would read the always-FALSE base copy.
-static_assert(std::is_same<decltype(&CRfhutilApp::verboseTrace), BOOL RfhTrace::*>::value,
-              "CRfhutilApp must not shadow RfhTrace::verboseTrace");
 #include "ThemeManager.h"
 
 #include "MainFrm.h"
@@ -34,6 +28,13 @@ static_assert(std::is_same<decltype(&CRfhutilApp::verboseTrace), BOOL RfhTrace::
 #include <locale.h>
 #include <wincrypt.h>
 #pragma comment(lib, "Crypt32.lib")
+
+#include <type_traits>
+
+// CRfhutilApp must use the verboseTrace it inherits from RfhTrace: a member of its
+// own would hide it, and the shared sources would read the always-FALSE base copy.
+static_assert(std::is_same<decltype(&CRfhutilApp::verboseTrace), BOOL RfhTrace::*>::value,
+              "CRfhutilApp must not shadow RfhTrace::verboseTrace");
 
 void EnablePrintfInMFC();
 
@@ -499,6 +500,9 @@ CRfhutilApp::CRfhutilApp()
 
 CRfhutilApp::~CRfhutilApp()
 {
+	// stop the shared core sources tracing through this object
+	rfhSetTrace(NULL);
+
 	char	traceInfo[128];
 
 	// done with the font objects
@@ -517,6 +521,7 @@ CRfhutilApp::~CRfhutilApp()
 		sprintf(traceInfo, "enumCallbacks=%d", enumCallbacks);
 		logTraceEntry(traceInfo);
 		fclose(traceFile);
+		traceFile = NULL;
 	}
 }
 
