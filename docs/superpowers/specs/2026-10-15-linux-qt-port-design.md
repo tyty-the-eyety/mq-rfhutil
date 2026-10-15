@@ -303,4 +303,6 @@ void setTraceSink(TraceSink);
   to the fork if IBM declines it.
 - **Code page display:** Linux uses '.' where Windows `WideCharToMultiByte`
   may choose a best-fit character, and Linux accepts IBM CCSIDs (e.g. 273)
-  that Windows rejects. Both affect display only, never message or file bytes.
+  that Windows rejects. Both affect display only, never message or file
+  bytes. 20924 (IBM-924) maps to IBM1047 on Linux because glibc has no
+  IBM924; 8 Latin-9 code points differ.

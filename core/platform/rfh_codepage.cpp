@@ -127,7 +127,11 @@ namespace
 			{ 20871, "IBM871" },
 			{ 20880, "IBM880" },
 			{ 20905, "IBM905" },
-			{ 20924, "IBM1047" },		// glibc has no IBM924; 1047 differs only in two code points
+			{ 21025, "IBM1025" },
+			// glibc has no IBM924. IBM-924 is 1047 with the Latin-9 substitutions, so about 8
+			// code points differ (euro, S/s/Z/z caron, OE/oe, Y diaeresis replace
+			// currency, broken bar, diaeresis, acute, cedilla, 1/4, 1/2, 3/4).
+			{ 20924, "IBM1047" },
 		};
 
 		std::vector<std::string> names;

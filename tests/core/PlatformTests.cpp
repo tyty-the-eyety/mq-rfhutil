@@ -100,15 +100,16 @@ TEST(Platform_Codepage, WindowsAliasesAreInstalled)
 #endif
     EXPECT_TRUE(rfh_is_codepage_installed(20273));
     EXPECT_TRUE(rfh_is_codepage_installed(28591));
+    EXPECT_TRUE(rfh_is_codepage_installed(21025));
 }
 
 TEST(Platform_Codepage, ConvertsWindowsEbcdicAliasToAnsi)
 {
     REQUIRE_CODEPAGE(20273);
     char out[2] = { 0, 0 };
-    const char in[1] = { (char)0xC1 };   // 'A' in EBCDIC 273
+    const char in[1] = { (char)0x4A };   // A-umlaut in EBCDIC 273 (a cent sign in 037)
     ASSERT_EQ(1, rfh_convert_char(20273, 1252, in, out, 2));
-    EXPECT_EQ('A', out[0]);
+    EXPECT_EQ((char)0xC4, out[0]);
 }
 
 TEST(Platform_Codepage, ConvertsWindowsLatin1Alias)
