@@ -14,6 +14,9 @@ Contributors:
   Jim MacNair - Initial Contribution
 */
 
+#include "rfh_platform.h"
+
+
 //
 // xmlsubs.h: XML subroutines.header file
 //
@@ -33,11 +36,11 @@ int findDelim(const unsigned char *datain,
 			  const int maxchar, 
 			  const unsigned char delim,
 			  const unsigned char escape);
-int findDelimW(const wchar_t *datain, 
+int findDelimW(const RFH_UCS2 *datain, 
 			   const int maxchar, 
-			   const wchar_t delim,
-			   const wchar_t escape);
-void replaceChars(const CString &value, char *valStr);
+			   const RFH_UCS2 delim,
+			   const RFH_UCS2 escape);
+void replaceChars(const char * value, char *valStr);
 int insertEscChars(char * output, const char * input, int length);
 char * extractAttribute(char *VarName, char *VarValue, char *Ptr);
 void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr);

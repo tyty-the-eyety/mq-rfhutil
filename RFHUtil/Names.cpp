@@ -23,7 +23,7 @@ Jim MacNair - Initial Contribution
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <windows.h>
+#include "rfh_platform.h"
 
 #include "comsubs.h"
 #include "Names.h"
@@ -38,7 +38,7 @@ static char THIS_FILE[]=__FILE__;
 // this consists of an offset in the table and a 4-byte integer string length
 #define PREFIX_SIZE		8
 
-#define DUMP_FILE_NAME "c:\\namedump.txt"
+#define DUMP_FILE_NAME rfh_dump_path("namedump.txt")
 
 /////////////////////////////////////////////////////////////////
 //
@@ -451,7 +451,7 @@ void Names::dumpNames(FILE *df)
 	int			i1;
 	int			slen;
 	char		*ptr;
-	SYSTEMTIME	stime;
+	RfhUtcTime	stime;
 
 	// check if a file was passed
 	if (NULL == df)
@@ -463,21 +463,21 @@ void Names::dumpNames(FILE *df)
 	if (df != NULL)
 	{
 		// get the current time
-		GetSystemTime(&stime);
+		stime = rfh_utc_now();
 
 		// format the date and time
 		fprintf(df, "Dump of Names object on %d-%d-%d %d:%2.2d:%2.2d.%3.3d\n",
-				stime.wYear,
-				stime.wMonth,
-				stime.wDay,
-				stime.wHour,
-				stime.wMinute,
-				stime.wSecond,
-				stime.wMilliseconds);
+				stime.year,
+				stime.month,
+				stime.day,
+				stime.hour,
+				stime.minute,
+				stime.second,
+				stime.millisecond);
 
 		fprintf(df, "nameTableSize %d\n", nameTableSize);
 		fprintf(df, "nextEntry %d\n", nextEntry);
-		fprintf(df, "nameTable %8.8x\n\n", (unsigned int)nameTable);
+		fprintf(df, "nameTable %8.8x\n\n", (unsigned int)(uintptr_t)nameTable);
 
 		// dump out the index entries
 		for (i=0; i<NAMEINDEXMAX; i++)

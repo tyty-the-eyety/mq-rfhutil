@@ -24,7 +24,19 @@ endif()
 include(GoogleTest)
 
 add_executable(rfhutil_unit_tests
+    UnitTests/ComsubsTests.cpp
+    UnitTests/EncodingTests.cpp
+    UnitTests/FileFormatTests.cpp
+    UnitTests/HeaderUtilTests.cpp
+    UnitTests/JsonParseTests.cpp
+    UnitTests/MQErrorTests.cpp
+    UnitTests/NamesTests.cpp
+    UnitTests/ReconnectTests.cpp
+    UnitTests/XMLParseTests.cpp
+    UnitTests/XmlsubsTests.cpp
     core/PlatformTests.cpp
+    core/SharedSourcesTests.cpp
 )
+target_include_directories(rfhutil_unit_tests PRIVATE UnitTests)
 target_link_libraries(rfhutil_unit_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_unit_tests)

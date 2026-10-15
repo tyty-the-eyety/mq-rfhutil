@@ -25,6 +25,7 @@ Jim MacNair - Initial Contribution
 #include "Dlq.h"
 #include "rfhutil.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "mqsubs.h"
 #include "cmqc.h"
 

@@ -14,6 +14,9 @@ Contributors:
 Jim MacNair - Initial Contribution
 */
 
+#include "rfh_platform.h"
+
+
 //
 // comsubs.h: common subroutines.header file
 //
@@ -38,7 +41,7 @@ static const unsigned char HEX_NUMBERS[] = "0123456789ABCDEF";
 //
 ///////////////////////////////////////////////////////////
 
-typedef unsigned __int64 MY_TIME_T;
+typedef unsigned long long MY_TIME_T;
 
 //****************************************************************************/
 //static  const unsigned char aetab[] = {    //**** ASCII -----> EBCDIC *****/
@@ -212,7 +215,7 @@ void * rfhMalloc(size_t length, const char * tag);
 void rfhFree(void * ptr);
 void rfhTraceStats();
 int findcrlf(const unsigned char *datain, const int maxchar);
-int findcrlfW(const wchar_t *datain, const int maxchar);
+int findcrlfW(const RFH_UCS2 *datain, const int maxchar);
 int roundLength(unsigned char *ptr);
 int roundLength2(unsigned char * ptr, const int encoding);
 void formatDateTime(char *result, char *date, char *time);
@@ -226,21 +229,20 @@ int matchEbcdicToAscii(const int ccsid);
 void translateEbcdicData(unsigned char *out, const unsigned char *in, unsigned int len, int ebcdicCP);
 char * parseRFH1String(char *ptr, char *value, int maxSize);
 BOOL isCodePageInstalled(const int ccsid);
-void processBackspace(CWnd *wnd);
 BOOL isUCS2(int ccsid);
 int UCS2ToMultiByte(unsigned char * ucsptr, int ucslen, unsigned char * mbsptr, int mbslen);
 int MultiByteToUCS2(unsigned char * ucsptr, int ucslen, unsigned char * mbsptr, int mbslen);
-int char1208toWCS(wchar_t * ucsptr, const unsigned char * mbsptr);
+int char1208toWCS(RFH_UCS2 * ucsptr, const unsigned char * mbsptr);
 int mbsCharCount(const unsigned char * mbsptr);
-int WCSto1250(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1251(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1252(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1253(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1254(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1255(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1256(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1257(const wchar_t * ucsptr, unsigned char * mbsptr);
-int WCSto1258(const wchar_t * ucsptr, unsigned char * mbsptr);
+int WCSto1250(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1251(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1252(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1253(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1254(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1255(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1256(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1257(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
+int WCSto1258(const RFH_UCS2 * ucsptr, unsigned char * mbsptr);
 
 //#ifdef  __cplusplus
 //}

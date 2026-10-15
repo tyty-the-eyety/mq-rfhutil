@@ -8,34 +8,35 @@
 //
 // Solution: pre-define rfhutil.h's own include guard so that when the real file is
 // found, its entire body (including #include "DataArea.h") is skipped.
-// Then provide the minimal CRfhutilApp stub that source files need at compile time.
+// On Windows, also provide the minimal CRfhutilApp stub that TestMain.cpp needs.
 #pragma once
 
-// Pull in MFC (required by all source files before rfhutil.h).
+// Pull in MFC on Windows, the portable compat layer elsewhere.
 #include "stdafx.h"
 
 // Names.h is normally pulled in via rfhutil.h → DataArea.h. Since we block that
 // chain, include it directly. JsonParse.h and XMLParse.h both embed a Names member.
 #include "Names.h"
 
+#include "rfh_trace.h"
+
 // Block RFHUtil/rfhutil.h from being processed — the guard is the one defined in
 // RFHUtil/rfhutil.h line 22.
 #define AFX_RFHUTIL_H__96F2439F_AE02_4650_8A3E_EE7F0EC7E72C__INCLUDED_
 
-// Minimal CRfhutilApp stub.
-// comsubs.cpp casts AfxGetApp() to CRfhutilApp* to call isTraceEnabled(),
-// logTraceEntry(), verboseTrace, and dumpTraceData(). Return FALSE / no-op so
-// trace code is compiled out cleanly.
-class CRfhutilApp : public CWinApp
+#ifdef _WIN32
+// Minimal CRfhutilApp stub so TestMain.cpp can derive its MFC application object.
+// The shared sources reach the trace through rfhGetTrace(), which falls back to a
+// no-op sink, so trace code stays disabled.
+class CRfhutilApp : public CWinApp, public RfhTrace
 {
 public:
-    BOOL verboseTrace;
-    CRfhutilApp() : verboseTrace(FALSE) {}
-    BOOL isTraceEnabled()                                                          { return FALSE; }
-    void logTraceEntry(const char *)                                               {}
+    BOOL isTraceEnabled() override                                                 { return FALSE; }
+    void logTraceEntry(const char *) override                                      {}
     void logTraceEntry(const CString&)                                             {}
-    void dumpTraceData(const char *, const unsigned char *, unsigned int)          {}
+    void dumpTraceData(const char *, const unsigned char *, unsigned int) override {}
 };
+#endif
 
 // Tab page constants (defined in real rfhutil.h; kept here as a safety net).
 #define PAGE_MAIN     0

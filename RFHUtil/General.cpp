@@ -24,6 +24,7 @@ Jim MacNair - Initial Contribution
 #include "General.h"
 #include "DataArea.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "DispQ.h"
 #include "Savemsgs.h"
 #include "LoadQ.h"

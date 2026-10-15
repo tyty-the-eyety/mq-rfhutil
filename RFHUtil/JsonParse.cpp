@@ -20,6 +20,7 @@ Jim MacNair - Initial Contribution
 
 #include "stdafx.h"
 #include "rfhutil.h"
+#include "rfh_trace.h"
 #include "comsubs.h"
 #include "JsonParse.h"
 
@@ -62,17 +63,17 @@ int CJsonParse::parse(const char *jsonIn, int length)
 	int				idx;				// index within xml input
 	size_t			memSize=0;			// size of memory to allocate
 	const char *	ptr;				// work pointer
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CJsonParse()::parse jsonIn=%8.8X length=%d", (unsigned int)jsonIn, length);
+		sprintf(traceInfo, "Entering CJsonParse()::parse jsonIn=%8.8X length=%d", (unsigned int)(uintptr_t)jsonIn, length);
 
 		// trace entry to CJsonParse::parse
 		app->logTraceEntry(traceInfo);
@@ -192,11 +193,11 @@ int CJsonParse::parseJSON(const char *jsonIn, int length)
 	int				root;				// root element
 	const char *	ptr;				// working pointer
 	const char *	endPtr;				// end of the data
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -244,17 +245,17 @@ const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int par
 	const char *	endNamePtr = NULL;				// pointer to end of name
 	const char *	valuePtr;				// pointer to value
 	const char *	endValuePtr;			// pointer to end of value
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CJsonParse()::parseLevel ptr=%8.8X endPtr=%8.8X parent=%d numElements=%d", (unsigned int)ptr, (unsigned int)endPtr, parent, numElements);
+		sprintf(traceInfo, "Entering CJsonParse()::parseLevel ptr=%8.8X endPtr=%8.8X parent=%d numElements=%d", (unsigned int)(uintptr_t)ptr, (unsigned int)(uintptr_t)endPtr, parent, numElements);
 
 		// trace entry to CXMLParse()::parseLevel
 		app->logTraceEntry(traceInfo);
@@ -454,7 +455,7 @@ const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int par
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CJsonParse()::parseLevel ptr=%8.8X numElements=%d name=%d namePtr=%8.8X endNamePtr=%8.8X", (unsigned int)ptr, numElements, name, (unsigned int)namePtr, (unsigned int)endNamePtr);
+		sprintf(traceInfo, "Exiting CJsonParse()::parseLevel ptr=%8.8X numElements=%d name=%d namePtr=%8.8X endNamePtr=%8.8X", (unsigned int)(uintptr_t)ptr, numElements, name, (unsigned int)(uintptr_t)namePtr, (unsigned int)(uintptr_t)endNamePtr);
 
 		// trace exit from CXMLParse()::parseLevel
 		app->logTraceEntry(traceInfo);
@@ -469,11 +470,11 @@ int CJsonParse::insertEntry(const char *name, int nameLen, int parent)
 {
 	int				nameOfs=0;
 	int				lastChild;
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// check for a name
 	if (nameLen > 0)
@@ -741,12 +742,12 @@ void CJsonParse::dumpNames()
 
 {
 	const char *	startName;			// beginning of names table
-	CRfhutilApp *	app;				// pointer to application object
+	RfhTrace *	app;				// pointer to application object
 	const char *	ptr;
 	char			traceInfo[512];
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -774,14 +775,14 @@ void CJsonParse::getLastError(char *errtxt, int maxLen)
 	int		len;
 
 	// figure out if the string will fit in memory
-	len = lastError.GetLength();
+	len = (int)lastError.size();
 	if (len > maxLen - 1)
 	{
 		len = maxLen - 1;
 	}
 
 	// copy the error string
-	memcpy(errtxt, (LPCTSTR)lastError, len);
+	memcpy(errtxt, lastError.c_str(), len);
 	errtxt[len] = 0;
 }
 
@@ -789,11 +790,11 @@ void CJsonParse::buildParsedArea(char *output, int maxLen, BOOL includeRoot)
 
 {
 	char			*ptr;
-	CRfhutilApp		*app;
+	RfhTrace *app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -859,11 +860,11 @@ char * CJsonParse::processElement(int elem, char *ptr, char *endPtr, BOOL includ
 	int				len;				// length of the value string
 	char			*namePtr;			// pointer to name as a string
 	char			*valuePtr;
-	CRfhutilApp		*app;				// pointer to application object to locate trace routines
+	RfhTrace *app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if ((app->isTraceEnabled()) && (app->verboseTrace))
@@ -936,18 +937,18 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 	int				name2;
 	const char *	valuePtr;			// pointer to beginning of value
 	const char *	endValuePtr;		// pointer to end of value
-	CRfhutilApp		*app;				// pointer to application object to locate trace routines
+	RfhTrace *app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
 		sprintf(traceInfo, "Entering CJsonParse()::processArray ptr=%8.8X name=%d namePtr=%s",
-				(unsigned int)ptr, name, names.getNameAddr(jsonElems[name].name));
+				(unsigned int)(uintptr_t)ptr, name, names.getNameAddr(jsonElems[name].name));
 
 		// trace entry to CJsonParse()::processArray
 		app->logTraceEntry(traceInfo);
@@ -1091,7 +1092,7 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CJsonParse()::processArray ptr=%8.8X numValues=%d", (unsigned int)ptr, numValues);
+		sprintf(traceInfo, "Exiting CJsonParse()::processArray ptr=%8.8X numValues=%d", (unsigned int)(uintptr_t)ptr, numValues);
 
 		// trace exit from CJsonParse()::processArray
 		app->logTraceEntry(traceInfo);

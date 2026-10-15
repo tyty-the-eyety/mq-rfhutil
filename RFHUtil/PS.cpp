@@ -22,6 +22,7 @@ Jim MacNair - Initial Contribution
 #include "ThemeManager.h"
 #include "PS.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "CapPubs.h"
 #include "WritePubs.h"
 

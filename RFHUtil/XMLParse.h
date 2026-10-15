@@ -14,6 +14,10 @@ Contributors:
 Jim MacNair - Initial Contribution
 */
 
+#include <string>
+#include "rfh_platform.h"
+
+
 // XMLParse.h: interface for the CXMLParse class.
 //
 //////////////////////////////////////////////////////////////////////
@@ -98,7 +102,7 @@ private:
 
 	XMLSTRUCT * xmlElems;
 	int numElements;
-	CString lastError;
+	std::string lastError;
 	Names	names;
 };
 

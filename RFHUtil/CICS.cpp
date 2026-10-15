@@ -21,6 +21,7 @@ Jim MacNair - Initial Contribution
 #include "rfhutil.h"
 #include "ThemeManager.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "mqsubs.h"
 #include "CICS.h"
 #include "MQMDPAGE.h"

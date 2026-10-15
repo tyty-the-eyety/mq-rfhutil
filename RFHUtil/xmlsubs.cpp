@@ -607,7 +607,7 @@ void removeEscSeq(char *valStr)
 			}
 
 			// translate to upper case
-			_strupr(tempSeq);
+			rfh_strupr(tempSeq);
 
 			// check for any of the escape sequences
 			if ((strcmp(tempSeq, "LT") == 0) || (strcmp(tempSeq, "GT") == 0))
@@ -858,10 +858,10 @@ int findDelim(const unsigned char *datain,
 //
 //////////////////////////////////////////////////
 
-int findDelimW(const wchar_t *datain, 
+int findDelimW(const RFH_UCS2 *datain, 
 			   const int maxchar, 
-			   const wchar_t delim,
-			   const wchar_t escape)
+			   const RFH_UCS2 delim,
+			   const RFH_UCS2 escape)
 
 {
 	int		count=maxchar;
@@ -986,10 +986,10 @@ int insertEscChars(char * output, const char * input, int length)
 	return j;
 }
 
-void replaceChars(const CString &value, char *valStr)
+void replaceChars(const char * value, char *valStr)
 
 {
-	int j = insertEscChars(valStr, (LPCTSTR)value, value.GetLength());
+	insertEscChars(valStr, value, (int)strlen(value));
 }
 
 ////////////////////////////////////////////////////
@@ -1143,7 +1143,7 @@ void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char 
 		tempName[1] = tempVarName[1];
 		tempName[2] = tempVarName[2];
 		tempName[3] = 0;
-		_strupr(tempName);
+		rfh_strupr(tempName);
 
 		// Is this a data type attribute or a user attribute?
 		if (strcmp(tempName, "DT") != 0)
@@ -1195,7 +1195,7 @@ int setEscChar(unsigned char *bufferin, unsigned char *bufferout)
 	// get the data in a temporary buffer
 	memcpy(tempBuf, bufferin + 1, 5);
 	tempBuf[5] = 0;
-	_strupr((char *)tempBuf);
+	rfh_strupr((char *)tempBuf);
 
 	if (memcmp(tempBuf, "LT;", 3) == 0)
 	{

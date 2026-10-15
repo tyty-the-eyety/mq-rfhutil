@@ -20,6 +20,7 @@ Jim MacNair - Initial Contribution
 
 #include "stdafx.h"
 #include "rfhutil.h"
+#include "rfh_trace.h"
 #include "XMLParse.h"
 #include "comsubs.h"
 #include "xmlsubs.h"
@@ -71,11 +72,11 @@ int CXMLParse::parse(const char * xmlIn, int length)
 	int				idx;				// index within xml input
 	bool			validData=true;		// indicate if invalid characters found in data
 	const char *	ptr;				// work pointer
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -245,11 +246,11 @@ const char * CXMLParse::processDTD(const char *ptr, const char *endPtr)
 const char * CXMLParse::processQuote(const char *ptr, const char *endPtr, char quote)
 
 {
-	CRfhutilApp *	app;				// pointer to application object to locate trace routines
+	RfhTrace *	app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	sprintf(traceInfo, "Inside processQuote starting with %*.s\n", endPtr - ptr, ptr);
 	app->logTraceEntry(traceInfo);
@@ -324,11 +325,11 @@ int CXMLParse::parseXML(const char *xmlIn, int length)
 	const char *	valuePtr;			// pointer to beginning of the value
 	const char *	namePtr;			// pointer to name in names table
 	char			endQuote;			// attribute value delimiter
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -795,11 +796,11 @@ int CXMLParse::insertEntry(const char * name, int nameLen, int parent, int type)
 {
 	int				nameOfs=0;
 	int				lastChild;
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled() && app->verboseTrace)
@@ -866,11 +867,11 @@ void CXMLParse::addValue(int elem, const char * value, int valueLen)
 
 {
 	int				valueOfs=0;
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled() && app->verboseTrace)
@@ -962,14 +963,14 @@ void CXMLParse::getLastError(char *errtxt, int maxLen)
 	int		len;
 
 	// figure out if the string will fit in memory
-	len = lastError.GetLength();
+	len = (int)lastError.size();
 	if (len > maxLen - 1)
 	{
 		len = maxLen - 1;
 	}
 
 	// copy the error string
-	memcpy(errtxt, (LPCTSTR)lastError, len);
+	memcpy(errtxt, lastError.c_str(), len);
 	errtxt[len] = 0;
 }
 
@@ -984,11 +985,11 @@ void CXMLParse::buildParsedArea(char * output, int maxLen, BOOL includeRoot)
 
 {
 	char			*ptr;
-	CRfhutilApp		*app;
+	RfhTrace *app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1054,11 +1055,11 @@ char * CXMLParse::processElement(int elem, char *ptr, char *endPtr, BOOL include
 	int				len;
 	char			*namePtr;			// pointer to name as a string
 	char			*valuePtr;
-	CRfhutilApp		*app;				// pointer to application object to locate trace routines
+	RfhTrace *app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if ((app->isTraceEnabled()) && (app->verboseTrace))
@@ -1166,11 +1167,11 @@ char * CXMLParse::processAttrs(int elem, char *ptr, char *endPtr, BOOL includeRo
 	int				valueLen;			// length of the value
 	char			*namePtr;			// pointer to name
 	char			*valuePtr;			// pointer to value
-	CRfhutilApp		*app;				// pointer to application object to locate trace routines
+	RfhTrace *app;				// pointer to application object to locate trace routines
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if ((app->isTraceEnabled()) && (app->verboseTrace))
@@ -1180,7 +1181,7 @@ char * CXMLParse::processAttrs(int elem, char *ptr, char *endPtr, BOOL includeRo
 		valuePtr = names.getNameAddr(xmlElems[elem].value);
 
 		// create the trace line
-		sprintf(traceInfo, "Entering CXMLParse()::processAttrs elem=%d ptr=%8.8X endptr=%8.8X length=%d", elem, (unsigned int)ptr, (unsigned int)endPtr, endPtr-ptr);
+		sprintf(traceInfo, "Entering CXMLParse()::processAttrs elem=%d ptr=%8.8X endptr=%8.8X length=%d", elem, (unsigned int)(uintptr_t)ptr, (unsigned int)(uintptr_t)endPtr, endPtr-ptr);
 
 		// trace entry to CXMLParse()::processAttrs
 		app->logTraceEntry(traceInfo);
@@ -1417,11 +1418,11 @@ int CXMLParse::parseFormattedText(const char *input, const char * rootName)
 	int				parent;
 	const char *	endLine;
 	const char *	ptr;
-	CRfhutilApp *	app;				// pointer to application object
+	RfhTrace *	app;				// pointer to application object
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1533,11 +1534,11 @@ int CXMLParse::parseRootText(const char *input, int length)
 	int				numLines=1;			// number of NL characters
 	const char *	endLine;
 	const char *	ptr;	
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1646,11 +1647,11 @@ int CXMLParse::createXML(char *output, int maxLen)
 	int				result=PARSE_OK;
 	int				parent=0;
 	char			*lastChar;
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1724,11 +1725,11 @@ void CXMLParse::processLine(const char *ptr, const char *endLine)
 	const char *	name;				// pointer to beginning of name
 	const char *	endName;			// pointer to first character after name (might be white space)
 	const char *	valuePtr;			// pointer to value
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1814,11 +1815,11 @@ int CXMLParse::processLongName(const char *name, const char *endName, int parent
 	int			segments=0;
 	int			attrs=0;
 	const char	*ptr;
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -1959,11 +1960,11 @@ int CXMLParse::findOrInsertName(const char *name, const char *endName, int paren
 	bool		notDone;				// working variable to see if loop is finished
 	const char	*occPtr;				// pointer to occurence number
 	char		occNumber[16] = { 0 };			// occurence as ascii characters
-	CRfhutilApp *	app;				// pointer to application object - used for trace
+	RfhTrace *	app;				// pointer to application object - used for trace
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -2129,11 +2130,11 @@ const char * CXMLParse::processLineAttrs(int elem, const char *ptr, const char *
 	const char	*attrValueEnd;	// end of value
 	const char	*equalSign;		// equal sign between name and value
 	char		quote;			// which parentheses to look for 
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())
@@ -2396,11 +2397,11 @@ int CXMLParse::copyXMLData(char *output, char *endOut, const char *valuePtr, int
 {
 	int				i=0;				// index variable
 	char			*ptr;				// pointer to the next output location
-	CRfhutilApp *	app;				// pointer to MFC application object
+	RfhTrace *	app;				// pointer to MFC application object
 	char			traceInfo[512];		// work area for trace line
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// initialize the output pointer
 	ptr = output;
@@ -2695,12 +2696,12 @@ void CXMLParse::dumpNames()
 
 {
 	int				ofs;
-	CRfhutilApp *	app;				// pointer to application object
+	RfhTrace *	app;				// pointer to application object
 	const char *	ptr;
 	char			traceInfo[512];
 
 	// get a pointer to the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// is trace enabled?
 	if (app->isTraceEnabled())

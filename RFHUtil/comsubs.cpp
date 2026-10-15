@@ -21,14 +21,14 @@ Jim MacNair - Initial Contribution
 #include "stdafx.h"
 #include "rfhutil.h"
 #include "comsubs.h"
+#include "rfh_trace.h"
+#include "rfh_codepage.h"
 
-#define DUMP_FILE_NAME "c:\\rfhdump.txt"
+#define DUMP_FILE_NAME rfh_dump_path("rfhdump.txt")
 #define NUMERIC_PC		0
 
 	FILE	*df=NULL;				// debugging file
 
-	BOOL	ccsidInstalled;			// result of checking if code page is installed
-	int		ccsidInsCheck;			// code page to search for
 
 	// memory usage statistics
 	int64_t	totalBytes=0;			// number of bytes allocated
@@ -47,13 +47,7 @@ Jim MacNair - Initial Contribution
 MY_TIME_T GetTime()
 
 {
-	MY_TIME_T	count;
-	if (!QueryPerformanceCounter((LARGE_INTEGER *)&count))
-	{
-		count = 0;
-	}
-
-	return(count);
+	return (MY_TIME_T)rfh_hrtime_now();
 }
 
 /////////////////////////////////////////////////////
@@ -66,25 +60,10 @@ MY_TIME_T GetTime()
 double DiffTime(MY_TIME_T start, MY_TIME_T end)
 
 {
-//	unsigned long diffLong;
-	__int64		diff;
-	__int64		freq;
-	double		usecs;
+	// difference in the high frequency counter, scaled to microseconds
+	int64_t diff = (int64_t)((end - start) * 1000000);
 
-	/* calulate the difference in the high frequency counter */
-	diff = (end - start) * 1000000;
-
-	//diffLong = (unsigned long)(end-start);
-	/* get the frequency*/
-	QueryPerformanceFrequency((LARGE_INTEGER *)&freq);
-
-	/* calculate the result */
-
-	//usecs = (double)diffLong*1000*1000/freq;
-	usecs = (double)diff / freq;
-
-	/* return the result */
-	return(usecs);
+	return (double)diff / (double)rfh_hrtime_frequency();
 }
 
 /////////////////////////////////////////////////////
@@ -362,29 +341,8 @@ void EbcdicToAscii(const unsigned char *dati, unsigned int pl, unsigned char *da
 int EbcdicCharToAsciiChar(int fromCcsid, int toCcsid, const char * input, char * output)
 
 {
-	int		tcount=0;
-	char	defChar='.';
-	wchar_t	ucsChar=0;
-
-	// make sure that from and to code pages are provided
-	if ((fromCcsid > 0) && (toCcsid > 0))
-	{
-		// start by trying to do a proper translation to UCS-2, using Windows
-		tcount = MultiByteToWideChar(fromCcsid, 0, input, 1, &ucsChar, 1);
-
-		// did the function succeed?
-		if (tcount > 0)
-		{
-			// set the default character
-			defChar = '.';
-
-			// try to translate to the target code page
-			tcount = WideCharToMultiByte(toCcsid, 0, &ucsChar, 1, output, 2, &defChar, NULL);
-		}
-	}
-
-	// return the number of characters that were translated
-	return tcount;
+	// translate one character, returning the number of bytes produced
+	return rfh_convert_char(fromCcsid, toCcsid, input, output, 2);
 }
 
 ///////////////////////////////////////////////
@@ -582,7 +540,7 @@ int findcrlf(const unsigned char *datain, const int maxchar)
 //
 //////////////////////////////////////////////////
 
-int findcrlfW(const wchar_t *datain, const int maxchar)
+int findcrlfW(const RFH_UCS2 *datain, const int maxchar)
 
 {
 	int count=maxchar;
@@ -646,7 +604,7 @@ int roundLength2(unsigned char * ptr, const int encoding)
 {
 	int		length;
 
-	length = wcslen((wchar_t *)ptr);
+	length = (int)rfh_ucs2len((const RFH_UCS2 *)ptr);
 
 	if ((length % 2) > 0)
 	{
@@ -877,7 +835,7 @@ void buildInvalidCharTable(char * invalidCharTable)
 	invalidCharTable[127] = '.';	// 0x7F
 
 	// see if we can get the current code page
-	cp = GetACP();
+	cp = rfh_get_acp();
 
 	// set invalid code points to periods
 	// this varies by code page
@@ -1086,9 +1044,7 @@ void translateEbcdicData(unsigned char *out, const unsigned char *in, unsigned i
 	unsigned int	i;
 	int				tcount=0;			// number of characters successfully translated
 	int				asciiCcsid=0;		// ASCII code page to use for EBCDIC to ASCII translations
-	wchar_t			ucsChar[4];			// wide character area to translate one character
 	unsigned char	tempTxt[8];			// area to translate one character
-	char			defChar='.';		// character to be used for characters that cannot be translated
 	char			invalidCharTable[256];
 
 	// figure out what code page this system is using
@@ -1104,14 +1060,8 @@ void translateEbcdicData(unsigned char *out, const unsigned char *in, unsigned i
 	{
 		if ((asciiCcsid > 0) && (ebcdicCP > 0))
 		{
-			// start by trying to do a proper translation, using Windows
-			tcount = MultiByteToWideChar(ebcdicCP, 0, (char *)in + i, 1, ucsChar, 1);
-
-			// did the function succeed
-			if (tcount > 0)
-			{
-				tcount = WideCharToMultiByte(asciiCcsid, 0, ucsChar, 1, (char *)tempTxt, 2, &defChar, NULL);
-			}
+			// start by trying to do a proper translation using the code page services
+			tcount = rfh_convert_char(ebcdicCP, asciiCcsid, (const char *)in + i, (char *)tempTxt, 2);
 		}
 
 		// did we wind up with a single character properly translated by Windows?
@@ -1290,105 +1240,10 @@ char * parseRFH1String(char *ptr, char *value, int maxSize)
 	return ptr;
 }
 
-BOOL CALLBACK EnumCodePagesProc(LPTSTR lpCodePageString)
-
-{
-	// check if this is the code page we are looking for
-	if (atoi(lpCodePageString) == ccsidInsCheck)
-	{
-		// remember we found the one we wanted
-		ccsidInstalled = TRUE;
-	}
-
-	// continue if not found yet
-	return !ccsidInstalled;
-}
-
 BOOL isCodePageInstalled(const int ccsid)
 
 {
-	// initialize two global variables
-	ccsidInstalled = FALSE;
-	ccsidInsCheck = ccsid;
-
-	// invoke the function, which will call back to the EnumCodePagesProc routine above
-	BOOL bRet = EnumSystemCodePages(&EnumCodePagesProc, CP_INSTALLED);
-
-	// return the results
-	return ccsidInstalled;
-}
-
-void processBackspace(CWnd *wnd)
-
-{
- 	int		nStart=0;
-	int		nEnd=0;
-	DWORD	style;
-	CString value;
-
-	// check if the window is enabled and not read only
-	if (!wnd->IsWindowEnabled())
-	{
-		return;
-	}
-
-	// check if the edit box is read only
-	style = wnd->GetStyle();
-	if ((style & ES_READONLY) > 0)
-	{
-		return;
-	}
-
-	// process backspace key
-	// start by getting the current value
-	wnd->GetWindowText(value);
-
-	// get the current location of the caret
-	DWORD wSel = ((CEdit *)wnd)->GetSel();
-	nStart = HIWORD(wSel);
-	nEnd = LOWORD(wSel);
-
-	// make sure there is something in the edit control to start with
-	// and that the cursor is not at offset 0
-	if ((value.GetLength() > 0) && (nEnd > 0))
-	{
-		// check if any characters are selected
-		if (nStart == nEnd)
-		{
-			// nothing selected so select the character to the left of the cursor
-			nStart = nEnd - 1;
-
-			// check if it is a CR or LF character
-			if ((value[nStart] != '\n') && (value[nStart] != '\r'))
-			{
-				// delete the character
-				value.Delete(nStart, 1);
-			}
-			else
-			{
-				// delete the CR or LF character
-				value.Delete(nStart, 1);
-
-				// check for a second character in front of this one
-				if ((nStart > 0) && (((value[nStart-1] == '\n') || (value[nStart-1] == '\r'))))
-				{
-					// delete the CR or LF character
-					value.Delete(nStart-1, 1);
-				}
-			}
-		}
-		else
-		{
-			// just delete the selected characters
-			value.Delete(nStart, nEnd - nStart);
-		}
-
-		// update the text in the edit control
-		wnd->SetWindowText((LPCTSTR)value);
-
-		// point the caret at the correct location
-		((CEdit *)wnd)->SetSel(nStart, nStart, TRUE);
-	}
+	return rfh_is_codepage_installed(ccsid);
 }
 
 //////////////////////////////////
@@ -1430,7 +1285,7 @@ int UCS2ToMultiByte(unsigned char * ucsptr, int ucslen, unsigned char * mbsptr, 
 {
 	int		charCount=0;
 
-	charCount = wcstombs((char *)mbsptr, (const wchar_t *)ucsptr, mbslen);
+	charCount = rfh_ucs2_to_c_locale((const RFH_UCS2 *)ucsptr, (char *)mbsptr, mbslen);
 
 	if (0 == charCount)
 	{
@@ -1457,7 +1312,7 @@ int MultiByteToUCS2(unsigned char * ucsptr, int ucslen, unsigned char * mbsptr, 
 {
 	int		charCount=0;
 
-	charCount = mbstowcs((wchar_t *)ucsptr, (char *)mbsptr, ucslen/2);
+	charCount = rfh_c_locale_to_ucs2((char *)mbsptr, (RFH_UCS2 *)ucsptr, ucslen/2);
 
 	if (0 == charCount)
 	{
@@ -1475,11 +1330,11 @@ int MultiByteToUCS2(unsigned char * ucsptr, int ucslen, unsigned char * mbsptr, 
 //
 ///////////////////////////////////////
 
-int char1208toWCS(wchar_t * ucsptr, const unsigned char * mbsptr)
+int char1208toWCS(RFH_UCS2 * ucsptr, const unsigned char * mbsptr)
 
 {
 	int			numBytes=0;
-	wchar_t		result;
+	RFH_UCS2		result;
 
 	numBytes = mbsCharCount(mbsptr);
 
@@ -1576,7 +1431,7 @@ int mbsCharCount(const unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1252(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1252(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -1715,7 +1570,7 @@ int WCSto1252(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1250(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1250(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -2238,7 +2093,7 @@ int WCSto1250(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1251(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1251(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -2776,7 +2631,7 @@ int WCSto1251(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1253(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1253(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -3251,7 +3106,7 @@ int WCSto1253(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1254(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1254(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -3766,7 +3621,7 @@ int WCSto1254(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1255(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1255(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -4213,7 +4068,7 @@ int WCSto1255(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1256(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1256(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -4755,7 +4610,7 @@ int WCSto1256(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1257(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1257(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -5248,7 +5103,7 @@ int WCSto1257(const wchar_t * ucsptr, unsigned char * mbsptr)
 //
 ////////////////////////////////////////
 
-int WCSto1258(const wchar_t * ucsptr, unsigned char * mbsptr)
+int WCSto1258(const RFH_UCS2 * ucsptr, unsigned char * mbsptr)
 
 {
 	int					numChars=1;
@@ -5751,12 +5606,12 @@ void * rfhMalloc(size_t length, const char * tag)
 
 {
 	char *			ptr;
-	CRfhutilApp *	app;				// pointer to the application object
+	RfhTrace *	app;				// pointer to the application object
 	char			traceInfo[512];		// work variable to build trace message
 	char            tmpTag[9] = { 0 };
 
 	// find the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// allocate the memory plus an additional 16 bytes
 	ptr = (char *)malloc(length + 16);
@@ -5768,7 +5623,7 @@ void * rfhMalloc(size_t length, const char * tag)
 		if (app->isTraceEnabled())
 		{
 			// create the trace line
-			sprintf(traceInfo, "rfhMalloc() - malloc failed %8.8s length=%d mallocReqs=%I64d totalBytes=%I64d", tag, length, mallocReqs, totalBytes);
+			sprintf(traceInfo, "rfhMalloc() - malloc failed %8.8s length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64 "", tag, length, mallocReqs, totalBytes);
 
 			// trace entry to rfhMalloc
 			app->logTraceEntry(traceInfo);
@@ -5803,7 +5658,7 @@ void * rfhMalloc(size_t length, const char * tag)
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering rfhMalloc() %8.8s ptr=%8.8X length=%d mallocReqs=%I64d totalBytes=%I64d", tag, (unsigned int)ptr, length, mallocReqs, totalBytes);
+		sprintf(traceInfo, "Entering rfhMalloc() %8.8s ptr=%8.8X length=%d mallocReqs=%" PRId64 " totalBytes=%" PRId64 "", tag, (unsigned int)(uintptr_t)ptr, length, mallocReqs, totalBytes);
 
 		// trace entry to rfhMalloc
 		app->logTraceEntry(traceInfo);
@@ -5816,13 +5671,13 @@ void rfhFree(void * ptr)
 
 {
 	char *	realPtr;
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	size_t			len=0;				// variable to retrieve allocated length
 	char			tagData[16];
 	char			traceInfo[512];		// work variable to build trace message
 
 	// find the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// keep track of the number of free requests
 	freeReqs++;
@@ -5852,7 +5707,7 @@ void rfhFree(void * ptr)
 		if (app->isTraceEnabled())
 		{
 			// create the trace line
-			sprintf(traceInfo, "Entering rfhFree() %8.8s ptr=%8.8X realPtr=%8.8X len=%d freeReqs=%I64d freeBytes=%I64d currBytes=%I64d", tagData, (unsigned int)ptr, (unsigned int)realPtr, len, freeReqs, freeBytes, currBytes);
+			sprintf(traceInfo, "Entering rfhFree() %8.8s ptr=%8.8X realPtr=%8.8X len=%d freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64 "", tagData, (unsigned int)(uintptr_t)ptr, (unsigned int)(uintptr_t)realPtr, len, freeReqs, freeBytes, currBytes);
 
 			// trace entry to rfhMalloc
 			app->logTraceEntry(traceInfo);
@@ -5863,17 +5718,17 @@ void rfhFree(void * ptr)
 void rfhTraceStats()
 
 {
-	CRfhutilApp *	app;
+	RfhTrace *	app;
 	char			traceInfo[512];		// work variable to build trace message
 
 	// find the application object
-	app = (CRfhutilApp *)AfxGetApp();
+	app = rfhGetTrace();
 
 	// check if trace is enabled
 	if (app->isTraceEnabled())
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering rfhTraceStats() mallocReqs=%I64d totalBytes=%I64d freeReqs=%I64d freeBytes=%I64d currBytes=%I64d maxBytes=%I64d", mallocReqs, totalBytes, freeReqs, freeBytes, currBytes, maxBytes);
+		sprintf(traceInfo, "Entering rfhTraceStats() mallocReqs=%" PRId64 " totalBytes=%" PRId64 " freeReqs=%" PRId64 " freeBytes=%" PRId64 " currBytes=%" PRId64 " maxBytes=%" PRId64 "", mallocReqs, totalBytes, freeReqs, freeBytes, currBytes, maxBytes);
 
 		// trace entry to rfhMalloc
 		app->logTraceEntry(traceInfo);

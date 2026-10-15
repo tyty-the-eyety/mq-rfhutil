@@ -14,6 +14,10 @@ Contributors:
 Jim MacNair - Initial Contribution
 */
 
+#include <string>
+#include "rfh_platform.h"
+
+
 // JsonParse.h: interface for the CJsonParse class.
 //
 //////////////////////////////////////////////////////////////////////
@@ -67,7 +71,7 @@ private:
 	int parseJSON(const char *jsonIn, int length);
 	JSONSTRUCT * jsonElems;
 	int numElements;
-	CString lastError;
+	std::string lastError;
 	Names	names;
 };
 

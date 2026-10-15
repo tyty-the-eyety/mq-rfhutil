@@ -22,6 +22,7 @@ Jim MacNair - Initial Contribution
 #include "rfhutil.h"
 #include "MQMDPAGE.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "mqsubs.h"
 #include "windows.h"
 #include "cics.h"

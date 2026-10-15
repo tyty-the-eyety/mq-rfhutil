@@ -23,6 +23,7 @@ Jim MacNair - Initial Contribution
 #include "PubSub.h"
 #include "mqsubs.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "xmlsubs.h"
 
 // include for RFH2 constants, etc

@@ -23,6 +23,7 @@ Jim MacNair - Initial Contribution
 #include "ThemeManager.h"
 #include "Ims.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "mqsubs.h"
 
 #ifdef _DEBUG

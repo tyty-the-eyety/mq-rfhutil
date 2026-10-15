@@ -23,6 +23,7 @@ Jim MacNair - Initial Contribution
 #include "ThemeManager.h"
 #include "pscr.h"
 #include "comsubs.h"
+#include "uisubs.h"
 #include "xmlsubs.h"
 
 // include for RFH2 constants, etc

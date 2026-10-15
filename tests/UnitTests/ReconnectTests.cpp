@@ -14,6 +14,7 @@
 #include "stdafx.h"
 #include "rfhutil.h"
 #include <gtest/gtest.h>
+#include <math.h>
 
 // ---------------------------------------------------------------------------
 // Inline mirror of DataArea::calculateReconnectDelay()
