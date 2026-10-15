@@ -32,6 +32,7 @@ Jim MacNair - Initial Contribution
 #include <afxmt.h>
 #include "resource.h"       // main symbols
 #include "DataArea.h"	// Added by ClassView
+#include "rfh_trace.h"
 
 #define MAX_SAVED_QNAMES 20
 
@@ -163,7 +164,7 @@ Jim MacNair - Initial Contribution
 // See rfhutil.cpp for the implementation of this class
 //
 
-class CRfhutilApp : public CWinApp
+class CRfhutilApp : public CWinApp, public RfhTrace
 {
 public:
 	BOOL is64bit;
@@ -193,7 +194,6 @@ public:
 	char productType[16];
 	char VRMF[32];
 	BOOL isRecentFileMenuEnabled();
-	BOOL verboseTrace;
 	BOOL fontTrace;
 	BOOL	initUseSSL;
 	CString initQname;

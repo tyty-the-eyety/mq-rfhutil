@@ -18,6 +18,12 @@ Jim MacNair - Initial Contribution
 
 #include "stdafx.h"
 #include "rfhutil.h"
+#include <type_traits>
+
+// CRfhutilApp must use the verboseTrace it inherits from RfhTrace: a member of its
+// own would hide it, and the shared sources would read the always-FALSE base copy.
+static_assert(std::is_same<decltype(&CRfhutilApp::verboseTrace), BOOL RfhTrace::*>::value,
+              "CRfhutilApp must not shadow RfhTrace::verboseTrace");
 #include "ThemeManager.h"
 
 #include "MainFrm.h"
@@ -221,6 +227,9 @@ CRfhutilApp::CRfhutilApp()
 	// initialize trace file to NULL (no trace enabled)
 	traceFile = NULL;
 	verboseTrace = FALSE;
+
+	// the shared core sources trace through this application object
+	rfhSetTrace(this);
 
 #ifdef MQCLIENT
 	for (int i=0; i<RFHUTIL_LAST_CLIENT_MAX; i++)

@@ -74,7 +74,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <!-- Test project dir FIRST so our stubs are found on /I search (after source dir) -->
-      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Force-include prelude.h before each TU to block rfhutil.h → DataArea.h → cmqc.h -->
       <ForcedIncludeFiles>prelude.h</ForcedIncludeFiles>
@@ -96,7 +96,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_WIN64;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Force-include prelude.h before each TU to block rfhutil.h → DataArea.h → cmqc.h -->
       <ForcedIncludeFiles>prelude.h</ForcedIncludeFiles>
@@ -117,6 +117,9 @@
     <ClCompile Include="..\..\RFHUtil\XMLParse.cpp" />
     <ClCompile Include="..\..\RFHUtil\Names.cpp" />
     <ClCompile Include="..\..\RFHUtil\mqerror.cpp" />
+    <ClCompile Include="..\..\core\platform\rfh_platform.cpp" />
+    <ClCompile Include="..\..\core\platform\rfh_codepage.cpp" />
+    <ClCompile Include="..\..\core\platform\rfh_trace.cpp" />
   </ItemGroup>
 
   <!-- Test files -->
@@ -132,6 +135,8 @@
     <ClCompile Include="ReconnectTests.cpp" />
     <ClCompile Include="FileFormatTests.cpp" />
     <ClCompile Include="MQErrorTests.cpp" />
+    <ClCompile Include="..\core\PlatformTests.cpp" />
+    <ClCompile Include="..\core\SharedSourcesTests.cpp" />
   </ItemGroup>
 
   <!-- Headers -->
