@@ -88,7 +88,8 @@ my $backspace;
 
 # ---------------------------------------------------------------- uisubs (MFC only)
 {
-    my $crlf = 1;
+    # new files follow the repository's LF storage
+    my $crlf = 0;
     save('RFHUtil/uisubs.h', "// uisubs.h - MFC-only helpers moved out of comsubs so comsubs stays portable.\n\n#pragma once\n\nvoid processBackspace(CWnd *wnd);\n", $crlf);
     save('RFHUtil/uisubs.cpp', "// uisubs.cpp - MFC-only helpers moved out of comsubs.cpp so comsubs stays portable.\n\n#include \"stdafx.h\"\n#include \"uisubs.h\"\n\n$backspace", $crlf);
     for my $f (qw(CICS.cpp General.cpp MQMDPAGE.cpp pscr.cpp Ims.cpp Dlq.cpp PubSub.cpp jms.cpp RFH.cpp PS.cpp)) {
