@@ -40,3 +40,15 @@ add_executable(rfhutil_unit_tests
 target_include_directories(rfhutil_unit_tests PRIVATE UnitTests)
 target_link_libraries(rfhutil_unit_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_unit_tests)
+
+add_executable(rfhutil_core_tests core/ResultTests.cpp)
+target_link_libraries(rfhutil_core_tests PRIVATE rfhcore GTest::gtest_main)
+gtest_discover_tests(rfhutil_core_tests)
+
+add_executable(rfhutil_loader_tests core/MqLoaderTests.cpp)
+target_link_libraries(rfhutil_loader_tests PRIVATE rfhcore GTest::gtest_main)
+gtest_discover_tests(rfhutil_loader_tests PROPERTIES LABELS mq)
+
+add_executable(rfhutil_mq_tests core/MqSessionTests.cpp)
+target_link_libraries(rfhutil_mq_tests PRIVATE rfhcore GTest::gtest_main)
+gtest_discover_tests(rfhutil_mq_tests PROPERTIES LABELS mq RUN_SERIAL TRUE)

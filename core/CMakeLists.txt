@@ -4,6 +4,13 @@ if(CMAKE_CXX_BYTE_ORDER STREQUAL "BIG_ENDIAN")
     message(FATAL_ERROR "the shared RFHUtil sources assume a little-endian host")
 endif()
 
+find_path(MQ_INCLUDE_DIR cmqc.h
+    HINTS "${MQ_HOME}/inc" "${MQ_HOME}/tools/c/include"
+    NO_DEFAULT_PATH
+    REQUIRED)
+
+find_package(Threads REQUIRED)
+
 # Shared sources that also build into the Windows MFC application. They stay in
 # RFHUtil/ so the Visual Studio projects keep their paths.
 set(RFHUTIL_SHARED_SOURCES
@@ -19,14 +26,22 @@ add_library(rfhcore STATIC
     platform/rfh_platform.cpp
     platform/rfh_codepage.cpp
     platform/rfh_trace.cpp
+    mq/rfh_result.cpp
+    mq/rfh_mq_loader.cpp
+    mq/rfh_mq_session.cpp
     ${RFHUTIL_SHARED_SOURCES}
 )
 
 target_include_directories(rfhcore
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/platform
+        ${CMAKE_CURRENT_SOURCE_DIR}/mq
+        ${CMAKE_CURRENT_SOURCE_DIR}/message
         ${PROJECT_SOURCE_DIR}/RFHUtil
+        ${MQ_INCLUDE_DIR}
 )
+
+target_link_libraries(rfhcore PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 
 if(NOT WIN32)
     # The shared sources include "stdafx.h" and "rfhutil.h", which pull in MFC on
@@ -42,5 +57,8 @@ if(NOT WIN32)
     # their historic warnings, which are only in trace formatting.
     set_source_files_properties(
         platform/rfh_platform.cpp platform/rfh_codepage.cpp platform/rfh_trace.cpp
+        mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp
         PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+    # cmqstrc.h returns string literals as char *.
+    set_source_files_properties(mq/rfh_result.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-write-strings")
 endif()
