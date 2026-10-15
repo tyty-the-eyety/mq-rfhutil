@@ -6,12 +6,15 @@
 
 #include <algorithm>
 #include <limits>
+#include <string>
+#include <vector>
 
 namespace rfh
 {
 	namespace
 	{
 		const MQLONG kWaitSliceMs = 1000;
+		const size_t kMaxBufferBytes = 104857600;	// the largest message MQ allows (100 MB)
 
 		// Copies text into a blank-padded MQ character field.
 		bool copyField(MQCHAR * field, size_t fieldLength, const std::string & text)
@@ -53,6 +56,28 @@ namespace rfh
 		{
 			return Result::failure("Not connected to a queue manager");
 		}
+
+		// Reasons after which the connection or the queue manager can no longer be used.
+		bool connectionLost(MQLONG rc)
+		{
+			return (rc == MQRC_CONNECTION_BROKEN) || (rc == MQRC_Q_MGR_QUIESCING) ||
+			       (rc == MQRC_Q_MGR_STOPPING) || (rc == MQRC_CONNECTION_QUIESCING);
+		}
+
+		// Reasons after which a handle is gone even though its MQCLOSE failed.
+		bool handleGone(MQLONG rc)
+		{
+			return (rc == MQRC_CONNECTION_BROKEN) || (rc == MQRC_HCONN_ERROR) || (rc == MQRC_HOBJ_ERROR);
+		}
+
+		// An open that fails with 2042 on a queue this session holds open conflicts with itself.
+		void explainInUse(Result & r, bool heldBySession)
+		{
+			if (heldBySession && (r.rc == MQRC_OBJECT_IN_USE))
+			{
+				r.text += " - this session already has the queue open; close it first";
+			}
+		}
 	}
 
 	MqSession::~MqSession()
@@ -61,6 +86,30 @@ namespace rfh
 		{
 			disconnect();
 		}
+	}
+
+	// After a lost connection every handle is unusable: release what MQ still holds
+	// and make the session ready for connect() again.
+	void MqSession::dropIfBroken(MQLONG rc)
+	{
+		if (!connectionLost(rc))
+		{
+			return;
+		}
+
+		if (isConnected())
+		{
+			MQLONG cc = MQCC_OK;
+			MQLONG reason = MQRC_NONE;
+			api.disc(&hConn, &cc, &reason);	// the result is of no use: the connection is already gone
+		}
+
+		hConn = MQHC_UNUSABLE_HCONN;
+		hObj = MQHO_UNUSABLE_HOBJ;
+		openName.clear();
+		openRemoteQm.clear();
+		openOptions = 0;
+		browsePosition = 0;
 	}
 
 	Result MqSession::connect(const ConnectOptions & options)
@@ -93,6 +142,9 @@ namespace rfh
 		MQCD cd = { MQCD_CLIENT_CONN_DEFAULT };
 		MQCSP csp = { MQCSP_DEFAULT };
 		cno.Version = MQCNO_VERSION_6;	// SecurityParmsPtr (v5) and CCDTUrlPtr (v6)
+		// Handles are not tied to the creating thread, and a second session on the same
+		// thread gets its own connection instead of MQRC_ALREADY_CONNECTED.
+		cno.Options |= MQCNO_HANDLE_SHARE_NO_BLOCK;
 
 		if (options.mode == Mode::Bindings)
 		{
@@ -114,6 +166,7 @@ namespace rfh
 				}
 
 				cd.Version = MQCD_CURRENT_VERSION;
+				cd.MaxMsgLength = 104857600;	// as the MFC application does; the default would limit messages to 4 MB
 				cd.TransportType = MQXPT_TCP;
 				cd.HeartbeatInterval = options.heartbeat;
 				cd.KeepAliveInterval = options.keepAlive;
@@ -159,6 +212,16 @@ namespace rfh
 		}
 
 		Result closed = closeQueue();
+		if (!isConnected())
+		{
+			// the close found the connection lost and released it
+			Result lost = Result::success();
+			if (!closed.ok())
+			{
+				lost.warnings.push_back(closed.text);
+			}
+			return lost;
+		}
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
@@ -166,7 +229,7 @@ namespace rfh
 		hConn = MQHC_UNUSABLE_HCONN;
 
 		Result r = Result::fromMq("MQDISC", cc, rc);
-		if (r.ok() && !closed.ok())
+		if (!closed.ok())
 		{
 			r.warnings.push_back(closed.text);
 		}
@@ -189,6 +252,7 @@ namespace rfh
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
 		api.open(hConn, &od, options | MQOO_FAIL_IF_QUIESCING, &obj, &cc, &rc);
+		dropIfBroken(rc);
 
 		if (cc == MQCC_FAILED)
 		{
@@ -224,16 +288,25 @@ namespace rfh
 
 	Result MqSession::closeQueue(CloseOption option)
 	{
-		browsePosition = 0;
-
 		if (hObj == MQHO_UNUSABLE_HOBJ)
 		{
+			browsePosition = 0;
 			return Result::success();
 		}
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
 		api.close(hConn, &hObj, closeOptionValue(option), &cc, &rc);
+
+		if ((cc == MQCC_FAILED) && !handleGone(rc))
+		{
+			// the handle is still live (for example MQCLOSE with an option the queue
+			// does not allow): keep it so it is neither leaked nor reopened blindly
+			return Result::fromMq("MQCLOSE", cc, rc);
+		}
+
+		browsePosition = 0;
+		dropIfBroken(rc);
 
 		hObj = MQHO_UNUSABLE_HOBJ;
 		openName.clear();
@@ -294,16 +367,25 @@ namespace rfh
 		MQLONG rc = MQRC_NONE;
 		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)message.body.size(),
 		        message.body.empty() ? nullptr : message.body.data(), &cc, &rc);
+		dropIfBroken(rc);
 
 		return Result::fromMq("MQPUT", cc, rc);
 	}
 
 	Result MqSession::getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs)
 	{
-		std::vector<unsigned char> buffer(std::max<size_t>(options.initialBufferSize, 1));
-		MQLONG remaining = std::max<MQLONG>(waitMs, 0);
+		const bool unlimited = (waitMs == MQWI_UNLIMITED);
+		if ((waitMs < 0) && !unlimited)
+		{
+			return Result::failure("Invalid wait interval");
+		}
+
+		const bool browsing = (getOptions & (MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT)) != 0;
+		std::vector<unsigned char> buffer(std::min<size_t>(std::max<size_t>(options.initialBufferSize, 1), kMaxBufferBytes));
+		MQLONG remaining = unlimited ? 0 : waitMs;
 		bool retryByMsgId = false;
 		MQBYTE24 retryMsgId;
+		int convertRetries = 0;
 
 		for (;;)
 		{
@@ -312,8 +394,8 @@ namespace rfh
 			if (options.convert)
 			{
 				// MQGMO_CONVERT converts to the CCSID and encoding given in the MQMD
-				md.CodedCharSetId = message.mqmd.CodedCharSetId;
-				md.Encoding = message.mqmd.Encoding;
+				md.CodedCharSetId = options.convertCcsid;
+				md.Encoding = options.convertEncoding;
 			}
 
 			MQGMO gmo = { MQGMO_DEFAULT };
@@ -337,11 +419,13 @@ namespace rfh
 			}
 			if (retryByMsgId)
 			{
+				// The MsgId MQ returned identifies the message. (A MsgId of MQMI_NONE would
+				// match any message, but MQ assigns every message a non-zero MsgId.)
 				gmo.MatchOptions |= MQMO_MATCH_MSG_ID;
 				memcpy(md.MsgId, retryMsgId, sizeof(md.MsgId));
 			}
 
-			MQLONG slice = std::min(remaining, kWaitSliceMs);
+			MQLONG slice = unlimited ? kWaitSliceMs : std::min(remaining, kWaitSliceMs);
 			if ((slice > 0) && !retryByMsgId)
 			{
 				gmo.Options |= MQGMO_WAIT;
@@ -357,20 +441,49 @@ namespace rfh
 			MQLONG cc = MQCC_OK;
 			MQLONG rc = MQRC_NONE;
 			api.get(hConn, obj, &md, &gmo, (MQLONG)buffer.size(), buffer.data(), &dataLength, &cc, &rc);
+			dropIfBroken(rc);
 
-			if ((rc == MQRC_TRUNCATED_MSG_FAILED) && (dataLength > (MQLONG)buffer.size()))
+			if ((rc == MQRC_TRUNCATED_MSG_FAILED) && (dataLength > 0) && ((size_t)dataLength > buffer.size()))
 			{
 				// The message stays on the queue and a browse cursor does not move, so
-				// repeat the same get matched on the MsgId MQ just reported.
-				buffer.resize((size_t)dataLength);
+				// repeat the same get matched on the MsgId MQ just reported. dataLength is
+				// the unconverted length; converted text can be longer, so leave room.
+				size_t wanted = (size_t)dataLength;
+				if (options.convert)
+				{
+					wanted *= 4;
+				}
+				wanted = std::min(wanted, kMaxBufferBytes);
+
+				if (wanted > buffer.size())
+				{
+					buffer.resize(wanted);
+					retryByMsgId = true;
+					memcpy(retryMsgId, md.MsgId, sizeof(retryMsgId));
+					continue;
+				}
+			}
+
+			if (((rc == MQRC_CONVERTED_MSG_TOO_BIG) || (rc == MQRC_CONVERTED_STRING_TOO_BIG)) &&
+			    browsing && (convertRetries < 2) && (buffer.size() < kMaxBufferBytes))
+			{
+				// The converted data did not fit and the unconverted message was returned.
+				// A browse consumed nothing, so read it again with room for the expansion.
+				// The browse cursor has moved past the message, so find it from the start.
+				buffer.resize(std::min(buffer.size() * 4, kMaxBufferBytes));
+				convertRetries++;
 				retryByMsgId = true;
 				memcpy(retryMsgId, md.MsgId, sizeof(retryMsgId));
+				getOptions = (getOptions & ~MQGMO_BROWSE_NEXT) | MQGMO_BROWSE_FIRST;
 				continue;
 			}
 
-			if ((rc == MQRC_NO_MSG_AVAILABLE) && (remaining > slice) && (slice > 0))
+			if ((rc == MQRC_NO_MSG_AVAILABLE) && (slice > 0) && (unlimited || (remaining > slice)))
 			{
-				remaining -= slice;
+				if (!unlimited)
+				{
+					remaining -= slice;
+				}
 				if ((options.cancel != nullptr) && options.cancel->load())
 				{
 					Result r = Result::fromMq("MQGET", cc, rc);
@@ -386,7 +499,12 @@ namespace rfh
 				message.body.assign(buffer.begin(), buffer.begin() + std::min<size_t>((size_t)dataLength, buffer.size()));
 			}
 
-			return Result::fromMq("MQGET", cc, rc);
+			Result r = Result::fromMq("MQGET", cc, rc);
+			if (retryByMsgId && (rc == MQRC_NO_MSG_AVAILABLE))
+			{
+				r.text += " - message was removed before it could be re-read";
+			}
+			return r;
 		}
 	}
 
@@ -401,6 +519,13 @@ namespace rfh
 		step.mode = GetMode::BrowseNext;
 		while (r.ok() && (browsePosition < position))
 		{
+			if ((options.cancel != nullptr) && options.cancel->load())
+			{
+				// message holds an earlier position: report failure so it is not used
+				r.cc = MQCC_FAILED;
+				r.text += " - cancelled";
+				return r;
+			}
 			r = get(queue, message, step);
 		}
 
@@ -416,6 +541,13 @@ namespace rfh
 
 		if (options.mode == GetMode::BrowsePrevious)
 		{
+			if ((browsePosition < 0) && (openName == queue))
+			{
+				Result r = Result::fromMq("MQGET", MQCC_FAILED, MQRC_NO_MSG_AVAILABLE);
+				r.text += " - browse position unknown after a destructive get; browse first";
+				return r;
+			}
+
 			if ((browsePosition <= 1) || (openName != queue))
 			{
 				Result r = Result::fromMq("MQGET", MQCC_FAILED, MQRC_NO_MSG_AVAILABLE);
@@ -442,13 +574,13 @@ namespace rfh
 
 		Result r = getOnce(hObj, message, options, getOptions, options.waitMs);
 
-		if (r.ok())
+		if (r.ok() && isConnected())
 		{
 			switch (options.mode)
 			{
 			case GetMode::BrowseFirst: browsePosition = 1; break;
-			case GetMode::BrowseNext: browsePosition++; break;
-			case GetMode::Destructive: browsePosition = 0; break;	// a destructive get ends the browse
+			case GetMode::BrowseNext: if (browsePosition >= 0) browsePosition++; break;
+			case GetMode::Destructive: if (browsePosition != 0) browsePosition = -1; break;	// the browse cursor no longer maps to a position
 			case GetMode::BrowsePrevious: break;
 			}
 		}
@@ -464,10 +596,13 @@ namespace rfh
 			return notConnected();
 		}
 
+		const bool heldBySession = (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue);
+
 		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
 		Result opened = openQueue(queue, std::string(), MQOO_INQUIRE, obj);
 		if (!opened.ok())
 		{
+			explainInUse(opened, heldBySession);
 			return opened;
 		}
 
@@ -475,11 +610,20 @@ namespace rfh
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
 		api.inq(hConn, obj, 1, &selector, 1, &count, 0, nullptr, &cc, &rc);
+		dropIfBroken(rc);
 		Result r = Result::fromMq("MQINQ", cc, rc);
 
-		MQLONG ccc = MQCC_OK;
-		MQLONG crc = MQRC_NONE;
-		api.close(hConn, &obj, MQCO_NONE, &ccc, &crc);
+		if (isConnected())
+		{
+			MQLONG ccc = MQCC_OK;
+			MQLONG crc = MQRC_NONE;
+			api.close(hConn, &obj, MQCO_NONE, &ccc, &crc);
+			dropIfBroken(crc);
+			if (ccc == MQCC_FAILED)
+			{
+				r.warnings.push_back(Result::fromMq("MQCLOSE", ccc, crc).text);
+			}
+		}
 
 		return r;
 	}
@@ -492,10 +636,13 @@ namespace rfh
 			return notConnected();
 		}
 
+		const bool heldBySession = (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue);
+
 		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
 		Result opened = openQueue(queue, std::string(), MQOO_INPUT_AS_Q_DEF, obj);
 		if (!opened.ok())
 		{
+			explainInUse(opened, heldBySession);
 			return opened;
 		}
 
@@ -511,6 +658,7 @@ namespace rfh
 			MQLONG cc = MQCC_OK;
 			MQLONG rc = MQRC_NONE;
 			api.get(hConn, obj, &md, &gmo, 0, &unused, &dataLength, &cc, &rc);
+			dropIfBroken(rc);
 
 			if ((cc == MQCC_OK) || (rc == MQRC_TRUNCATED_MSG_ACCEPTED))
 			{
@@ -520,12 +668,29 @@ namespace rfh
 
 			// an empty queue is the expected end of a purge
 			r = (rc == MQRC_NO_MSG_AVAILABLE) ? Result::success() : Result::fromMq("MQGET", cc, rc);
+			if (!r.ok())
+			{
+				r.text += " after " + std::to_string(count) + " messages";
+			}
 			break;
 		}
 
-		MQLONG ccc = MQCC_OK;
-		MQLONG crc = MQRC_NONE;
-		api.close(hConn, &obj, MQCO_NONE, &ccc, &crc);
+		if (isConnected())
+		{
+			MQLONG ccc = MQCC_OK;
+			MQLONG crc = MQRC_NONE;
+			api.close(hConn, &obj, MQCO_NONE, &ccc, &crc);
+			dropIfBroken(crc);
+			if (ccc == MQCC_FAILED)
+			{
+				r.warnings.push_back(Result::fromMq("MQCLOSE", ccc, crc).text);
+			}
+		}
+
+		if (r.ok() && heldBySession)
+		{
+			browsePosition = 0;	// the session's own cursor now sits on an emptied queue
+		}
 
 		return r;
 	}

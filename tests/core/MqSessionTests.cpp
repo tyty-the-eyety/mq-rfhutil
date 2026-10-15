@@ -44,6 +44,7 @@ namespace
 
     const char * kQueue = "RFHUTIL.TEST.Q";
     const char * kEmptyQueue = "RFHUTIL.TEST.EMPTY";
+    const char * kExclQueue = "RFHUTIL.TEST.EXCL";    // exclusive input: a second open by the same session fails with 2042
 
     // Runs MQSC commands against the bindings queue manager; returns true on success.
     // The commands go to runmqsc's standard input; only validated names reach the shell.
@@ -90,12 +91,14 @@ protected:
     {
         signal(SIGPIPE, SIG_IGN);   // a runmqsc that exits early must not kill the tests
         queuesReady = runMqsc(std::string("DEFINE QLOCAL(") + kQueue + ") DEFSOPT(SHARED) SHARE REPLACE\n"
-                              "DEFINE QLOCAL(" + kEmptyQueue + ") REPLACE");
+                              "DEFINE QLOCAL(" + kEmptyQueue + ") REPLACE\n"
+                              "DEFINE QLOCAL(" + kExclQueue + ") DEFSOPT(EXCL) NOSHARE REPLACE");
     }
 
     static void TearDownTestSuite()
     {
-        runMqsc(std::string("DELETE QLOCAL(") + kQueue + ") PURGE\nDELETE QLOCAL(" + kEmptyQueue + ") PURGE");
+        runMqsc(std::string("DELETE QLOCAL(") + kQueue + ") PURGE\nDELETE QLOCAL(" + kEmptyQueue + ") PURGE\n"
+                 "DELETE QLOCAL(" + kExclQueue + ") PURGE");
     }
 
     void SetUp() override
@@ -119,6 +122,7 @@ protected:
         MQLONG purged = 0;
         ASSERT_TRUE(session.purge(kQueue, purged).ok());
         ASSERT_TRUE(session.purge(kEmptyQueue, purged).ok());
+        ASSERT_TRUE(session.purge(kExclQueue, purged).ok());
     }
 
     MqSession session;
@@ -353,6 +357,188 @@ TEST_F(MqBindingsTest, DisconnectEndsSession)
 
     Message in;
     EXPECT_EQ("Not connected to a queue manager", session.get(kQueue, in, GetOptions()).text);
+}
+
+TEST_F(MqBindingsTest, UnlimitedWaitKeepsWaitingUntilCancelled)
+{
+    std::atomic<bool> cancel(false);
+    GetOptions get;
+    get.waitMs = MQWI_UNLIMITED;
+    get.cancel = &cancel;
+
+    std::thread canceller([&cancel] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        cancel = true;
+    });
+
+    auto start = std::chrono::steady_clock::now();
+    Message in;
+    Result r = session.get(kEmptyQueue, in, get);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    canceller.join();
+
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc);
+    EXPECT_NE(std::string::npos, r.text.find("wait cancelled"));
+    EXPECT_GE(elapsed.count(), 1400);
+    EXPECT_LT(elapsed.count(), 4000);
+}
+
+TEST_F(MqBindingsTest, NegativeWaitIsRejectedWithoutWaiting)
+{
+    GetOptions get;
+    get.waitMs = -5;
+
+    auto start = std::chrono::steady_clock::now();
+    Message in;
+    Result r = session.get(kEmptyQueue, in, get);
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Invalid wait interval", r.text);
+    EXPECT_LT(elapsed.count(), 500);
+}
+
+TEST_F(MqBindingsTest, TwoSessionsAreIndependent)
+{
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    options.qmName = bindingsQm();
+
+    MqSession a;
+    MqSession b;
+    ASSERT_TRUE(a.connect(options).ok());
+    Result cb = b.connect(options);
+    EXPECT_EQ(MQCC_OK, cb.cc) << cb.text;
+    EXPECT_NE(MQRC_ALREADY_CONNECTED, cb.rc);
+    ASSERT_TRUE(b.disconnect().ok());
+
+    Message out = textMessage("still connected");
+    Result put = a.put(kQueue, out, PutOptions());
+    ASSERT_TRUE(put.ok()) << put.text;
+    GetOptions get;
+    Message in;
+    Result r = a.get(kQueue, in, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("still connected", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, CloseFailureKeepsHandle)
+{
+    Message out = textMessage("exclusive");
+    ASSERT_TRUE(session.put(kExclQueue, out, PutOptions()).ok());
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message in;
+    ASSERT_TRUE(session.get(kExclQueue, in, browse).ok());
+
+    Result bad = session.closeQueue(CloseOption::Delete);
+    EXPECT_EQ(MQRC_OPTION_NOT_VALID_FOR_TYPE, bad.rc) << bad.text;
+
+    Result good = session.closeQueue();
+    EXPECT_TRUE(good.ok()) << good.text;
+
+    Result r = session.get(kExclQueue, in, GetOptions());
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("exclusive", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, ConvertTargetDoesNotDrift)
+{
+    Message first;
+    memcpy(first.mqmd.Format, MQFMT_NONE, MQ_FORMAT_LENGTH);
+    first.mqmd.CodedCharSetId = 500;
+    first.body.push_back(0xC1);
+    ASSERT_TRUE(session.put(kQueue, first, PutOptions()).ok());
+
+    Message second = textMessage("hello");
+    second.mqmd.CodedCharSetId = 1208;
+    ASSERT_TRUE(session.put(kQueue, second, PutOptions()).ok());
+
+    GetOptions get;
+    get.convert = true;
+    get.convertCcsid = 819;
+
+    Message in;
+    Result r1 = session.get(kQueue, in, get);
+    EXPECT_TRUE(r1.ok()) << r1.text;
+    EXPECT_EQ(MQRC_FORMAT_ERROR, r1.rc) << r1.text;
+
+    Result r2 = session.get(kQueue, in, get);
+    ASSERT_TRUE(r2.ok()) << r2.text;
+    EXPECT_EQ("hello", bodyText(in));
+    EXPECT_EQ(819, in.mqmd.CodedCharSetId);
+}
+
+TEST_F(MqBindingsTest, ConvertExpansionGrowsBufferOnBrowse)
+{
+    Message out = textMessage(std::string(2000, 'a'));
+    out.mqmd.CodedCharSetId = 1208;
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    browse.convert = true;
+    browse.convertCcsid = 1200;
+    browse.initialBufferSize = 2500;
+
+    Message in;
+    Result r = session.get(kQueue, in, browse);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc) << r.text;
+    EXPECT_EQ(4000u, in.body.size());
+    EXPECT_EQ(1200, in.mqmd.CodedCharSetId);
+}
+
+TEST_F(MqBindingsTest, OwnHandleConflictGivesClearText)
+{
+    Message out = textMessage("held");
+    ASSERT_TRUE(session.put(kExclQueue, out, PutOptions()).ok());
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message in;
+    ASSERT_TRUE(session.get(kExclQueue, in, browse).ok());
+
+    MQLONG purged = 0;
+    Result r = session.purge(kExclQueue, purged);
+    EXPECT_EQ(MQRC_OBJECT_IN_USE, r.rc) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find(" - this session already has the queue open; close it first")) << r.text;
+
+    MQLONG depth = 0;
+    Result d = session.depth(kExclQueue, depth);
+    EXPECT_TRUE(d.ok()) << d.text;   // inquire opens do not conflict with exclusive input
+}
+
+TEST_F(MqBindingsTest, BrowsePositionUnknownAfterDestructiveGet)
+{
+    for (const char * text : { "A", "B", "C" })
+    {
+        Message m = textMessage(text);
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message a;
+    ASSERT_TRUE(session.get(kQueue, a, browse).ok());
+    EXPECT_EQ("A", bodyText(a));
+
+    GetOptions remove;
+    remove.matchMsgId = true;
+    memcpy(remove.msgId, a.mqmd.MsgId, sizeof(remove.msgId));
+    Message removed;
+    ASSERT_TRUE(session.get(kQueue, removed, remove).ok());
+
+    browse.mode = GetMode::BrowseNext;
+    Message next;
+    ASSERT_TRUE(session.get(kQueue, next, browse).ok());
+    EXPECT_TRUE(bodyText(next) == "B" || bodyText(next) == "C");
+
+    browse.mode = GetMode::BrowsePrevious;
+    Result r = session.get(kQueue, next, browse);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc);
+    EXPECT_NE(std::string::npos, r.text.find(" - browse position unknown after a destructive get; browse first")) << r.text;
 }
 
 TEST(MqClient, PutThenGetOverClientChannel)

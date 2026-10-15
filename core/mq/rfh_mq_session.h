@@ -2,10 +2,10 @@
 //
 // MqSession owns its connection handle and at most one open queue handle for
 // put/get/browse. depth() and purge() use their own short-lived handles so they
-// never disturb a browse cursor. A session is not thread-safe: use it from one
-// thread only (the Qt application gives it a dedicated worker thread). Use it,
-// including destroying it, from one thread only: MQ connection handles are bound
-// to the thread that created them.
+// never disturb a browse cursor. The connection is made with shared handles, so
+// it may be used from another thread than the one that connected (for example to
+// destroy it), but a session is not safe for concurrent use: call it from one
+// thread at a time (the Qt application gives it a dedicated worker thread).
 #pragma once
 
 #include <cmqc.h>
@@ -63,7 +63,15 @@ namespace rfh
 		GetMode mode = GetMode::Destructive;
 		MQLONG waitMs = 0;			// 0 returns at once when no message is available.
 									// MQWI_UNLIMITED waits until a message arrives or cancel is set.
-		bool convert = false;		// MQGMO_CONVERT using the MQMD CodedCharSetId/Encoding
+									// Any other negative value is invalid and fails without calling MQGET.
+		// MQGMO_CONVERT to convertCcsid and convertEncoding. The message's MQMD then
+		// reports those values. If MQ cannot hold the converted data in the buffer, a
+		// browse grows the buffer and repeats; a destructive get has already removed the
+		// message, so a 2120/2190 warning delivers the unconverted data. Browse first
+		// when that matters.
+		bool convert = false;
+		MQLONG convertCcsid = MQCCSI_Q_MGR;		// target CCSID; MQCCSI_Q_MGR is the queue manager's
+		MQLONG convertEncoding = MQENC_NATIVE;	// target encoding
 		bool matchMsgId = false;	// match msgId below
 		bool matchCorrelId = false;	// match correlId below
 		MQBYTE24 msgId = { 0 };
@@ -95,8 +103,10 @@ namespace rfh
 		// Gets or browses one message from queue into message. A browse continues on
 		// the same queue handle; switching queue or putting closes it and resets the
 		// browse position. BrowsePrevious re-browses from the first message, so each
-		// step costs one MQGET per position, and lands on a different message if other
-		// applications change the queue meanwhile.
+		// step costs one MQGET per position (counted under the current match criteria),
+		// and lands on a different message if other applications change the queue
+		// meanwhile. A destructive get leaves the browse position unknown: BrowseNext
+		// continues, but BrowsePrevious fails until BrowseFirst.
 		Result get(const std::string & queue, Message & message, const GetOptions & options);
 
 		Result depth(const std::string & queue, MQLONG & count);
@@ -111,6 +121,7 @@ namespace rfh
 		Result openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & hObj);
 		Result ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options);
 		Result getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs);
+		void dropIfBroken(MQLONG rc);
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
 
 		MqApi api;
@@ -120,6 +131,6 @@ namespace rfh
 		std::string openName;
 		std::string openRemoteQm;
 		MQLONG openOptions = 0;
-		long browsePosition = 0;	// 1-based position of the message under the browse cursor
+		long browsePosition = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
 	};
 }
