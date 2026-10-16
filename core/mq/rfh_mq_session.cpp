@@ -9,6 +9,9 @@
 #include <string>
 #include <vector>
 
+#include "rfh_header_chain.h"
+#include "mqsubs.h"
+
 namespace rfh
 {
 	namespace
@@ -352,7 +355,7 @@ namespace rfh
 			return notConnected();
 		}
 
-		if (message.body.size() > (size_t)std::numeric_limits<MQLONG>::max())
+		if (message.headers.size() + message.body.size() > (size_t)std::numeric_limits<MQLONG>::max())
 		{
 			return Result::failure("Message is larger than MQ allows");
 		}
@@ -394,8 +397,19 @@ namespace rfh
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
-		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)message.body.size(),
-		        message.body.empty() ? nullptr : message.body.data(), &cc, &rc);
+		// on the wire the MQ headers simply precede the body
+		std::vector<unsigned char> * payload = &message.body;
+		std::vector<unsigned char> joined;
+		if (!message.headers.empty())
+		{
+			joined.reserve(message.headers.size() + message.body.size());
+			joined.insert(joined.end(), message.headers.begin(), message.headers.end());
+			joined.insert(joined.end(), message.body.begin(), message.body.end());
+			payload = &joined;
+		}
+
+		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)payload->size(),
+		        payload->empty() ? nullptr : payload->data(), &cc, &rc);
 		dropIfBroken(rc);
 
 		return Result::fromMq("MQPUT", cc, rc);
@@ -521,7 +535,14 @@ namespace rfh
 			if (cc != MQCC_FAILED)
 			{
 				message.mqmd = md;
-				message.body.assign(buffer.begin(), buffer.begin() + std::min<size_t>((size_t)dataLength, buffer.size()));
+				size_t received = std::min<size_t>((size_t)dataLength, buffer.size());
+
+				// split the MQ headers named by the MQMD format chain from the body
+				// header warnings are not reported on get yet
+				HeaderChain chain = walkHeaders(buffer.data(), received, std::string(md.Format, MQ_FORMAT_LENGTH),
+				                                md.CodedCharSetId, getCcsidType(md.CodedCharSetId), getIntEncode(md.Encoding));
+				message.headers.assign(buffer.begin(), buffer.begin() + chain.bodyOffset);
+				message.body.assign(buffer.begin() + chain.bodyOffset, buffer.begin() + received);
 			}
 
 			Result r = Result::fromMq("MQGET", cc, rc);

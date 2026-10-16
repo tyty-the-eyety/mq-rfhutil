@@ -106,17 +106,19 @@ namespace rfh
 		Result disconnect();
 		bool isConnected() const { return hConn != MQHC_UNUSABLE_HCONN; }
 
-		// Puts message to queue. On success message.mqmd holds the descriptor MQ
-		// returned (new MsgId, put date and time, ...).
+		// Puts message to queue: message.headers followed by message.body. On success
+		// message.mqmd holds the descriptor MQ returned (new MsgId, put date and time, ...).
 		Result put(const std::string & queue, Message & message, const PutOptions & options);
 
-		// Gets or browses one message from queue into message. A browse continues on
-		// the same queue handle; switching queue or putting closes it and resets the
-		// browse position. BrowsePrevious re-browses from the first message, so each
-		// step costs one MQGET per position (counted under the current match criteria),
-		// and lands on a different message if other applications change the queue
-		// meanwhile. A destructive get leaves the browse position unknown: BrowseNext
-		// continues, but BrowsePrevious fails until BrowseFirst.
+		// Gets or browses one message from queue into message. The MQ headers named by
+		// the MQMD format chain (see walkHeaders) go to message.headers and the rest to
+		// message.body. A browse continues on the same queue handle; switching queue or
+		// putting closes it and resets the browse position. BrowsePrevious re-browses
+		// from the first message, so each step costs one MQGET per position (counted
+		// under the current match criteria), and lands on a different message if other
+		// applications change the queue meanwhile. A destructive get leaves the browse
+		// position unknown: BrowseNext continues, but BrowsePrevious fails until
+		// BrowseFirst.
 		Result get(const std::string & queue, Message & message, const GetOptions & options);
 
 		Result depth(const std::string & queue, MQLONG & count);

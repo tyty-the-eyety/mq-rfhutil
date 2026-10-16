@@ -27,6 +27,7 @@
 #include <thread>
 
 #include "rfh_mq_session.h"
+#include "mq_layout.h"
 
 using namespace rfh;
 
@@ -161,6 +162,22 @@ TEST(MqSession, UnknownQueueManagerFails)
     EXPECT_EQ(MQCC_FAILED, r.cc);
     EXPECT_TRUE(r.rc == MQRC_Q_MGR_NAME_ERROR || r.rc == MQRC_Q_MGR_NOT_AVAILABLE) << r.text;
     EXPECT_FALSE(session.isConnected());
+}
+
+TEST_F(MqBindingsTest, Rfh2HeaderIsSeparatedFromTheBody)
+{
+    auto rfh = mq_layout::rfh2(mq_layout::Order::Little, 546, 1208, "MQSTR");
+    Message out = textMessage("after the header");
+    memcpy(out.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
+    out.headers = rfh.data;
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    Message in;
+    Result r = session.get(kQueue, in, GetOptions());
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(rfh.data, in.headers);
+    EXPECT_EQ("after the header", bodyText(in));
+    EXPECT_EQ(0, memcmp(in.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH));
 }
 
 TEST_F(MqBindingsTest, PutThenGetReturnsSameMessage)
