@@ -41,7 +41,8 @@ target_include_directories(rfhutil_unit_tests PRIVATE UnitTests)
 target_link_libraries(rfhutil_unit_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_unit_tests)
 
-add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core/MqmdFieldsTests.cpp core/HeaderChainTests.cpp core/MessageFileTests.cpp)
+add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core/MqmdFieldsTests.cpp core/HeaderChainTests.cpp core/MessageFileTests.cpp
+    core/GuardMallocTests.cpp)
 if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")
@@ -60,3 +61,21 @@ gtest_discover_tests(rfhutil_mq_tests PROPERTIES LABELS mq RUN_SERIAL TRUE)
 add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp)
 target_link_libraries(rfhutil_mq_fake_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_fake_tests)
+
+# Memory checking. The guard-page allocator (tools/guardmalloc.cpp) makes a heap
+# overrun fault at once rather than corrupt memory silently. The memcheck tests
+# (ctest -L memcheck) run the suites that parse message data under it.
+add_library(rfh_guardmalloc SHARED tools/guardmalloc.cpp)
+
+# rfh_add_memcheck_test(name target filter [VAR=value ...]) runs the tests that
+# match filter under the guard allocator, with any extra environment given.
+function(rfh_add_memcheck_test name target filter)
+    add_test(NAME ${name} COMMAND ${target} --gtest_filter=${filter})
+    set_tests_properties(${name} PROPERTIES
+        ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:rfh_guardmalloc>;${ARGN}"
+        LABELS memcheck
+        TIMEOUT 300)
+    add_dependencies(${target} rfh_guardmalloc)
+endfunction()
+
+rfh_add_memcheck_test(memcheck.GuardMalloc rfhutil_core_tests "GuardMalloc.*")
