@@ -7,7 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+
 #include <algorithm>
+#include <memory>
+#include <new>
 
 #include "rfh_codepage.h"
 #include "rfh_platform.h"
@@ -62,7 +66,7 @@ namespace rfh
 				case ENOLCK: return "Unable to open output file - file locked";
 				case ENOSPC: return "Unable to open output file - disk full";
 				case ENOENT: case ENOTDIR: return "Unable to open output file - path not found";
-				case EACCES: case EPERM: case EROFS: return "Unable to open output file - access denied";
+				case EACCES: case EPERM: case EROFS: case EISDIR: return "Unable to open output file - access denied";
 				default: return "Unable to open output file - Error " + number(err);
 				}
 			}
@@ -95,16 +99,48 @@ namespace rfh
 		{
 			out = ReadResult();
 
+			// Windows' test for an ANSI i-circumflex (0xEE) in the name; in UTF-8 it
+			// rejects only the lead bytes of the private-use range.
 			if (path.find('\xEE') != std::string::npos)
 			{
 				return Result::failure("Invalid file name (" + path + ")");
 			}
 
-			FILE * input = fopen(path.c_str(), "rb");
-			if (input == NULL)
+			typedef std::unique_ptr<FILE, int (*)(FILE *)> FilePtr;
+			FilePtr input(fopen(path.c_str(), "rb"), fclose);
+			struct stat info;
+			if (!input || (fstat(fileno(input.get()), &info) != 0) || !S_ISREG(info.st_mode))
 			{
 				return Result::failure("Could not open file " + path);
 			}
+
+			// read everything before the tab is touched, so a failure leaves it unchanged
+			std::vector<unsigned char> data;
+			fseek(input.get(), 0L, SEEK_END);
+			long size = ftell(input.get());
+			if (size < 0)
+			{
+				return Result::failure("Could not read file " + path);
+			}
+			fseek(input.get(), 0L, SEEK_SET);
+			if (size > 0)
+			{
+				try
+				{
+					data.resize((size_t)size);
+				}
+				catch (const std::bad_alloc &)
+				{
+					return Result::failure("Not enough memory to read " + path);
+				}
+				size_t got = fread(data.data(), 1, data.size(), input.get());
+				if (ferror(input.get()))
+				{
+					return Result::failure("Could not read file " + path);
+				}
+				data.resize(got);
+			}
+			input.reset();
 
 			// default code page and encoding: the setting, then the MQMD tab, then the system
 			int ccsid = options.fileCcsid;
@@ -125,18 +161,6 @@ namespace rfh
 			// ClearData + setEncoding(PC, PC, PC) + clearMQMD
 			fields.floatEncoding = FLOAT_PC;
 			mqmd_fields::clear(fields);
-
-			std::vector<unsigned char> data;
-			fseek(input, 0L, SEEK_END);
-			long size = ftell(input);
-			fseek(input, 0L, SEEK_SET);
-			if (size > 0)
-			{
-				data.resize((size_t)size);
-				size_t got = fread(data.data(), 1, data.size(), input);
-				data.resize(got);
-			}
-			fclose(input);
 
 			// a UTF-16 byte order mark decides the encoding
 			if ((data.size() >= 2) && (0xFF == data[0]) && (0xFE == data[1]))
@@ -162,7 +186,6 @@ namespace rfh
 				{
 					size_t mqmdLength = (MQMD_VERSION_1 == md.Version) ? sizeof(MQMD1) : sizeof(MQMD2);
 					out.hadMqmd = true;
-					out.message.mqmd = md;
 					data.erase(data.begin(), data.begin() + mqmdLength);
 					out.fileCcsid = atoi(fields.ccsid.c_str());
 					out.fileIntFormat = fields.encoding;
@@ -179,6 +202,8 @@ namespace rfh
 					char format[MQ_FORMAT_LENGTH + 1] = { 0 };
 					memcpy(format, lead.format.data(), std::min(lead.format.size(), (size_t)MQ_FORMAT_LENGTH));
 					Rtrim(format);
+					// Windows stores the format blank-padded; trimmed here, which is
+					// display-only because the same bytes are written back
 					fields.format = format;
 					fields.encoding = lead.encoding;
 					fields.pdEncoding = lead.pdEncoding;
@@ -223,6 +248,8 @@ namespace rfh
 				}
 			}
 
+			// Windows leaves the float format at the previous file's value when the
+			// headers are ignored; it is derived here
 			if (NUMERIC_PC == out.numericFormat)
 			{
 				out.pdFormat = NUMERIC_PC;
@@ -233,6 +260,15 @@ namespace rfh
 				out.pdFormat = NUMERIC_HOST;
 				out.floatFormat = FLOAT_390;
 			}
+			if (options.ignoreHeaders && out.hadMqmd)
+			{
+				out.pdFormat = fields.pdEncoding;
+			}
+
+			// the MQMD the tab now holds, whether or not the file had one
+			out.message.mqmd = MQMD2{ MQMD2_DEFAULT };
+			out.message.mqmd.Version = MQMD_VERSION_2;
+			mqmd_fields::toMqmd(fields, out.message.mqmd);
 
 			Result r;
 			HeaderLengths l = lengthsOf(out.chain);
@@ -263,17 +299,25 @@ namespace rfh
 			}
 
 			out.message.body.swap(data);
+
+			std::string shown = path;
+			if (shown.size() > 75)
+			{
+				shown = "..." + shown.substr(shown.size() - 75);
+			}
+			out.dataSource = "Message Data (" + number((int)out.message.body.size()) + ") from " + shown;
 			return r;
 		}
 
 		Result write(const std::string & path, const Message & message, const WriteOptions & options)
 		{
-			FILE * output = fopen(path.c_str(), "wb");
-			if (output == NULL)
+			std::unique_ptr<FILE, int (*)(FILE *)> file(fopen(path.c_str(), "wb"), fclose);
+			if (!file)
 			{
 				return Result::failure(openOutputError(errno));
 			}
 
+			FILE * output = file.get();
 			size_t mqmdLength = 0;
 			bool ok = true;
 			if (options.includeMqmd)
@@ -294,7 +338,7 @@ namespace rfh
 			{
 				ok = ok && (fwrite(message.body.data(), 1, message.body.size(), output) == message.body.size());
 			}
-			if (fclose(output) != 0)
+			if (fclose(file.release()) != 0)
 			{
 				ok = false;
 			}
