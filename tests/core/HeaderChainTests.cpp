@@ -90,7 +90,7 @@ TEST(HeaderChain, NoHeadersLeavesTheBodyAlone)
 TEST(HeaderChain, Rfh2BeforeTextIsFound)
 {
 	std::string folder = "<mcd><Msd>jms_text</Msd></mcd>  ";		// 32 bytes, a multiple of 4
-	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR", std::string("\0\0\0\x20", 4) + folder);
+	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR", std::string("\x20\0\0\0", 4) + folder);
 	auto data = L::join({ rfh.data, L::text("body") });
 
 	HeaderChain c = walk(data, MQFMT_RF_HEADER_2, 819);
