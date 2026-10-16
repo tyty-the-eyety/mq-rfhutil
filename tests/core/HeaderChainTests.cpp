@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <cmqc.h>
 
 #include "rfhconst.h"
@@ -16,9 +19,60 @@ namespace L = mq_layout;
 
 namespace
 {
+	// Copies data to the end of a mapping that is followed by a PROT_NONE page, so a
+	// read past the data faults instead of passing silently.
+	class GuardedBuffer
+	{
+	public:
+		explicit GuardedBuffer(const std::vector<unsigned char> & data)
+		{
+			size_t page = (size_t)sysconf(_SC_PAGESIZE);
+			size_t pages = (data.size() + page - 1) / page + 1;
+			mapSize = (pages + 1) * page;
+			base = (unsigned char *)mmap(NULL, mapSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			if (MAP_FAILED == (void *)base)
+			{
+				base = NULL;
+				return;
+			}
+			mprotect(base + pages * page, page, PROT_NONE);
+			size = data.size();
+			start = base + pages * page - size;
+			if (size > 0)
+			{
+				memcpy(start, data.data(), size);
+			}
+		}
+		~GuardedBuffer() { if (base) munmap(base, mapSize); }
+		GuardedBuffer(const GuardedBuffer &) = delete;
+		GuardedBuffer & operator=(const GuardedBuffer &) = delete;
+
+		const unsigned char * data() const { return start; }
+		size_t length() const { return size; }
+
+	private:
+		unsigned char * base = NULL;
+		unsigned char * start = NULL;
+		size_t mapSize = 0;
+		size_t size = 0;
+	};
+
 	HeaderChain walk(const std::vector<unsigned char> & data, const char * format, int ccsid = 1208, int encoding = NUMERIC_PC)
 	{
-		return walkHeaders(data.data(), data.size(), format, ccsid, CHAR_ASCII, encoding);
+		GuardedBuffer guarded(data);
+		return walkHeaders(guarded.data(), guarded.length(), format, ccsid, CHAR_ASCII, encoding);
+	}
+
+	LeadingHeader detect(const std::vector<unsigned char> & data)
+	{
+		GuardedBuffer guarded(data);
+		return detectLeadingHeader(guarded.data(), guarded.length());
+	}
+
+	bool ebcdicLooking(const std::vector<unsigned char> & data)
+	{
+		GuardedBuffer guarded(data);
+		return looksLikeEbcdic(guarded.data(), guarded.length());
 	}
 }
 
@@ -189,7 +243,7 @@ TEST(HeaderChain, TruncatedHeaderEndsTheChain)
 
 // ---- bounds: a header whose length runs past the data ends the chain ----
 
-TEST(HeaderChain, TruncatedCicsVersion2EndsTheChain)
+TEST(HeaderChain, TruncatedCicsVersion2EndsTheChainWithAWarning)
 {
 	// 170 bytes is a whole version 1 header but short of the 180 version 2 needs.
 	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
@@ -198,17 +252,37 @@ TEST(HeaderChain, TruncatedCicsVersion2EndsTheChain)
 	EXPECT_TRUE(c.headers.empty());
 	EXPECT_EQ(0u, c.bodyOffset);
 	EXPECT_EQ("", c.bodyFormat);
+	ASSERT_EQ(1u, c.warnings.size());
+	EXPECT_EQ("header length runs past the end of the data", c.warnings[0]);
 }
 
-TEST(HeaderChain, TruncatedCicsVersion2WithProgramNameEndsTheChain)
+TEST(HeaderChain, CicsVersion2WithProgramNameCutShortOfTheHeaderEndsTheChain)
 {
-	// 176 bytes passes the program name test (172 or more) but is short of 188.
+	// 176 bytes passes the program name test (172 or more) but is short of the 180
+	// the header itself needs.
 	auto cih = L::cih(Order::Little, 2, MQCLT_PROGRAM, 546, 1208, "MQSTR");
 	cih.data.resize(176);
 	HeaderChain c = walk(cih.data, MQFMT_CICS);
 	EXPECT_TRUE(c.headers.empty());
 	EXPECT_EQ(0u, c.bodyOffset);
 	EXPECT_EQ("", c.bodyFormat);
+	ASSERT_EQ(1u, c.warnings.size());
+	EXPECT_EQ("header length runs past the end of the data", c.warnings[0]);
+}
+
+TEST(HeaderChain, CicsVersion2WithProgramNameCutOffKeepsTheHeader)
+{
+	// Exactly 180 bytes: the header fits but the program name does not. Windows
+	// recognises the header and reads the name past the data; this keeps the header
+	// at its base length.
+	auto cih = L::cih(Order::Little, 2, MQCLT_PROGRAM, 546, 1208, "MQSTR");
+	ASSERT_EQ(180u, cih.data.size());
+	HeaderChain c = walk(cih.data, MQFMT_CICS);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(180u, c.headers[0].length);
+	EXPECT_EQ(180u, c.bodyOffset);
+	EXPECT_EQ("MQSTR", c.bodyFormat);
+	EXPECT_TRUE(c.warnings.empty());
 }
 
 TEST(HeaderChain, TruncatedCicsNamingRfh2NextDoesNotReadPastTheData)
@@ -402,7 +476,7 @@ TEST(LeadingHeader, LittleEndianCicsVersion2IsClassedAsHost)
 	// Windows compares the version with MQCIH_VERSION_1 only, so a PC version 2
 	// header counts as host data.
 	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
-	LeadingHeader h = detectLeadingHeader(cih.data.data(), cih.data.size());
+	LeadingHeader h = detect(cih.data);
 	ASSERT_TRUE(h.found);
 	EXPECT_EQ(std::string(MQFMT_CICS), h.format);
 	EXPECT_EQ(NUMERIC_HOST, h.encoding);
@@ -413,13 +487,13 @@ TEST(LeadingHeader, ImsHeaderOf84BytesIsNotDetected)
 {
 	// Windows asks for 8 bytes more than the header's own length.
 	auto iih = L::iih(Order::Little, 546, 1208, "MQSTR");
-	EXPECT_FALSE(detectLeadingHeader(iih.data.data(), iih.data.size()).found);
+	EXPECT_FALSE(detect(iih.data).found);
 }
 
 TEST(LeadingHeader, Rfh1IsDetected)
 {
 	auto rfh = L::rfh1(Order::Little, 546, 1208, "MQSTR", "a=b ");
-	LeadingHeader h = detectLeadingHeader(rfh.data.data(), rfh.data.size());
+	LeadingHeader h = detect(rfh.data);
 	ASSERT_TRUE(h.found);
 	EXPECT_EQ(std::string(MQFMT_RF_HEADER), h.format);
 	EXPECT_EQ(NUMERIC_PC, h.encoding);
@@ -428,7 +502,7 @@ TEST(LeadingHeader, Rfh1IsDetected)
 TEST(LeadingHeader, AsciiPcRfh2)
 {
 	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR");
-	LeadingHeader h = detectLeadingHeader(rfh.data.data(), rfh.data.size());
+	LeadingHeader h = detect(rfh.data);
 	ASSERT_TRUE(h.found);
 	EXPECT_EQ(std::string(MQFMT_RF_HEADER_2), h.format);
 	EXPECT_EQ(NUMERIC_PC, h.encoding);
@@ -439,7 +513,7 @@ TEST(LeadingHeader, AsciiPcRfh2)
 TEST(LeadingHeader, EbcdicHostRfh2DefaultsToCcsid500)
 {
 	auto rfh = L::rfh2(Order::Big, 785, 1208, "MQSTR", std::string(), true);
-	LeadingHeader h = detectLeadingHeader(rfh.data.data(), rfh.data.size());
+	LeadingHeader h = detect(rfh.data);
 	ASSERT_TRUE(h.found);
 	EXPECT_EQ(NUMERIC_HOST, h.encoding);
 	EXPECT_EQ(FLOAT_390, h.floatEncoding);
@@ -450,7 +524,7 @@ TEST(LeadingHeader, EbcdicHostRfh2DefaultsToCcsid500)
 TEST(LeadingHeader, UnixEncodingSelectsUnixFloats)
 {
 	auto rfh = L::rfh2(Order::Big, 273, 819, "MQSTR");
-	LeadingHeader h = detectLeadingHeader(rfh.data.data(), rfh.data.size());
+	LeadingHeader h = detect(rfh.data);
 	ASSERT_TRUE(h.found);
 	EXPECT_EQ(FLOAT_UNIX, h.floatEncoding);
 	EXPECT_EQ(819, h.ccsid);
@@ -459,7 +533,7 @@ TEST(LeadingHeader, UnixEncodingSelectsUnixFloats)
 TEST(LeadingHeader, PlainTextHasNoHeader)
 {
 	auto data = L::text("just some text that is long enough");
-	EXPECT_FALSE(detectLeadingHeader(data.data(), data.size()).found);
+	EXPECT_FALSE(detect(data).found);
 }
 
 TEST(LooksLikeEbcdic, EbcdicTextIsRecognised)
@@ -470,15 +544,39 @@ TEST(LooksLikeEbcdic, EbcdicTextIsRecognised)
 		auto word = L::ebcdic("HELLO WORLD ");
 		data.insert(data.end(), word.begin(), word.end());
 	}
-	EXPECT_TRUE(looksLikeEbcdic(data.data(), data.size()));
+	EXPECT_TRUE(ebcdicLooking(data));
 }
 
 TEST(LooksLikeEbcdic, AsciiTextAndShortDataAreNot)
 {
 	std::string ascii;
 	for (int i = 0; i < 20; i++) ascii += "hello world ";
-	EXPECT_FALSE(looksLikeEbcdic((const unsigned char *)ascii.data(), ascii.size()));
+	EXPECT_FALSE(ebcdicLooking(L::text(ascii)));
 
 	auto shortData = L::ebcdic("HELLO");
-	EXPECT_FALSE(looksLikeEbcdic(shortData.data(), shortData.size()));
+	EXPECT_FALSE(ebcdicLooking(shortData));
+}
+
+TEST(HeaderChain, EveryTruncationOfAFullChainStaysInBounds)
+{
+	// Every prefix of a chain using each header type is walked in a guarded buffer, so
+	// any read past the cut faults.
+	auto dlh = L::dlh(Order::Little, 546, 1208, "MQCICS");
+	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQIMS");
+	auto iih = L::iih(Order::Little, 546, 1208, "MQHRF");
+	auto rfh1 = L::rfh1(Order::Little, 546, 1208, "MQHRF2", "a=b ");
+	auto rfh2 = L::rfh2(Order::Little, 546, 1208, "MQHMDE");
+	auto mde = L::mde(Order::Little, 546, 1208, "MQSTR", 1, 0, 0, -1, "GROUP-ID-123456789012345");
+	auto full = L::join({ dlh.data, cih.data, iih.data, rfh1.data, rfh2.data, mde.data, L::text("body") });
+
+	for (size_t cut = 0; cut <= full.size(); cut++)
+	{
+		std::vector<unsigned char> prefix(full.begin(), full.begin() + cut);
+		HeaderChain c = walk(prefix, MQFMT_DEAD_LETTER_HEADER);
+		EXPECT_LE(c.bodyOffset, cut) << "cut " << cut;
+	}
+
+	HeaderChain whole = walk(full, MQFMT_DEAD_LETTER_HEADER);
+	EXPECT_EQ(6u, whole.headers.size());
+	EXPECT_EQ("MQSTR", whole.bodyFormat);
 }

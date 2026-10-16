@@ -115,35 +115,43 @@ namespace rfh
 				{
 					size_t length = (version == MQCIH_VERSION_1) ? MQCIH_LENGTH_1 : MQCIH_LENGTH_2;
 
+					// The header itself must be there in full.
+					if (length > n)
+					{
+						warnings.push_back("header length runs past the end of the data");
+						s.nextFormat.clear();
+						s.ccsid = 0;
+						return 0;
+					}
+
 					// LinkType sits at the same offset in both versions; with MQCLT_PROGRAM the
 					// 8-byte program name follows the header. Windows checks the space for it
-					// against the version 1 length even for version 2.
+					// against the version 1 length even for version 2. When the header fits but
+					// the name does not, the header is kept at its base length: Windows
+					// recognises it and reads the name past the data.
 					MQLONG linkType = readLong(p + 52, reverse);
-					if ((MQCLT_PROGRAM == linkType) && (n >= MQCIH_LENGTH_1 + kCicsProgramName))
+					if ((MQCLT_PROGRAM == linkType) && (n >= MQCIH_LENGTH_1 + kCicsProgramName) &&
+					    (length + kCicsProgramName <= n))
 					{
 						length += kCicsProgramName;
 					}
 
-					// the header must be there in full
-					if (length <= n)
+					// Windows reports out-of-range CCSID, and for version 2 cursor position
+					// (164) and error offset (168), as one error; version 1 zeroes the latter.
+					bool err = false;
+					MQLONG ccsid = readLong(p + kCcsid, reverse);
+					s.ccsid = inRange(ccsid) ? ccsid : 0;
+					err = !inRange(ccsid);
+					if (version == MQCIH_VERSION_2)
 					{
-						// Windows reports out-of-range CCSID, and for version 2 cursor position
-						// (164) and error offset (168), as one error; version 1 zeroes the latter.
-						bool err = false;
-						MQLONG ccsid = readLong(p + kCcsid, reverse);
-						s.ccsid = inRange(ccsid) ? ccsid : 0;
-						err = !inRange(ccsid);
-						if (version == MQCIH_VERSION_2)
-						{
-							err = err || !inRange(readLong(p + 164, reverse)) || !inRange(readLong(p + 168, reverse));
-						}
-						if (err)
-						{
-							warnings.push_back("*** Errors parsing CICS header\r\n");
-						}
-						s.nextFormat = trimmedFormat(p + kFormat, ebcdic);
-						return length;
+						err = err || !inRange(readLong(p + 164, reverse)) || !inRange(readLong(p + 168, reverse));
 					}
+					if (err)
+					{
+						warnings.push_back("*** Errors parsing CICS header\r\n");
+					}
+					s.nextFormat = trimmedFormat(p + kFormat, ebcdic);
+					return length;
 				}
 			}
 
@@ -264,6 +272,7 @@ namespace rfh
 			size_t len = parse(data + ofs, length - ofs, s, chain);
 			if (len > length - ofs)
 			{
+				// backstop: the parsers bound their own lengths, so this should not happen
 				// deliberate difference: Windows would carry on past the data
 				chain.warnings.push_back("header length runs past the end of the data");
 				s.nextFormat.clear();
