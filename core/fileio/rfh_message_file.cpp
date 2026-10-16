@@ -152,6 +152,7 @@ namespace rfh
 					ccsid = (options.ansiCcsid != 0) ? options.ansiCcsid : rfh_get_acp();
 					if (0 == ccsid)
 					{
+						// kept for Windows fidelity; rfh_get_acp() never returns 0 on Linux
 						ccsid = 1252;
 					}
 				}

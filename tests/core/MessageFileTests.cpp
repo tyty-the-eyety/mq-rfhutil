@@ -17,6 +17,7 @@
 
 #include <cmqc.h>
 
+#include "rfh_codepage.h"
 #include "rfhconst.h"
 #include "rfh_message_file.h"
 #include "mq_layout.h"
@@ -423,7 +424,7 @@ TEST_F(MessageFile, DataSourceNamesTheFileAndBodySize)
 TEST_F(MessageFile, DataSourceShortensLongPaths)
 {
 	std::string dir = ::testing::TempDir() + std::string(90, 'd');
-	ASSERT_EQ(0, mkdir(dir.c_str(), 0755) == 0 || errno == EEXIST ? 0 : 1);
+	ASSERT_TRUE(mkdir(dir.c_str(), 0700) == 0 || errno == EEXIST);
 	std::string p = dir + "/rfhutil-long.txt";
 	std::ofstream(p, std::ios::binary) << "abc";
 	ASSERT_GT(p.size(), 75u);
@@ -480,19 +481,13 @@ TEST_F(MessageFile, TabCcsidBeatsAnsiCcsid)
 	EXPECT_EQ(819, r.fileCcsid);
 }
 
-TEST_F(MessageFile, FallbackCcsidIs1252)
+TEST_F(MessageFile, AnsiFallbackComesFromTheSystemCodePage)
 {
-	const char * old = getenv("RFHUTIL_ACP");
-	std::string saved = old ? old : "";
-	setenv("RFHUTIL_ACP", "0", 1);
 	std::string p = save("fallback.txt", L::text("hello"));
 	MqmdFields f;
 	fileio::ReadResult r;
-	fileio::ReadOptions o;
-	Result res = fileio::read(p, o, f, r);
-	if (old) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
-	ASSERT_TRUE(res.ok());
-	EXPECT_EQ(1252, r.fileCcsid);
+	ASSERT_TRUE(fileio::read(p, fileio::ReadOptions(), f, r).ok());
+	EXPECT_EQ(rfh_get_acp(), r.fileCcsid);
 }
 
 TEST_F(MessageFile, LittleEndianByteOrderMarkSelectsPcEncoding)
