@@ -52,3 +52,7 @@ gtest_discover_tests(rfhutil_loader_tests PROPERTIES LABELS mq)
 add_executable(rfhutil_mq_tests core/MqSessionTests.cpp)
 target_link_libraries(rfhutil_mq_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_tests PROPERTIES LABELS mq RUN_SERIAL TRUE)
+
+add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp)
+target_link_libraries(rfhutil_mq_fake_tests PRIVATE rfhcore GTest::gtest_main)
+gtest_discover_tests(rfhutil_mq_fake_tests)

@@ -69,6 +69,10 @@ namespace rfh
 		// browse grows the buffer and repeats; a destructive get has already removed the
 		// message, so a 2120/2190 warning delivers the unconverted data. Browse first
 		// when that matters.
+		// When a converted message is too big for the buffer during a browse, the
+		// message is re-read by matching its MsgId. If several messages share that MsgId
+		// (e.g. replayed with newMsgId=false), the re-read can return an earlier message
+		// with the same MsgId, and the browse does not advance past it.
 		bool convert = false;
 		MQLONG convertCcsid = MQCCSI_Q_MGR;		// target CCSID; MQCCSI_Q_MGR is the queue manager's
 		MQLONG convertEncoding = MQENC_NATIVE;	// target encoding
@@ -87,6 +91,10 @@ namespace rfh
 	{
 	public:
 		MqSession() = default;
+
+		// For tests and embedding: use the given entry points instead of loading the
+		// IBM MQ library with MqLoader.
+		explicit MqSession(const MqApi & injectedApi) : api(injectedApi), apiInjected(true) {}
 		~MqSession();
 
 		MqSession(const MqSession &) = delete;
@@ -124,7 +132,10 @@ namespace rfh
 		void dropIfBroken(MQLONG rc);
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
 
+		void clearHandleState();
+
 		MqApi api;
+		bool apiInjected = false;
 		MQHCONN hConn = MQHC_UNUSABLE_HCONN;
 
 		MQHOBJ hObj = MQHO_UNUSABLE_HOBJ;

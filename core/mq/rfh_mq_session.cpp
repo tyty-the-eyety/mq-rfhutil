@@ -105,6 +105,13 @@ namespace rfh
 		}
 
 		hConn = MQHC_UNUSABLE_HCONN;
+		clearHandleState();
+	}
+
+	// Forgets the open queue handle and browse state; the handle itself is closed by
+	// MQCLOSE or, with the connection, by MQDISC.
+	void MqSession::clearHandleState()
+	{
 		hObj = MQHO_UNUSABLE_HOBJ;
 		openName.clear();
 		openRemoteQm.clear();
@@ -119,10 +126,17 @@ namespace rfh
 			return Result::failure("Already connected; disconnect first");
 		}
 
-		Result loaded = MqLoader::load(api);
-		if (!loaded.ok())
+		// a stale queue handle from an earlier connection must never be reused
+		clearHandleState();
+
+		Result loaded = Result::success();
+		if (!apiInjected)
 		{
-			return loaded;
+			loaded = MqLoader::load(api);
+			if (!loaded.ok())
+			{
+				return loaded;
+			}
 		}
 
 		if ((options.mode == Mode::Bindings) && !api.bindingsAvailable)
@@ -225,14 +239,23 @@ namespace rfh
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
-		api.disc(&hConn, &cc, &rc);
-		hConn = MQHC_UNUSABLE_HCONN;
+		MQHCONN handle = hConn;
+		api.disc(&handle, &cc, &rc);
 
 		Result r = Result::fromMq("MQDISC", cc, rc);
 		if (!closed.ok())
 		{
 			r.warnings.push_back(closed.text);
 		}
+
+		if (rc == MQRC_CALL_IN_PROGRESS)
+		{
+			return r;	// another call is still using the connection, which stays alive
+		}
+
+		// MQDISC closes every handle of the connection, so none of them is valid now
+		hConn = MQHC_UNUSABLE_HCONN;
+		clearHandleState();
 		return r;
 	}
 
@@ -374,11 +397,7 @@ namespace rfh
 
 	Result MqSession::getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs)
 	{
-		const bool unlimited = (waitMs == MQWI_UNLIMITED);
-		if ((waitMs < 0) && !unlimited)
-		{
-			return Result::failure("Invalid wait interval");
-		}
+		const bool unlimited = (waitMs == MQWI_UNLIMITED);	// get() has rejected other negative waits
 
 		const bool browsing = (getOptions & (MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT)) != 0;
 		std::vector<unsigned char> buffer(std::min<size_t>(std::max<size_t>(options.initialBufferSize, 1), kMaxBufferBytes));
@@ -512,24 +531,29 @@ namespace rfh
 	{
 		GetOptions step = options;
 		step.waitMs = 0;
-
 		step.mode = GetMode::BrowseFirst;
-		Result r = get(queue, message, step);
 
-		step.mode = GetMode::BrowseNext;
-		while (r.ok() && (browsePosition < position))
+		// walk with a local message: the caller's one changes only on reaching the target
+		Message walked;
+		for (;;)
 		{
 			if ((options.cancel != nullptr) && options.cancel->load())
 			{
-				// message holds an earlier position: report failure so it is not used
-				r.cc = MQCC_FAILED;
-				r.text += " - cancelled";
+				return Result::failure("Browse previous cancelled before reaching position " + std::to_string(position));
+			}
+
+			Result r = get(queue, walked, step);
+			if (!r.ok())
+			{
 				return r;
 			}
-			r = get(queue, message, step);
+			if (browsePosition >= position)
+			{
+				message = std::move(walked);
+				return r;
+			}
+			step.mode = GetMode::BrowseNext;
 		}
-
-		return r;
 	}
 
 	Result MqSession::get(const std::string & queue, Message & message, const GetOptions & options)
@@ -537,6 +561,12 @@ namespace rfh
 		if (!isConnected())
 		{
 			return notConnected();
+		}
+
+		// checked before any queue is opened or closed, so a bad wait cannot disturb a browse
+		if ((options.waitMs < 0) && (options.waitMs != MQWI_UNLIMITED))
+		{
+			return Result::failure("Invalid wait interval");
 		}
 
 		if (options.mode == GetMode::BrowsePrevious)
@@ -596,13 +626,10 @@ namespace rfh
 			return notConnected();
 		}
 
-		const bool heldBySession = (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue);
-
 		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
 		Result opened = openQueue(queue, std::string(), MQOO_INQUIRE, obj);
 		if (!opened.ok())
 		{
-			explainInUse(opened, heldBySession);
 			return opened;
 		}
 
@@ -637,12 +664,15 @@ namespace rfh
 		}
 
 		const bool heldBySession = (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue);
+		// only an input or browse handle of this session can make the purge's open fail with 2042
+		const MQLONG inputOptions = MQOO_INPUT_AS_Q_DEF | MQOO_INPUT_SHARED | MQOO_INPUT_EXCLUSIVE | MQOO_BROWSE;
+		const bool conflictsWithSession = heldBySession && ((openOptions & inputOptions) != 0);
 
 		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
 		Result opened = openQueue(queue, std::string(), MQOO_INPUT_AS_Q_DEF, obj);
 		if (!opened.ok())
 		{
-			explainInUse(opened, heldBySession);
+			explainInUse(opened, conflictsWithSession);
 			return opened;
 		}
 

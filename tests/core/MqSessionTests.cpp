@@ -398,6 +398,88 @@ TEST_F(MqBindingsTest, NegativeWaitIsRejectedWithoutWaiting)
     EXPECT_LT(elapsed.count(), 500);
 }
 
+TEST_F(MqBindingsTest, InvalidWaitKeepsBrowseHandleOfAnotherQueue)
+{
+    for (const char * text : { "one", "two" })
+    {
+        Message m = textMessage(text);
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message m;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_EQ("one", bodyText(m));
+
+    GetOptions invalid;
+    invalid.waitMs = -5;
+    EXPECT_EQ("Invalid wait interval", session.get(kEmptyQueue, m, invalid).text);
+
+    browse.mode = GetMode::BrowseNext;
+    Result r = session.get(kQueue, m, browse);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("two", bodyText(m));
+}
+
+TEST_F(MqBindingsTest, CancelledBrowsePreviousLeavesMessageAlone)
+{
+    for (const char * text : { "one", "two" })
+    {
+        Message m = textMessage(text);
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message m;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    browse.mode = GetMode::BrowseNext;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_EQ("two", bodyText(m));
+
+    std::atomic<bool> cancel(true);
+    browse.mode = GetMode::BrowsePrevious;
+    browse.cancel = &cancel;
+    Result r = session.get(kQueue, m, browse);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Browse previous cancelled before reaching position 1", r.text);
+    EXPECT_EQ("two", bodyText(m));
+}
+
+TEST_F(MqBindingsTest, BrowseRetryWithUniqueMsgIdsAdvances)
+{
+    const std::string bodies[] = { "x", std::string(2000, 'b'), "z" };
+    for (const std::string & body : bodies)
+    {
+        Message m = textMessage(body);
+        m.mqmd.CodedCharSetId = 1208;
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    browse.convert = true;
+    browse.convertCcsid = 1200;
+    browse.initialBufferSize = 2000;
+
+    Message m;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_EQ(2u, m.body.size());
+
+    browse.mode = GetMode::BrowseNext;
+    Result second = session.get(kQueue, m, browse);
+    ASSERT_TRUE(second.ok()) << second.text;
+    EXPECT_EQ(4000u, m.body.size());
+
+    Result third = session.get(kQueue, m, browse);
+    ASSERT_TRUE(third.ok()) << third.text;
+    EXPECT_EQ(2u, m.body.size()) << "the browse must reach z";
+
+    Result fourth = session.get(kQueue, m, browse);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, fourth.rc) << fourth.text;
+}
+
 TEST_F(MqBindingsTest, TwoSessionsAreIndependent)
 {
     ConnectOptions options;
