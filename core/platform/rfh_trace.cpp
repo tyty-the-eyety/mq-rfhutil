@@ -12,16 +12,22 @@ namespace
 		void dumpTraceData(const char *, const unsigned char *, unsigned int) override {}
 	};
 
-	NullTrace nullTrace;
-	RfhTrace * currentTrace = &nullTrace;
+	// Function-local so the sink exists during static initialisation and destruction.
+	RfhTrace & nullTrace()
+	{
+		static NullTrace t;
+		return t;
+	}
+
+	RfhTrace * currentTrace = nullptr;
 }
 
 RfhTrace * rfhGetTrace()
 {
-	return currentTrace;
+	return currentTrace ? currentTrace : &nullTrace();
 }
 
 void rfhSetTrace(RfhTrace * trace)
 {
-	currentTrace = (trace != NULL) ? trace : &nullTrace;
+	currentTrace = trace;
 }

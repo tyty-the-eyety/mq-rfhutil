@@ -1,7 +1,7 @@
 // TestMain.cpp — entry point for the MFC-hosted Google Test runner.
 //
 // The source files under test (comsubs.cpp, xmlsubs.cpp, etc.) use MFC types
-// (CString, BOOL, AfxGetApp), so the test exe must be a Windows application
+// (CString, BOOL, CWinApp), so the test exe must be a Windows application
 // with a live CWinApp object.  We override InitInstance() to run Google Test
 // and exit immediately — the MFC message loop is never entered.
 //
@@ -19,8 +19,9 @@
 #include <gtest/gtest.h>
 
 // Concrete application class.
-// AfxGetApp() returns this object, satisfying comsubs.cpp's
-// (CRfhutilApp*)AfxGetApp() casts without crashing.
+// The shared sources trace through rfhGetTrace(), which CRfhutilApp installs.
+// The MFC application object exists because the shared sources use MFC types
+// on Windows.
 class CTestApp : public CRfhutilApp
 {
     int m_testResult = 0;

@@ -54,7 +54,7 @@ TEST(MqLoader, CandidatesListServerLibraryThenClientLibrary)
 }
 #endif
 
-TEST(MqLoader, LoadsServerLibraryWithAllEntryPoints)
+TEST(MqLoader, LoadsALibraryWithAllEntryPoints)
 {
     MqApi api;
     Result r = MqLoader::load(api);

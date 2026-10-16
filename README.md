@@ -258,6 +258,8 @@ Running the programs may require that you run `setmqenv` to set a suitable envir
 libraries.
 
 ### Building the portable core on Linux
+CMake is Linux-only for now; on Windows keep using RFHUtil.sln.
+
 Requires CMake 3.21+, a C++17 compiler, GoogleTest and the IBM MQ SDK
 (`MQSeriesSDK`, default `/opt/mqm`).
 
@@ -269,7 +271,8 @@ ctest --preset linux-debug                      # MQ tests need a local queue ma
 ```
 
 The test executables are `rfhutil_unit_tests`, `rfhutil_core_tests`,
-`rfhutil_loader_tests`, `rfhutil_mq_tests` (label `mq`, needs a local queue manager)
+`rfhutil_loader_tests` and `rfhutil_mq_tests` (both carry the ctest label `mq`; the
+latter needs a local queue manager)
 and `rfhutil_mq_fake_tests` (uses a fake MQI and needs no queue manager). MQ tests
 skip when MQ is not available; set `RFHUTIL_REQUIRE_MQ=1` to turn those skips into
 failures.

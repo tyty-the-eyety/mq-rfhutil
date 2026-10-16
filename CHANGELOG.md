@@ -16,6 +16,8 @@ Newest updates are at the top of this file
 - comsubs, xmlsubs, JsonParse, XMLParse and Names use `core/platform` instead of
   direct Win32 calls; behaviour on Windows is unchanged.
 - `processBackspace` moved from comsubs.cpp to the MFC-only uisubs.cpp.
+- The client build (rfhutilc, rfhutilc-safe; Client.vcxproj) compiles the platform
+  layer too.
 - `CRfhutilApp` implements the `RfhTrace` interface and installs itself for
   tracing; it uninstalls itself on exit.
 

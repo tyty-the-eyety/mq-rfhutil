@@ -105,53 +105,76 @@ struct Result {
   std::vector<std::string> warnings;      // e.g. a header that could not be parsed
 };
 
+struct MqApi {                            // entry points of the loaded MQ library
+  decltype(&::MQCONNX) connx; /* disc, open, close, put, get, inq likewise */
+  bool serverLibrary;                     // the loaded library can make local connections
+  bool bindingsAvailable;                 // a local queue manager installation exists (<home>/bin/strmqm)
+  std::string libraryPath;
+};
+
+class MqLoader {                          // one library per process: libmqm_r, or libmqic_r on client-only setups
+ public:
+  static Result load(MqApi & api, const std::string & installationPath = std::string());
+};
+
 enum class Mode { Bindings, Client };
 
-class MqLoader {                          // resolves MQ entry points from the selected library
- public:
-  static Result load(Mode);               // libmqm_r.so / libmqic_r.so (mqm.dll / mqic.dll on Windows)
-};
-// MqLoader loads one library per process: libmqm_r for both modes, or libmqic_r on
-// client-only setups. Its info reports serverLibrary (the loaded library can make local
-// connections) and bindingsAvailable (a local queue manager installation exists:
-// <home>/bin/strmqm, checked for existence only). On Windows, <home>\bin64 is tried
-// first when a home is given.
-
 struct ConnectOptions {
-  Mode mode;
-  std::string qmName;
-  std::optional<std::string> channel, connName, ccdtPath;   // client mode; otherwise MQSERVER / MQCHLLIB
-  std::optional<std::string> userId, password;              // password is never logged or persisted
-  std::optional<TlsOptions> tls;            // deferred to the Connection Settings plan
+  Mode mode = Mode::Bindings;
+  std::string qmName;                     // empty: default queue manager
+  std::string channel, connName, ccdtUrl; // client mode; otherwise MQSERVER / MQCHLLIB
   MQLONG heartbeat = 60;
   MQLONG keepAlive = MQKAI_AUTO;
-  bool autoReconnect = false;              // deferred to the Connection Settings plan
+  std::string userId, password;           // sent only with a password; never copied or traced
+  // TlsOptions and autoReconnect: deferred to the Connection Settings plan
 };
 
-class MqSession {                         // not thread-safe; owned by one worker thread
+enum class BindOption { AsQueueDefinition, OnOpen, NotFixed, OnGroup };
+enum class CloseOption { None, Delete, Purge };
+enum class GetMode { Destructive, BrowseFirst, BrowseNext, BrowsePrevious };
+
+struct PutOptions {
+  std::string remoteQm;
+  BindOption bind = BindOption::AsQueueDefinition;
+  bool newMsgId = true, newCorrelId = false, setIdentityContext = false, setAllContext = false;
+};
+
+struct GetOptions {
+  GetMode mode = GetMode::Destructive;
+  MQLONG waitMs = 0;                      // MQWI_UNLIMITED supported
+  bool convert = false;
+  MQLONG convertCcsid = MQCCSI_Q_MGR, convertEncoding = MQENC_NATIVE;
+  bool matchMsgId = false, matchCorrelId = false;
+  MQBYTE24 msgId, correlId;
+  size_t initialBufferSize = 64 * 1024;
+  const std::atomic<bool> * cancel = nullptr;
+};
+
+class MqSession {                         // one thread at a time; handles use MQCNO_HANDLE_SHARE_NO_BLOCK
  public:
-  Result connect(const ConnectOptions&);
-  Result open(const std::string& queue, const std::string& remoteQm, OpenIntent, ClusterOpen);
-  Result put(const Message&, const PutOptions&);
-  Result get(Message& out, const GetOptions&);  // destructive or browse first/next/prev; wait; match by ids
-  Result depth(MQLONG& out);
-  Result purge();
-  Result close(CloseOption);
+  MqSession() = default;
+  explicit MqSession(const MqApi &);      // test seam: a fake MQI
+  Result connect(const ConnectOptions &);
   Result disconnect();
-  Result queueNames(std::vector<std::string>& out, const NameFilter&);   // deferred to a later plan
-  // Handles are opened with MQCNO_HANDLE_SHARE_NO_BLOCK. GetOptions has convertCcsid and
-  // convertEncoding, and supports MQWI_UNLIMITED. MqSession(const MqApi&) is a test seam
-  // for a fake MQI. After a converted-message-too-big warning, a browse re-reads by
-  // matching the MsgId (owner decision); with duplicate MsgIds the browse can stick, as
-  // documented on GetOptions::convert.
+  bool isConnected() const;
+  Result put(const std::string & queue, Message &, const PutOptions &);
+  Result get(const std::string & queue, Message &, const GetOptions &);
+  Result depth(const std::string & queue, MQLONG & count);
+  Result purge(const std::string & queue, MQLONG & count);
+  Result closeQueue(CloseOption = CloseOption::None);
+  // queueNames: deferred to a later plan
 };
+// After a converted-message-too-big warning, a browse re-reads by matching the MsgId
+// (owner decision); with duplicate MsgIds the browse can stick, as documented on
+// GetOptions::convert in rfh_mq_session.h.
 
-struct Message {
+struct Message {                          // core/message/rfh_message.h
   MQMD2 mqmd = {MQMD2_DEFAULT};
-  HeaderChain headers;                    // ordered (format, ccsid, encoding, raw bytes) entries
-  std::vector<unsigned char> body;
+  std::vector<unsigned char> body;        // MQ headers stay inside body for now
+  // HeaderChain headers: Plan 2 (not yet implemented)
 };
 
+// Plan 2 (not yet implemented): mqmd_fields, fileio and format.
 namespace mqmd_fields {                   // replaces MQMDPAGE::buildMQMD and the reverse direction
   Result toMqmd(const MqmdFields&, MQMD2&);
   MqmdFields fromMqmd(const MQMD2&);
@@ -172,6 +195,8 @@ namespace format {
 RfhTrace * rfhGetTrace();
 void rfhSetTrace(RfhTrace *);
 ```
+
+The headers in core/ are authoritative; this section summarises them.
 
 ### Data flow
 
@@ -319,3 +344,6 @@ void rfhSetTrace(RfhTrace *);
   that Windows rejects. Both affect display only, never message or file
   bytes. 20924 (IBM-924) maps to IBM1047 on Linux because glibc has no
   IBM924; 8 Latin-9 code points differ.
+- **Debug dump files:** Debug dump files on Linux go to fixed names in /tmp
+  (rfhdump.txt, namedump.txt); move them to a per-user directory before
+  packaging (Plan 4).
