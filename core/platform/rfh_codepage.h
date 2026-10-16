@@ -38,3 +38,33 @@ int rfh_ucs2_to_c_locale(const RFH_UCS2 * ucs, char * mbs, int mbsBytes);
 // ucsChars code units and returns the count excluding the terminator. Writes a
 // terminator when there is room.
 int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars);
+
+#ifndef _WIN32
+// Win32 flag values. Linux accepts both and ignores them: iconv produces
+// precomposed characters.
+#define WC_DISCARDNS	0x0010
+#define WC_DEFAULTCHAR	0x0040
+#endif
+
+// WideCharToMultiByte for UCS-2 in host byte order. Converts inChars code units
+// (inChars >= 0) to codepage and returns the bytes written, or 0 when the code page
+// is not available or the output does not fit in outBytes (Windows returns 0 with
+// ERROR_INSUFFICIENT_BUFFER). There is no size-query mode: outBytes must be
+// positive. On Linux a character the code page cannot represent becomes
+// defaultChar[0] ('?' when defaultChar is NULL) and sets *usedDefaultChar when that
+// is non-NULL; Windows may choose a "best fit" character instead.
+int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * in, int inChars,
+	char * out, int outBytes, const char * defaultChar, BOOL * usedDefaultChar);
+
+// MultiByteToWideChar to UCS-2 in host byte order. Converts inBytes bytes
+// (inBytes >= 0) and returns the code units written, or 0 when the code page is not
+// available or the output does not fit in outChars. flags must be 0. On Linux an
+// incomplete or invalid sequence ends the conversion, and the code units converted
+// before it are returned.
+int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
+	RFH_UCS2 * out, int outChars);
+
+// _mbclen: the length (1 or 2) of the multibyte character at text in the ANSI code
+// page. Linux: 2 for a lead byte of a double-byte ANSI code page (932, 936, 949 or
+// 950), otherwise 1.
+int rfh_mbclen(const unsigned char * text);

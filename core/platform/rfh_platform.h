@@ -21,7 +21,22 @@ typedef int BOOL;
 #define FALSE 0
 #endif
 typedef const char * LPCTSTR;
+typedef unsigned int UINT;
 typedef char16_t RFH_UCS2;		// wchar_t is 32 bits on Linux; MQ UCS-2 data is 16 bits
+
+// MSVC _snprintf_s with count _TRUNCATE: writes at most sizeOfBuffer - 1 characters
+// and a terminator, and returns -1 if the output was truncated. _TRUNCATE is the
+// only count supported.
+#define _TRUNCATE ((size_t)-1)
+int _snprintf_s(char * buffer, size_t sizeOfBuffer, size_t count, const char * format, ...)
+	__attribute__((format(printf, 4, 5)));
+#endif
+
+// Directory separator for paths that the shared sources build.
+#ifdef _WIN32
+#define RFH_DIR_SEP "\\"
+#else
+#define RFH_DIR_SEP "/"
 #endif
 
 static_assert(sizeof(RFH_UCS2) == 2, "RFH_UCS2 must be a 16-bit code unit");

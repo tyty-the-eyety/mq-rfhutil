@@ -6,6 +6,7 @@
 #include <string.h>
 
 #ifdef _WIN32
+#include <mbstring.h>
 
 int rfh_get_acp()
 {
@@ -73,6 +74,31 @@ int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars)
 	return (int)mbstowcs(ucs, mbs, ucsChars);
 }
 
+int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * in, int inChars,
+	char * out, int outBytes, const char * defaultChar, BOOL * usedDefaultChar)
+{
+	if ((inChars < 0) || (outBytes <= 0))
+	{
+		return 0;
+	}
+	return WideCharToMultiByte((UINT)codepage, flags, in, inChars, out, outBytes, defaultChar, usedDefaultChar);
+}
+
+int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
+	RFH_UCS2 * out, int outChars)
+{
+	if ((inBytes < 0) || (outChars <= 0))
+	{
+		return 0;
+	}
+	return MultiByteToWideChar((UINT)codepage, flags, in, inBytes, out, outChars);
+}
+
+int rfh_mbclen(const unsigned char * text)
+{
+	return (int)_mbclen(text);
+}
+
 #else
 
 #include <errno.h>
@@ -85,6 +111,9 @@ int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars)
 
 namespace
 {
+	// converterFor key for UCS-2 in host byte order; CCSIDs are positive
+	const int kHostUcs2 = -1;
+
 	// iconv names to try for an IBM CCSID, most specific first.
 	std::vector<std::string> iconvNames(int ccsid)
 	{
@@ -135,6 +164,11 @@ namespace
 		};
 
 		std::vector<std::string> names;
+		if (ccsid == kHostUcs2)
+		{
+			names.push_back((__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) ? "UTF-16LE" : "UTF-16BE");
+			return names;
+		}
 		auto it = specific.find(ccsid);
 		if (it != specific.end())
 		{
@@ -305,6 +339,93 @@ int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars)
 	}
 
 	return count;
+}
+
+int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * in, int inChars,
+	char * out, int outBytes, const char * defaultChar, BOOL * usedDefaultChar)
+{
+	(void)flags;
+	if ((codepage <= 0) || (inChars < 0) || (outBytes <= 0))
+	{
+		return 0;
+	}
+	iconv_t cd = converterFor(kHostUcs2, codepage);
+	if (cd == (iconv_t)-1)
+	{
+		return 0;
+	}
+	iconv(cd, NULL, NULL, NULL, NULL);
+
+	// one code unit at a time, so that each unrepresentable one becomes the default
+	char * outPtr = out;
+	size_t outLeft = (size_t)outBytes;
+	for (int i = 0; i < inChars; i++)
+	{
+		RFH_UCS2 unit = in[i];
+		char * inPtr = (char *)&unit;
+		size_t inLeft = sizeof(unit);
+		if (iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1)
+		{
+			if (errno == E2BIG)
+			{
+				return 0;
+			}
+			// EILSEQ: not representable; EINVAL: half of a surrogate pair
+			iconv(cd, NULL, NULL, NULL, NULL);
+			if (outLeft == 0)
+			{
+				return 0;
+			}
+			*outPtr++ = (defaultChar != NULL) ? defaultChar[0] : '?';
+			outLeft--;
+			if (usedDefaultChar != NULL)
+			{
+				*usedDefaultChar = TRUE;
+			}
+		}
+	}
+	return (int)((size_t)outBytes - outLeft);
+}
+
+int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
+	RFH_UCS2 * out, int outChars)
+{
+	if ((codepage <= 0) || (flags != 0) || (inBytes < 0) || (outChars <= 0))
+	{
+		return 0;
+	}
+	iconv_t cd = converterFor(codepage, kHostUcs2);
+	if (cd == (iconv_t)-1)
+	{
+		return 0;
+	}
+	iconv(cd, NULL, NULL, NULL, NULL);
+
+	char * inPtr = (char *)in;
+	size_t inLeft = (size_t)inBytes;
+	char * outPtr = (char *)out;
+	size_t outLeft = (size_t)outChars * sizeof(RFH_UCS2);
+	if ((iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1) && (errno == E2BIG))
+	{
+		return 0;
+	}
+	return (int)(((size_t)outChars * sizeof(RFH_UCS2) - outLeft) / sizeof(RFH_UCS2));
+}
+
+int rfh_mbclen(const unsigned char * text)
+{
+	unsigned char ch = text[0];
+	switch (rfh_get_acp())
+	{
+	case 932:	// Shift-JIS
+		return (((ch >= 0x81) && (ch <= 0x9F)) || ((ch >= 0xE0) && (ch <= 0xFC))) ? 2 : 1;
+	case 936:	// GBK
+	case 949:	// Unified Hangul
+	case 950:	// Big5
+		return ((ch >= 0x81) && (ch <= 0xFE)) ? 2 : 1;
+	default:
+		return 1;
+	}
 }
 
 #endif

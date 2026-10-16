@@ -3,6 +3,7 @@
 #include "rfh_platform.h"
 
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -118,4 +119,25 @@ const char * rfh_dump_path(const char * baseName)
 	return buffer;
 }
 
+#endif
+
+#ifndef _WIN32
+int _snprintf_s(char * buffer, size_t sizeOfBuffer, size_t count, const char * format, ...)
+{
+	if ((buffer == NULL) || (sizeOfBuffer == 0) || (count != _TRUNCATE))
+	{
+		return -1;
+	}
+
+	va_list args;
+	va_start(args, format);
+	int needed = vsnprintf(buffer, sizeOfBuffer, format, args);
+	va_end(args);
+
+	if ((needed < 0) || ((size_t)needed >= sizeOfBuffer))
+	{
+		return -1;
+	}
+	return needed;
+}
 #endif

@@ -6,6 +6,7 @@
 #include "gtest_compat.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include <string>
 #include <vector>
 
@@ -317,4 +318,92 @@ TEST(Platform_Trace, NullRestoresNoOpSink)
     rfhSetTrace(&recorder);
     rfhSetTrace(nullptr);
     EXPECT_FALSE(rfhGetTrace()->isTraceEnabled());
+}
+
+// WideCharToMultiByte / MultiByteToWideChar for 16-bit UCS-2 (the formatters' calls)
+
+TEST(Platform_Codepage, WideToAnsiConvertsEachCodeUnit)
+{
+    const RFH_UCS2 in[] = { 'c', 'a', 'f', 0x00E9 };
+    char out[8] = { 0 };
+    EXPECT_EQ(4, rfh_WideCharToMultiByte(1252, 0, in, 4, out, sizeof(out), ".", NULL));
+    EXPECT_EQ(0, memcmp(out, "caf\xe9", 4));
+}
+
+TEST(Platform_Codepage, WideToAnsiUsesTheDefaultCharacter)
+{
+    const RFH_UCS2 in[] = { 'a', 0x4E00, 'b' };    // a CJK ideograph has no 1252 form
+    char out[8] = { 0 };
+    BOOL usedDefault = FALSE;
+    EXPECT_EQ(3, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 3, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ(0, memcmp(out, "a.b", 3));
+    EXPECT_TRUE(usedDefault);
+}
+
+TEST(Platform_Codepage, WideToAnsiThatDoesNotFitConvertsNothing)
+{
+    const RFH_UCS2 in[] = { 'a', 'b', 'c' };
+    char out[2] = { 0 };
+    EXPECT_EQ(0, rfh_WideCharToMultiByte(1252, 0, in, 3, out, sizeof(out), ".", NULL));
+}
+
+TEST(Platform_Codepage, AnsiToWideConvertsEachByte)
+{
+    RFH_UCS2 out[4] = { 0 };
+    EXPECT_EQ(2, rfh_MultiByteToWideChar(1252, 0, "\xe9\x80", 2, out, 4));
+    EXPECT_EQ(0x00E9, out[0]);
+    EXPECT_EQ(0x20AC, out[1]);      // 0x80 is the euro sign in 1252
+}
+
+TEST(Platform_Codepage, EbcdicToWide)
+{
+    REQUIRE_CODEPAGE(500);
+    RFH_UCS2 out[2] = { 0 };
+    EXPECT_EQ(1, rfh_MultiByteToWideChar(500, 0, "\xc1", 1, out, 2));
+    EXPECT_EQ((RFH_UCS2)'A', out[0]);
+}
+
+TEST(Platform_Codepage, WideConversionsWithAMissingCodePageConvertNothing)
+{
+    const RFH_UCS2 in[] = { 'a' };
+    char out[4] = { 0 };
+    RFH_UCS2 wide[4] = { 0 };
+    EXPECT_EQ(0, rfh_WideCharToMultiByte(99999, 0, in, 1, out, sizeof(out), ".", NULL));
+    EXPECT_EQ(0, rfh_MultiByteToWideChar(99999, 0, "a", 1, wide, 4));
+}
+
+TEST(Platform_Codepage, MbclenIsOneInASingleByteAnsiCodePage)
+{
+    if (rfh_get_acp() != 1252)
+    {
+        GTEST_SKIP() << "needs ANSI code page 1252";
+    }
+    const unsigned char text[] = { 0x81, 0x40, 0 };
+    EXPECT_EQ(1, rfh_mbclen(text));
+}
+
+#ifndef _WIN32
+TEST(Platform_Codepage, MbclenRecognisesShiftJisLeadBytes)
+{
+    const char * old = getenv("RFHUTIL_ACP");
+    std::string saved = old ? old : "";
+    bool had = (old != nullptr);
+
+    setenv("RFHUTIL_ACP", "932", 1);
+    const unsigned char lead[] = { 0x81, 0x40, 0 };
+    const unsigned char single[] = { 'a', 0 };
+    EXPECT_EQ(2, rfh_mbclen(lead));
+    EXPECT_EQ(1, rfh_mbclen(single));
+
+    if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
+}
+#endif
+
+TEST(Platform_Snprintf, TruncateModeTerminatesAndReportsTruncation)
+{
+    char buf[6];
+    EXPECT_EQ(-1, _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%s", "abcdefgh"));
+    EXPECT_STREQ("abcde", buf);
+    EXPECT_EQ(3, _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%d", 123));
+    EXPECT_STREQ("123", buf);
 }
