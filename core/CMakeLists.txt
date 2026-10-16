@@ -30,6 +30,7 @@ add_library(rfhcore STATIC
     mq/rfh_result.cpp
     mq/rfh_mq_loader.cpp
     mq/rfh_mq_session.cpp
+    message/rfh_mqmd_fields.cpp
     ${RFHUTIL_SHARED_SOURCES}
 )
 
@@ -59,6 +60,7 @@ if(NOT WIN32)
     set_source_files_properties(
         platform/rfh_platform.cpp platform/rfh_codepage.cpp platform/rfh_trace.cpp
         mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp
+        message/rfh_mqmd_fields.cpp
         PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
     # cmqstrc.h returns string literals as char *.
     set_source_files_properties(mq/rfh_result.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-write-strings;-Wno-unused-function")
