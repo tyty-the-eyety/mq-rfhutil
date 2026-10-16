@@ -3688,3 +3688,27 @@ as the reproduction. Do not change the behaviour in this plan.
 - **Qt6 application:** Plan 3.
 - **RPM, `.desktop` file, and Linux CI** (including a source for the MQ
   headers in CI): Plan 4.
+
+## Execution notes (2026-10-16)
+
+Changes from the plan during review:
+
+- Test count is 340, not 302. The tests add `rfhutil_mq_fake_tests` (fake MQI, no queue
+  manager needed); the one client test is skipped unless `MQ_CHANNEL` is set.
+- Extra fixes per task, from the git log:
+  - Task 1 (platform layer): Windows code page aliases, 21025, UCS-2 output limit, iconv
+    handle cleanup, timer overflow.
+  - Task 2 (shared sources): `-fsigned-char`, UCS-2 helper tests, exact `getLastError`
+    tests, upstream bugs pinned.
+  - Task 3 (Windows projects): `tests/core/gtest_compat.h` (`GTEST_SKIP` for googletest
+    1.8.1), a `static_assert` in `rfhutil.cpp` that `CRfhutilApp` does not shadow
+    `RfhTrace::verboseTrace`, `~CRfhutilApp` uninstalls the trace, and new entries in
+    `RFHUtil.vcxproj.filters`.
+  - Task 4 (Result and loader): `serverLibrary` split from `bindingsAvailable`,
+    `rfh_mq_loader_detail.h`, Windows installation-path search, and
+    `RFHUTIL_REQUIRE_MQ=1`. A later fix made `bindingsAvailable` work for non-mqm users.
+  - Task 5 (MqSession): `MQWI_UNLIMITED`, `MQCNO_HANDLE_SHARE_NO_BLOCK`, `convertCcsid` and
+    `convertEncoding`, buffer growth on converted data, stale handles cleared after
+    disconnect, and the `MqSession(const MqApi &)` test seam with fake-MQI tests.
+- Task 6 (Windows CI): handed to the repository owner.
+- Task 7: client mode verified on 2026-10-16 against tests/docker/compose.yaml. The container ran IBM MQ 10.0.1.0 (QM1, DEV.APP.SVRCONN, user app). MqClient.PutThenGetOverClientChannel passed. With a wrong password, MQCONNX failed with 2035 MQRC_NOT_AUTHORIZED, which confirms the credentials are sent. The container was stopped and removed afterwards. Messages over 4 MB on a client channel (MaxMsgLength) were not tested.

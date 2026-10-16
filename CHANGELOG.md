@@ -1,6 +1,24 @@
 # Changelog
 Newest updates are at the top of this file
 
+## [Unreleased]
+
+### Added
+- Portable core library (`core/`) and CMake build: the shared parsers and a new
+  MQ session layer (`MqLoader`, `MqSession`: connect in bindings or client mode,
+  put, get, browse, depth, purge) build and pass their tests on Linux
+  (Fedora 44, IBM MQ 9.4).
+- The existing unit tests also run on Linux (`ctest --preset linux-debug`).
+- `tests/core/gtest_compat.h` supplies `GTEST_SKIP` for the googletest 1.8.1
+  NuGet package used by the Windows unit test project.
+
+### Changed
+- comsubs, xmlsubs, JsonParse, XMLParse and Names use `core/platform` instead of
+  direct Win32 calls; behaviour on Windows is unchanged.
+- `processBackspace` moved from comsubs.cpp to the MFC-only uisubs.cpp.
+- `CRfhutilApp` implements the `RfhTrace` interface and installs itself for
+  tracing; it uninstalls itself on exit.
+
 ## Build 240 (V10.0.0.0 build 240) July 2026
 * Merge the large PR from Matthias
 * Fixes beyond that include:

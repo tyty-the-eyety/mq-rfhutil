@@ -111,16 +111,21 @@ class MqLoader {                          // resolves MQ entry points from the s
  public:
   static Result load(Mode);               // libmqm_r.so / libmqic_r.so (mqm.dll / mqic.dll on Windows)
 };
+// MqLoader loads one library per process: libmqm_r for both modes, or libmqic_r on
+// client-only setups. Its info reports serverLibrary (the loaded library can make local
+// connections) and bindingsAvailable (a local queue manager installation exists:
+// <home>/bin/strmqm, checked for existence only). On Windows, <home>\bin64 is tried
+// first when a home is given.
 
 struct ConnectOptions {
   Mode mode;
   std::string qmName;
   std::optional<std::string> channel, connName, ccdtPath;   // client mode; otherwise MQSERVER / MQCHLLIB
   std::optional<std::string> userId, password;              // password is never logged or persisted
-  std::optional<TlsOptions> tls;
+  std::optional<TlsOptions> tls;            // deferred to the Connection Settings plan
   MQLONG heartbeat = 60;
   MQLONG keepAlive = MQKAI_AUTO;
-  bool autoReconnect = false;
+  bool autoReconnect = false;              // deferred to the Connection Settings plan
 };
 
 class MqSession {                         // not thread-safe; owned by one worker thread
@@ -133,7 +138,12 @@ class MqSession {                         // not thread-safe; owned by one worke
   Result purge();
   Result close(CloseOption);
   Result disconnect();
-  Result queueNames(std::vector<std::string>& out, const NameFilter&);
+  Result queueNames(std::vector<std::string>& out, const NameFilter&);   // deferred to a later plan
+  // Handles are opened with MQCNO_HANDLE_SHARE_NO_BLOCK. GetOptions has convertCcsid and
+  // convertEncoding, and supports MQWI_UNLIMITED. MqSession(const MqApi&) is a test seam
+  // for a fake MQI. After a converted-message-too-big warning, a browse re-reads by
+  // matching the MsgId (owner decision); with duplicate MsgIds the browse can stick, as
+  // documented on GetOptions::convert.
 };
 
 struct Message {
@@ -156,8 +166,11 @@ namespace format {
   Result render(const Message&, View, const RenderOptions&, std::string& out);  // View: Char|Hex|Both|Xml|Json|Parsed|Cobol|Fixed
 }
 
-using TraceSink = std::function<void(std::string_view)>;  // replaces logTraceEntry
-void setTraceSink(TraceSink);
+// core/platform/rfh_trace.h: replaces logTraceEntry. 28 shared-source call sites already
+// use this shape, so the MFC application object implements it directly: CRfhutilApp
+// installs itself in its constructor and uninstalls itself in its destructor.
+RfhTrace * rfhGetTrace();
+void rfhSetTrace(RfhTrace *);
 ```
 
 ### Data flow

@@ -257,6 +257,28 @@ build.cmd all        # Build all Win32 projects
 Running the programs may require that you run `setmqenv` to set a suitable environment for the programs to locate the MQ
 libraries.
 
+### Building the portable core on Linux
+Requires CMake 3.21+, a C++17 compiler, GoogleTest and the IBM MQ SDK
+(`MQSeriesSDK`, default `/opt/mqm`).
+
+```bash
+sudo dnf install cmake gcc-c++ gtest-devel     # Fedora
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug                      # MQ tests need a local queue manager
+```
+
+The test executables are `rfhutil_unit_tests`, `rfhutil_core_tests`,
+`rfhutil_loader_tests`, `rfhutil_mq_tests` (label `mq`, needs a local queue manager)
+and `rfhutil_mq_fake_tests` (uses a fake MQI and needs no queue manager). MQ tests
+skip when MQ is not available; set `RFHUTIL_REQUIRE_MQ=1` to turn those skips into
+failures.
+
+MQ integration tests use `MQ_BINDINGS_QMGR` (default `TEST_QM`) and create and
+delete `RFHUTIL.TEST.*` queues; client tests run when `MQ_CHANNEL` is set (see
+`tests/docker/compose.yaml`). Without an installed GoogleTest, add
+`-DRFHUTIL_FETCH_GTEST=ON`.
+
 ### Performance testing tools
 The IH03 SupportPac also included some independent performance testing programs. Those programs are included in this repository under
 the `mqperf` subdirectory. There is a Visual Studio 2017 Solution configuration to rebuild those tools included. Generated executables
