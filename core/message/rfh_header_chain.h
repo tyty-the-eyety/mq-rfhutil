@@ -5,10 +5,20 @@
 // length and next-format rules of the header parsers (CDlq::parseDLQheader,
 // CCICS::parseCICSheader, CIms::parseIMSheader, RFH::parseRFH, RFH::parseRFH2).
 // It records where each header is and what follows it; it does not decode header
-// contents. Two deliberate differences from Windows, both reported upstream:
-// an MQMDE is read from its real offset (Windows uses (MQMDE *)data + offset,
-// which scales the offset by sizeof(MQMDE)), and its integers are byte-swapped
-// only for host encoding (Windows always swaps them).
+// contents. Deliberate differences from Windows:
+//  - An MQMDE is read from its real offset (Windows uses (MQMDE *)data + offset,
+//    which scales the offset by sizeof(MQMDE)), and its integers are byte-swapped
+//    only for host encoding (Windows always swaps them). Both reported upstream.
+//  - After an MQMDE the next encoding is getIntEncode(MDE.Encoding); Windows keeps
+//    the raw MQENC value, so later DLQ, CICS and IMS headers always swap.
+//  - A failed parse of a header type that already parsed earlier in the chain uses
+//    the cleared state; Windows reuses the earlier parse's state and can loop
+//    forever or read past the buffer.
+//  - A header whose length runs past the data ends the chain (Windows' behaviour
+//    is undefined there).
+//  - An MQMDE under 72 bytes ends the chain and leaves ccsid, charFormat and
+//    encoding unchanged.
+// Warnings accumulate, whereas Windows' RFH message replaces earlier ones.
 //
 // detectLeadingHeader and looksLikeEbcdic are the ports of
 // DataArea::checkDataForHeader and DataArea::checkForEBCDIC, used when a file has
@@ -50,7 +60,9 @@ namespace rfh
 		std::string bodyFormat;		// format of the data after the last header, trailing blanks removed
 		int bodyCcsid = 0;
 		int charFormat = 0;			// CHAR_* for the body
-		int encoding = 0;			// NUMERIC_PC or NUMERIC_HOST for the body
+		int encoding = 0;			// NUMERIC_PC or NUMERIC_HOST for the body; -1 after an invalid DLQ
+									// (consumers derive pd/float as Windows does: PC/FLOAT_PC when
+									// NUMERIC_PC, else HOST/FLOAT_390)
 		bool hasMdExtension = false;
 		MdExtensionFields mdExtension = {};
 		std::vector<std::string> warnings;

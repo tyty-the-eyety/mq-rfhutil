@@ -187,6 +187,244 @@ TEST(HeaderChain, TruncatedHeaderEndsTheChain)
 	EXPECT_EQ(-1, c.encoding) << "the cleared DLQ tab has encoding -1";
 }
 
+// ---- bounds: a header whose length runs past the data ends the chain ----
+
+TEST(HeaderChain, TruncatedCicsVersion2EndsTheChain)
+{
+	// 170 bytes is a whole version 1 header but short of the 180 version 2 needs.
+	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
+	cih.data.resize(170);
+	HeaderChain c = walk(cih.data, MQFMT_CICS);
+	EXPECT_TRUE(c.headers.empty());
+	EXPECT_EQ(0u, c.bodyOffset);
+	EXPECT_EQ("", c.bodyFormat);
+}
+
+TEST(HeaderChain, TruncatedCicsVersion2WithProgramNameEndsTheChain)
+{
+	// 176 bytes passes the program name test (172 or more) but is short of 188.
+	auto cih = L::cih(Order::Little, 2, MQCLT_PROGRAM, 546, 1208, "MQSTR");
+	cih.data.resize(176);
+	HeaderChain c = walk(cih.data, MQFMT_CICS);
+	EXPECT_TRUE(c.headers.empty());
+	EXPECT_EQ(0u, c.bodyOffset);
+	EXPECT_EQ("", c.bodyFormat);
+}
+
+TEST(HeaderChain, TruncatedCicsNamingRfh2NextDoesNotReadPastTheData)
+{
+	// Before the bound the next parser started 180 bytes into 170 bytes of data.
+	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQHRF2");
+	cih.data.resize(170);
+	HeaderChain c = walk(cih.data, MQFMT_CICS);
+	EXPECT_TRUE(c.headers.empty());
+	EXPECT_EQ(0u, c.bodyOffset);
+	EXPECT_EQ("", c.bodyFormat);
+}
+
+// ---- deliberate differences from Windows ----
+
+TEST(HeaderChain, SecondHeaderOfSameTypeFailingEndsTheChain)
+{
+	// Windows reuses the earlier DLQ parse's state here and can loop or overrun;
+	// this port uses the cleared state.
+	auto dlh = L::dlh(Order::Little, 546, 1208, "MQHRF2");
+	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQDEAD");
+	auto bad = L::dlh(Order::Little, 546, 1208, "MQSTR");
+	bad.putChars(0, 4, "XXXX");
+	HeaderChain c = walk(L::join({ dlh.data, rfh.data, bad.data }), MQFMT_DEAD_LETTER_HEADER);
+	ASSERT_EQ(2u, c.headers.size());
+	EXPECT_EQ(208u, c.bodyOffset);
+	EXPECT_EQ("", c.bodyFormat);
+}
+
+TEST(HeaderChain, EncodingAfterMdExtensionIsTheDecodedOne)
+{
+	// Windows keeps the raw MQENC value (546), so later DLQ/CICS/IMS headers always
+	// swap; here the encoding is getIntEncode(546), i.e. little-endian data stays so.
+	auto mde = L::mde(Order::Little, 546, 1208, "MQDEAD", 1, 0, 0, -1, "GROUP-ID-123456789012345");
+	auto dlh = L::dlh(Order::Little, 546, 1208, "MQSTR");
+	HeaderChain c = walk(L::join({ mde.data, dlh.data, L::text("x") }), MQFMT_MD_EXTENSION);
+	ASSERT_EQ(2u, c.headers.size());
+	EXPECT_EQ(72u + 172u, c.bodyOffset);
+	EXPECT_EQ("MQSTR", c.bodyFormat);
+}
+
+// ---- warnings ----
+
+TEST(HeaderChain, CicsCcsidOutOfRangeWarns)
+{
+	auto cih = L::cih(Order::Little, 1, MQCLT_TRANSACTION, 546, 200000, "MQSTR");
+	HeaderChain c = walk(L::join({ cih.data, L::text("x") }), MQFMT_CICS);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(0, c.bodyCcsid);
+	ASSERT_EQ(1u, c.warnings.size());
+	EXPECT_EQ("*** Errors parsing CICS header\r\n", c.warnings[0]);
+}
+
+TEST(HeaderChain, CicsVersion2CursorAndErrorOffsetOutOfRangeWarn)
+{
+	// Windows checks CursorPosition (164) and ErrorOffset (168) only for version 2
+	// (it zeroes them for version 1) and reports one error for any bad field.
+	auto cursor = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
+	cursor.putLong(164, 100000);
+	EXPECT_EQ(1u, walk(cursor.data, MQFMT_CICS).warnings.size());
+
+	auto errorOfs = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
+	errorOfs.putLong(168, -10000);
+	EXPECT_EQ(1u, walk(errorOfs.data, MQFMT_CICS).warnings.size());
+
+	auto fine = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
+	fine.putLong(164, 99999);
+	fine.putLong(168, -9999);
+	EXPECT_TRUE(walk(fine.data, MQFMT_CICS).warnings.empty());
+}
+
+TEST(HeaderChain, TruncatedRfh2WarnsButTruncatedRfh1IsSilent)
+{
+	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR");
+	rfh.data.resize(20);
+	HeaderChain c = walk(rfh.data, MQFMT_RF_HEADER_2);
+	EXPECT_TRUE(c.headers.empty());
+	ASSERT_EQ(1u, c.warnings.size());
+	EXPECT_EQ("***Invalid RFH Length field*** ", c.warnings[0]);
+
+	auto rfh1 = L::rfh1(Order::Little, 546, 1208, "MQSTR", "a=b ");
+	rfh1.data.resize(20);
+	HeaderChain c1 = walk(rfh1.data, MQFMT_RF_HEADER);
+	EXPECT_TRUE(c1.headers.empty());
+	EXPECT_TRUE(c1.warnings.empty());
+}
+
+// ---- edge cases ----
+
+TEST(HeaderChain, HostEncodedDeadLetterHeaderIsSwapped)
+{
+	auto dlh = L::dlh(Order::Big, 785, 500, "MQSTR");
+	HeaderChain c = walk(L::join({ dlh.data, L::text("x") }), MQFMT_DEAD_LETTER_HEADER, 819, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(172u, c.bodyOffset);
+	EXPECT_EQ(500, c.bodyCcsid);
+	EXPECT_EQ(NUMERIC_HOST, c.encoding);
+}
+
+TEST(HeaderChain, HostEncodedCicsVersion1IsSwapped)
+{
+	auto cih = L::cih(Order::Big, 1, MQCLT_TRANSACTION, 785, 500, "MQSTR");
+	HeaderChain c = walk(L::join({ cih.data, L::text("x") }), MQFMT_CICS, 819, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(164u, c.bodyOffset);
+	EXPECT_EQ(500, c.bodyCcsid);
+	EXPECT_EQ("MQSTR", c.bodyFormat);
+}
+
+TEST(HeaderChain, HostEncodedImsHeaderIsSwapped)
+{
+	auto iih = L::iih(Order::Big, 785, 500, "MQSTR");
+	HeaderChain c = walk(L::join({ iih.data, L::text("x") }), MQFMT_IMS, 819, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(84u, c.bodyOffset);
+	EXPECT_EQ(500, c.bodyCcsid);
+}
+
+TEST(HeaderChain, HostEncodedRfh1IsSwapped)
+{
+	auto rfh = L::rfh1(Order::Big, 785, 500, "MQSTR", "a=b ");
+	HeaderChain c = walk(L::join({ rfh.data, L::text("x") }), MQFMT_RF_HEADER, 819, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(36u, c.bodyOffset);
+	EXPECT_EQ(500, c.bodyCcsid);
+	EXPECT_EQ(NUMERIC_HOST, c.encoding);
+}
+
+TEST(HeaderChain, EbcdicDeadLetterHeaderIsTranslated)
+{
+	// StrucId and Format are EBCDIC because the incoming data is CCSID 500.
+	auto dlh = L::dlh(Order::Big, 785, 500, "");
+	dlh.putBytes(0, L::ebcdic("DLH ").data(), 4);
+	dlh.putBytes(116, L::ebcdic("MQSTR   ").data(), 8);
+	HeaderChain c = walk(L::join({ dlh.data, L::text("x") }), MQFMT_DEAD_LETTER_HEADER, 500, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ("MQSTR", c.bodyFormat);
+	EXPECT_EQ(500, c.bodyCcsid);
+}
+
+TEST(HeaderChain, Rfh2OfExactlyTheFixedLengthIsAccepted)
+{
+	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR");
+	ASSERT_EQ(36u, rfh.data.size());
+	HeaderChain c = walk(rfh.data, MQFMT_RF_HEADER_2);
+	ASSERT_EQ(1u, c.headers.size());
+	EXPECT_EQ(36u, c.bodyOffset);
+	EXPECT_TRUE(c.warnings.empty());
+}
+
+TEST(HeaderChain, HostEncodedMdExtensionIsSwapped)
+{
+	auto mde = L::mde(Order::Big, 785, 500, "MQSTR", 3, 100, MQMF_SEGMENT, 400, "GROUP-ID-123456789012345");
+	HeaderChain c = walk(mde.data, MQFMT_MD_EXTENSION, 819, NUMERIC_HOST);
+	ASSERT_EQ(1u, c.headers.size());
+	ASSERT_TRUE(c.hasMdExtension);
+	EXPECT_EQ(3, c.mdExtension.msgSeqNumber);
+	EXPECT_EQ(100, c.mdExtension.offset);
+	EXPECT_EQ(MQMF_SEGMENT, c.mdExtension.msgFlags);
+	EXPECT_EQ(400, c.mdExtension.originalLength);
+	EXPECT_EQ(500, c.bodyCcsid);
+}
+
+TEST(HeaderChain, MdExtensionShorterThan72BytesEndsTheChain)
+{
+	auto mde = L::mde(Order::Little, 546, 500, "MQSTR", 3, 100, 0, 400, "GROUP-ID-123456789012345");
+	mde.data.resize(60);
+	HeaderChain c = walk(mde.data, MQFMT_MD_EXTENSION, 819);
+	EXPECT_TRUE(c.headers.empty());
+	EXPECT_FALSE(c.hasMdExtension);
+	EXPECT_EQ("", c.bodyFormat);
+	EXPECT_EQ(819, c.bodyCcsid) << "ccsid is left as it was";
+	EXPECT_EQ(NUMERIC_PC, c.encoding);
+}
+
+TEST(HeaderChain, LooseStopRuleParsesTwoRfh2HeadersInARow)
+{
+	// A header followed by one of its own kind stops the pass, not the chain: the
+	// next pass reads the second RFH2.
+	auto dlh = L::dlh(Order::Little, 546, 1208, "MQHRF2");
+	auto first = L::rfh2(Order::Little, 546, 1208, "MQHRF2");
+	auto second = L::rfh2(Order::Little, 546, 1208, "MQSTR");
+	HeaderChain c = walk(L::join({ dlh.data, first.data, second.data, L::text("x") }), MQFMT_DEAD_LETTER_HEADER);
+	ASSERT_EQ(3u, c.headers.size());
+	EXPECT_EQ(244u, c.bodyOffset);
+	EXPECT_EQ("MQSTR", c.bodyFormat);
+}
+
+TEST(LeadingHeader, LittleEndianCicsVersion2IsClassedAsHost)
+{
+	// Windows compares the version with MQCIH_VERSION_1 only, so a PC version 2
+	// header counts as host data.
+	auto cih = L::cih(Order::Little, 2, MQCLT_TRANSACTION, 546, 1208, "MQSTR");
+	LeadingHeader h = detectLeadingHeader(cih.data.data(), cih.data.size());
+	ASSERT_TRUE(h.found);
+	EXPECT_EQ(std::string(MQFMT_CICS), h.format);
+	EXPECT_EQ(NUMERIC_HOST, h.encoding);
+	EXPECT_EQ(FLOAT_390, h.floatEncoding);
+}
+
+TEST(LeadingHeader, ImsHeaderOf84BytesIsNotDetected)
+{
+	// Windows asks for 8 bytes more than the header's own length.
+	auto iih = L::iih(Order::Little, 546, 1208, "MQSTR");
+	EXPECT_FALSE(detectLeadingHeader(iih.data.data(), iih.data.size()).found);
+}
+
+TEST(LeadingHeader, Rfh1IsDetected)
+{
+	auto rfh = L::rfh1(Order::Little, 546, 1208, "MQSTR", "a=b ");
+	LeadingHeader h = detectLeadingHeader(rfh.data.data(), rfh.data.size());
+	ASSERT_TRUE(h.found);
+	EXPECT_EQ(std::string(MQFMT_RF_HEADER), h.format);
+	EXPECT_EQ(NUMERIC_PC, h.encoding);
+}
+
 TEST(LeadingHeader, AsciiPcRfh2)
 {
 	auto rfh = L::rfh2(Order::Little, 546, 1208, "MQSTR");

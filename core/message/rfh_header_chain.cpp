@@ -96,8 +96,13 @@ namespace rfh
 			return 0;
 		}
 
+		bool inRange(MQLONG v)
+		{
+			return (v < 100000) && (v > -10000);
+		}
+
 		// CCICS::parseCICSheader + CCICS::setNextFormat (which only sets the format)
-		size_t cics(const unsigned char * p, size_t n, State & s)
+		size_t cics(const unsigned char * p, size_t n, State & s, std::vector<std::string> & warnings)
 		{
 			bool ebcdic = (CHAR_EBCDIC == getCcsidType(s.ccsid));
 			bool reverse = (s.encoding != NUMERIC_PC);
@@ -119,10 +124,26 @@ namespace rfh
 						length += kCicsProgramName;
 					}
 
-					MQLONG ccsid = readLong(p + kCcsid, reverse);
-					s.ccsid = ((ccsid < 100000) && (ccsid > -10000)) ? ccsid : 0;
-					s.nextFormat = trimmedFormat(p + kFormat, ebcdic);
-					return length;
+					// the header must be there in full
+					if (length <= n)
+					{
+						// Windows reports out-of-range CCSID, and for version 2 cursor position
+						// (164) and error offset (168), as one error; version 1 zeroes the latter.
+						bool err = false;
+						MQLONG ccsid = readLong(p + kCcsid, reverse);
+						s.ccsid = inRange(ccsid) ? ccsid : 0;
+						err = !inRange(ccsid);
+						if (version == MQCIH_VERSION_2)
+						{
+							err = err || !inRange(readLong(p + 164, reverse)) || !inRange(readLong(p + 168, reverse));
+						}
+						if (err)
+						{
+							warnings.push_back("*** Errors parsing CICS header\r\n");
+						}
+						s.nextFormat = trimmedFormat(p + kFormat, ebcdic);
+						return length;
+					}
 				}
 			}
 
@@ -159,6 +180,12 @@ namespace rfh
 			bool ebcdic = (CHAR_EBCDIC == getCcsidType(s.ccsid));
 			bool reverse = (NUMERIC_HOST == s.encoding);
 			size_t fixed = v2 ? MQRFH_STRUC_LENGTH_FIXED_2 : MQRFH_STRUC_LENGTH_FIXED;
+
+			// RFH2 reports a truncated header; RFH1 returns silently, as Windows does
+			if (v2 && (n >= 4) && (n < fixed) && (chars(p, 4, ebcdic) == std::string(MQRFH_STRUC_ID, 4)))
+			{
+				warnings.push_back("***Invalid RFH Length field*** ");
+			}
 
 			if ((n >= fixed) && (chars(p, 4, ebcdic) == std::string(MQRFH_STRUC_ID, 4)))
 			{
@@ -235,6 +262,13 @@ namespace rfh
 			}
 
 			size_t len = parse(data + ofs, length - ofs, s, chain);
+			if (len > length - ofs)
+			{
+				// deliberate difference: Windows would carry on past the data
+				chain.warnings.push_back("header length runs past the end of the data");
+				s.nextFormat.clear();
+				return true;
+			}
 			if (len > 0)
 			{
 				chain.headers.push_back({ type, ofs, len });
@@ -250,7 +284,7 @@ namespace rfh
 			found |= step(kDeadLetter, HeaderType::DeadLetter,
 			              [](const unsigned char * p, size_t n, State & st, HeaderChain &) { return deadLetter(p, n, st); });
 			found |= step(kCics, HeaderType::Cics,
-			              [](const unsigned char * p, size_t n, State & st, HeaderChain &) { return cics(p, n, st); });
+			              [](const unsigned char * p, size_t n, State & st, HeaderChain & c) { return cics(p, n, st, c.warnings); });
 			found |= step(kIms, HeaderType::Ims,
 			              [](const unsigned char * p, size_t n, State & st, HeaderChain &) { return ims(p, n, st); });
 			found |= step(kRfh1, HeaderType::Rfh1,
