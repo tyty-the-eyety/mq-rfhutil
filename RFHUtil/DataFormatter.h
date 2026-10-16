@@ -169,7 +169,7 @@ private:
 	char xmlVarName[8192 + 1024];			// tag name
 	char tempVarValue[2 * 8192 + 1024];		// tag value
 	char tempVarName[8192 + 1];				// holding area for a tag name
-	char tempEndVarName[8192 + 1];
+	char tempEndVarName[8192 + 2];			// '/' and a tag name
 	char tempVarAttr[2 * 8192 + 1];
 	char xmlAttrStr[65536];
 };

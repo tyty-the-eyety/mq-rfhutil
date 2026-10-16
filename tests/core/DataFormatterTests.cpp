@@ -96,7 +96,25 @@ TEST(DataFormatter, ParsedViewBoundsALongTagName)
 {
     auto formatter = makeFormatter("<" + std::string(200000, 'X') + ">");
     formatter->getParsedData(CHAR_ASCII);
-    EXPECT_NE(nullptr, formatter->m_data_parsed);
+    ASSERT_NE(nullptr, formatter->m_data_parsed);
+}
+
+TEST(DataFormatter, ParsedViewKeepsTheValueOfTheLongestTagNameItHolds)
+{
+    // 8192 characters fit the tag name work area; '/' and the name must fit the end tag's
+    for (size_t length : { 8192, 8193, 9000, 200000 })
+    {
+        std::string name(length, 'n');
+        auto formatter = makeFormatter("<" + name + ">x</" + name + ">");
+        formatter->getParsedData(CHAR_ASCII);
+        ASSERT_NE(nullptr, formatter->m_data_parsed) << length;
+        const std::string parsed = (const char *)formatter->m_data_parsed;
+        EXPECT_EQ(std::string::npos, parsed.find("end name does not match")) << length;
+        if (length == 8192)
+        {
+            EXPECT_NE(std::string::npos, parsed.find("='x'")) << length;
+        }
+    }
 }
 
 TEST(DataFormatter, ParsedViewBoundsALongEndTagName)
