@@ -42,7 +42,7 @@ target_link_libraries(rfhutil_unit_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_unit_tests)
 
 add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core/MqmdFieldsTests.cpp core/HeaderChainTests.cpp core/MessageFileTests.cpp
-    core/GuardMallocTests.cpp)
+    core/GuardMallocTests.cpp core/DataFormatterTests.cpp)
 if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")

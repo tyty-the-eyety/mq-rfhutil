@@ -1,0 +1,80 @@
+#!/usr/bin/perl
+# port-formatters.pl - one-off extraction for Plan 2B.
+#
+# Copies the Data tab display formatters from RFHUtil/DataArea.cpp to the end of
+# RFHUtil/DataFormatter.cpp, which must hold only its prelude (ending with the
+# marker line below). The methods are copied in their DataArea.cpp order and are
+# unchanged apart from the rewrites listed here, each of which must match exactly
+# the expected number of times. DataArea.cpp is not modified. Run once from the
+# repository root.
+use strict; use warnings;
+
+my $marker = "// ---- methods moved from DataArea.cpp by tools/port/port-formatters.pl ----\n";
+
+sub slurp {
+	my ($path) = @_;
+	open my $in, '<:raw', $path or die "$path: $!\n";
+	my $text = do { local $/; <$in> };
+	close $in;
+	return $text;
+}
+
+my $source = slurp('RFHUtil/DataArea.cpp');
+$source =~ s/\r\n/\n/g;
+
+my $target = slurp('RFHUtil/DataFormatter.cpp');
+my $crlf = ($target =~ /\r\n/);
+$target =~ s/\r\n/\n/g;
+die "RFHUtil/DataFormatter.cpp: does not end with the marker line, or already holds the methods\n"
+	unless $target =~ /\Q$marker\E\n*\z/;
+
+# The formatters and the helpers only they call.
+my @methods = qw(getHexData xlateEbcdicChar getCharacterData getBothData getTranslatedData
+	getXmlData getJsonData getFixData getNameValueData getParsedData checkForUnicodeMarker
+	findcrlf isLeadChar MQEBC2ASC MQEBC2UCS);
+
+my @found;
+for my $m (@methods) {
+	my @hits;
+	while ($source =~ /^([A-Za-z][^\n;]*?\bDataArea::\Q$m\E\s*\((?:[^)]|\n)*\)\s*\n\{.*?\n\}\n)/msg) {
+		push @hits, [$-[1], $1];
+	}
+	die "DataArea.cpp: $m: found " . scalar(@hits) . " definitions, expected 1\n" unless @hits == 1;
+	push @found, $hits[0];
+}
+my $methods = join("\n", map { $_->[1] } sort { $a->[0] <=> $b->[0] } @found);
+$methods =~ s/\bDataArea::(\w+)\s*\(/DataFormatter::$1(/g;
+
+# [what, expected count, substitution]
+my @rewrites = (
+	['pointers traced as %8.8X', 10, sub { $_[0] =~ s/\(unsigned int\)\s*(m_data_\w+|newData|tempData|data)\b/(unsigned int)(uintptr_t)$1/g }],
+	['application object declarations', 2, sub { $_[0] =~ s/^[ \t]*CRfhutilApp\s*\*\s*app\b[^;\n]*;[^\n]*\n//mg }],
+	['application object lookups', 2, sub { $_[0] =~ s/^[ \t]*app\s*=\s*\(CRfhutilApp\s*\*\)\s*AfxGetApp\(\);[ \t]*\n//mg }],
+	['wchar_t is 32 bits on Linux', 9, sub { $_[0] =~ s/\bwchar_t\b/RFH_UCS2/g }],
+	['LPCWSTR casts', 4, sub { $_[0] =~ s/\(LPCWSTR\)/(const RFH_UCS2 *)/g }],
+	['WideCharToMultiByte', 7, sub { $_[0] =~ s/\bWideCharToMultiByte\(/rfh_WideCharToMultiByte(/g }],
+	['MultiByteToWideChar', 2, sub { $_[0] =~ s/\bMultiByteToWideChar\(/rfh_MultiByteToWideChar(/g }],
+	['CP_ACP is the display ANSI code page', 1, sub { $_[0] =~ s/\bCP_ACP\b/app->ansi/g }],
+	['CP_OEMCP is the display OEM code page', 1, sub { $_[0] =~ s/\bCP_OEMCP\b/app->oem/g }],
+	['C-locale wcstombs', 2, sub { $_[0] =~ s/wcstombs\(\(char \*\)newData, (\(const RFH_UCS2 \*\)\([^)]*\)), /rfh_ucs2_to_c_locale($1, (char *)newData, /g }],
+	['MQ table directory separator', 3, sub { $_[0] =~ s/"\\\\conv\\\\table\\\\/RFH_DIR_SEP "/g }],
+	['no table directory, no tables', 3, sub { $_[0] =~ s/\btbl = fopen\(fileName, "rb"\);/tbl = conversionTableDir.empty() ? NULL : fopen(fileName, "rb");/g }],
+	# memory safety (deliberate differences; see DataFormatter.h)
+	['both view buffer', 1, sub { $_[0] =~ s/len = \(fileLength << 2\) \+ 65;/len = ((fileLength + 15) \/ 16) * 65 + 65;\t\t\/\/ 65 bytes per line of 16; Windows allocates (fileLength << 2) + 65/g }],
+	['fixed view table index', 1, sub { $_[0] =~ s/m_data_fix\[len\] = invalidCharTable\[tempTxt\[0\]\];/m_data_fix[len] = invalidCharTable[(unsigned char)tempTxt[0]];/g }],
+	['EDI blank skip', 1, sub { $_[0] =~ s/while \(data\[buffer \+ newline\] <= ' '\)/while ((newline < remaining) && (data[buffer + newline] <= ' '))/g }],
+);
+for my $r (@rewrites) {
+	my ($what, $want, $code) = @$r;
+	my $n = 0 + ($code->($methods) || 0);
+	die "$what: matched $n time(s), expected $want\n" unless $n == $want;
+	printf "%-40s %2d\n", $what, $n;
+}
+
+$target =~ s/\n*\z/\n\n/;
+$target .= $methods;
+$target =~ s/\n/\r\n/g if $crlf;
+open my $out, '>:raw', 'RFHUtil/DataFormatter.cpp' or die "RFHUtil/DataFormatter.cpp: $!\n";
+print $out $target;
+close $out;
+printf "%d methods copied to RFHUtil/DataFormatter.cpp\n", scalar @found;

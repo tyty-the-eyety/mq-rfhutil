@@ -21,6 +21,7 @@ set(RFHUTIL_SHARED_SOURCES
     ${PROJECT_SOURCE_DIR}/RFHUtil/Names.cpp
     ${PROJECT_SOURCE_DIR}/RFHUtil/mqerror.cpp
     ${PROJECT_SOURCE_DIR}/RFHUtil/mqsubs.cpp
+    ${PROJECT_SOURCE_DIR}/RFHUtil/DataFormatter.cpp
 )
 
 add_library(rfhcore STATIC
