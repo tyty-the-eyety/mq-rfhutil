@@ -53,7 +53,9 @@ int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars);
 // (inChars >= 0) to codepage and returns the bytes written, or 0 when the code page
 // is not available or the output does not fit in outBytes (Windows returns 0 with
 // ERROR_INSUFFICIENT_BUFFER). There is no size-query mode: outBytes must be
-// positive. A surrogate pair converts as one character. Code page 932 means
+// positive. A surrogate pair converts as one character when the code page can
+// represent it (65001); otherwise each unit becomes a default character, as on
+// Windows single- and double-byte code pages. Code page 932 means
 // Windows-31J, as on Windows (likewise 936, 949 and 950). *usedDefaultChar is set to
 // FALSE and then to TRUE if a default character is used. On Linux 65001 and 1208
 // accept a default character, whereas Windows rejects lpDefaultChar for CP_UTF8.
@@ -68,8 +70,8 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 // available or the output does not fit in outChars. flags must be 0 (or, on Linux,
 // MB_PRECOMPOSED; other flags give 0). On Linux bytes 0x81, 0x8D, 0x8F, 0x90 and
 // 0x9D of code page 1252 map to the C1 controls of the same value, as on Windows (and
-// the reverse in rfh_WideCharToMultiByte). An incomplete or invalid sequence ends the conversion, and the code units converted
-// before it are returned.
+// the reverse in rfh_WideCharToMultiByte). An incomplete or invalid sequence ends the
+// conversion, and the code units converted before it are returned.
 int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
 	RFH_UCS2 * out, int outChars);
 

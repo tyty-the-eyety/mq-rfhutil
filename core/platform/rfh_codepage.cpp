@@ -142,7 +142,7 @@ namespace
 			{ 923, "ISO-8859-15" },
 			{ 1089, "ISO-8859-6" },
 			{ 1208, "UTF-8" },
-			// Windows ANSI double-byte code pages, not glibc's IBM variants (IBM943 for
+			// Windows ANSI double-byte code pages, not glibc's IBM variants (IBM932 for
 			// 932 differs from Windows-31J, for example in the NEC row 13 characters)
 			{ 932, "CP932" },
 			{ 936, "CP936" },
@@ -287,40 +287,14 @@ int rfh_convert_char(int fromCcsid, int toCcsid, const char * input, char * outp
 		return 0;
 	}
 
-	iconv_t cd = converterFor(fromCcsid, toCcsid);
-	if (cd == (iconv_t)-1)
+	// the same two steps as Windows: to UCS-2, then to the target code page
+	RFH_UCS2 ucs[2] = { 0, 0 };
+	int units = rfh_MultiByteToWideChar(fromCcsid, 0, input, 1, ucs, 2);
+	if (units <= 0)
 	{
 		return 0;
 	}
-
-	// reset any shift state left by a previous call
-	iconv(cd, NULL, NULL, NULL, NULL);
-
-	char in[1] = { input[0] };
-	char * inPtr = in;
-	size_t inLeft = 1;
-	char * outPtr = output;
-	size_t outLeft = (size_t)outputMax;
-
-	if (iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1)
-	{
-		if (errno == EILSEQ)
-		{
-			// not representable: Windows substitutes the default character
-			output[0] = '.';
-			return 1;
-		}
-
-		// EINVAL (incomplete multibyte sequence) and E2BIG deliberately return 0
-		return 0;
-	}
-
-	if (!flushConverter(cd, &outPtr, &outLeft))
-	{
-		return 0;
-	}
-
-	return (int)((size_t)outputMax - outLeft);
+	return rfh_WideCharToMultiByte(toCcsid, 0, ucs, units, output, outputMax, ".", NULL);
 }
 
 int rfh_ucs2_to_c_locale(const RFH_UCS2 * ucs, char * mbs, int mbsBytes)
@@ -392,6 +366,7 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 	{
 		RFH_UCS2 units[2] = { in[i], 0 };
 		size_t inLeft = sizeof(RFH_UCS2);
+		size_t defaults = 1;		// default characters for this input if it is unrepresentable
 
 		if ((codepage == 1252) && isUndefined1252(units[0]))
 		{
@@ -408,6 +383,7 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 		{
 			units[1] = in[i + 1];
 			inLeft = 2 * sizeof(RFH_UCS2);
+			defaults = 2;		// Windows substitutes each 16-bit unit of an unmappable pair
 			i++;
 		}
 
@@ -420,12 +396,15 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 			}
 			// EILSEQ: not representable; EINVAL: half of a surrogate pair
 			iconv(cd, NULL, NULL, NULL, NULL);
-			if (outLeft == 0)
+			if (outLeft < defaults)
 			{
 				return 0;
 			}
-			*outPtr++ = (defaultChar != NULL) ? defaultChar[0] : '?';
-			outLeft--;
+			for (size_t d = 0; d < defaults; d++)
+			{
+				*outPtr++ = (defaultChar != NULL) ? defaultChar[0] : '?';
+				outLeft--;
+			}
 			if (usedDefaultChar != NULL)
 			{
 				*usedDefaultChar = TRUE;

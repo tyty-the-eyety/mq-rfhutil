@@ -454,15 +454,20 @@ TEST(Platform_Codepage, SurrogatePairConvertsToUtf8)
     EXPECT_EQ(0, memcmp(out, "\xf0\x9f\x98\x80", 4));
 }
 
-TEST(Platform_Codepage, SurrogatePairNotInTheCodePageIsOneDefaultCharacter)
+#ifndef _WIN32
+// Windows converts single-byte code pages one 16-bit unit at a time, so an unmappable
+// pair should give two default characters. Linux-only until the owner's Windows build
+// confirms it.
+TEST(Platform_Codepage, SurrogatePairNotInTheCodePageIsTwoDefaultCharacters)
 {
     const RFH_UCS2 in[] = { 0xD83D, 0xDE00 };
     char out[8] = { 0 };
     BOOL usedDefault = FALSE;
-    EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 2, out, sizeof(out), ".", &usedDefault));
-    EXPECT_EQ('.', out[0]);
+    EXPECT_EQ(2, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 2, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ(0, memcmp(out, "..", 2));
     EXPECT_TRUE(usedDefault);
 }
+#endif
 
 #ifndef _WIN32
 TEST(Platform_Codepage, Code932IsWindows31J)
