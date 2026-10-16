@@ -21,7 +21,7 @@ Jim MacNair - Initial Contribution
 #include "stdafx.h"
 #include "comsubs.h"
 #include "rfhutil.h"
-#include "rfhconst.h"
+#include "rfhconst.h"	// direct: rfhutil.h is blocked in the portable build
 #include "cmqc.h"
 
 

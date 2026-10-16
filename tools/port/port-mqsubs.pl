@@ -23,23 +23,34 @@ sub edit {
 my %out;	# path => [text, crlf]; written only after every edit succeeded
 
 # ---------------------------------------------------------------- rfhutil.h -> rfhconst.h
-# The display, character, numeric, persistence and report constants move verbatim
-# from the MFC-only rfhutil.h into rfhconst.h, which rfhutil.h now includes.
+# The display, encoding, MQMD option and code page default constants move
+# verbatim from the MFC-only rfhutil.h into rfhconst.h, which rfhutil.h now
+# includes. Each edit counts its matches first and asserts the expected count.
 {
     my $f = 'RFHUtil/rfhutil.h'; my ($t, $crlf) = load($f);
     my ($block, $defaults);
-    edit($f, 'constants block', 1, scalar($t =~ s/^(\/\/ Display format types\n.*?#define SEGMENT_LAST\t2\n)/#include "rfhconst.h"\n/ms and do { $block = $1; 1 }));
-    edit($f, 'defaults block', 1, scalar($t =~ s/^(\/\/ code page defaults\n.*?#define DEF_UNIX_ENCODING\t\t\t273\n)\n//ms and do { $defaults = $1; 1 }));
+
+    my $re_block = qr/^(\/\/ Display format types\n.*?#define SEGMENT_LAST\t2\n)/ms;
+    my $n = () = $t =~ /$re_block/g;
+    edit($f, 'constants block', 1, $n);
+    $t =~ s/$re_block/#include "rfhconst.h"\n/ and $block = $1;
+
+    my $re_defaults = qr/^(\/\/ code page defaults\n.*?#define DEF_UNIX_ENCODING\t\t\t273\n)\n/ms;
+    $n = () = $t =~ /$re_defaults/g;
+    edit($f, 'defaults block', 1, $n);
+    $t =~ s/$re_defaults// and $defaults = $1;
+
     $block .= "\n" . $defaults;
     $out{$f} = [$t, $crlf];
 
-    my ($licence) = slurp('RFHUtil/mqsubs.cpp') =~ /\A(\/\*.*?\*\/\n)/s;
+    my ($lt) = load('RFHUtil/mqsubs.cpp');
+    my ($licence) = $lt =~ /\A(\/\*.*?\*\/\n)/s;
     die "RFHUtil/mqsubs.cpp: licence block not found\n" unless $licence;
     $out{'RFHUtil/rfhconst.h'} = [$licence
-        . "\n// rfhconst.h - display, character, numeric, persistence and report constants,\n"
+        . "\n// rfhconst.h - display, encoding, MQMD option and code page default constants,\n"
         . "// moved from rfhutil.h so that portable sources can use them without MFC.\n\n"
         . "#pragma once\n\n"
-        . $block, 0];
+        . $block, $crlf];
 }
 
 # ---------------------------------------------------------------- mqsubs.h / mqsubs.cpp
@@ -47,15 +58,36 @@ my %out;	# path => [text, crlf]; written only after every edit succeeded
     # findMQInstallDirectory reads the Windows registry and has no callers: DataArea
     # uses its own member function of the same name.
     my $f = 'RFHUtil/mqsubs.h'; my ($t, $crlf) = load($f);
-    edit($f, 'remove findMQInstallDirectory decl', 1, scalar($t =~ s/^void findMQInstallDirectory\(char \*dirName, int dirNameLen\);\n//m));
-    # self-contained: the declarations use BOOL
-    edit($f, 'include rfh_platform.h', 1, scalar($t =~ s/^(#include "cmqc\.h"\n)/#include "rfh_platform.h"\n$1/m));
+    my ($re, $n);
+
+    $re = qr/^void findMQInstallDirectory\(char \*dirName, int dirNameLen\);\n/m;
+    $n = () = $t =~ /$re/g;
+    edit($f, 'remove findMQInstallDirectory decl', 1, $n);
+    $t =~ s/$re//;
+
+    # self-contained: one include guard, and the declarations use BOOL
+    $re = qr/^(#include "cmqc\.h"\n)/m;
+    $n = () = $t =~ /$re/g;
+    edit($f, 'include rfh_platform.h', 1, $n);
+    $t =~ s/$re/#pragma once\n#include "rfh_platform.h"\n$1/;
     $out{$f} = [$t, $crlf];
 
     $f = 'RFHUtil/mqsubs.cpp'; ($t, $crlf) = load($f);
-    edit($f, 'include rfhconst.h', 1, scalar($t =~ s/^(#include "rfhutil\.h"\n)/$1#include "rfhconst.h"\n/m));
-    edit($f, 'remove MQINSKEY', 1, scalar($t =~ s/^#define MQINSKEY [^\n]*\n//m));
-    edit($f, 'remove findMQInstallDirectory', 1, scalar($t =~ s/\n\/\*{20,}\/\n(?:\/\*[^\n]*\*\/\n){4}\/\*{20,}\/\n\nvoid findMQInstallDirectory\(char \*dirName, int dirNameLen\)\n.*?\n\}\n//s));
+
+    $re = qr/^(#include "rfhutil\.h"\n)/m;
+    $n = () = $t =~ /$re/g;
+    edit($f, 'include rfhconst.h', 1, $n);
+    $t =~ s/$re/$1#include "rfhconst.h"\t\/\/ direct: rfhutil.h is blocked in the portable build\n/;
+
+    $re = qr/^#define MQINSKEY [^\n]*\n/m;
+    $n = () = $t =~ /$re/g;
+    edit($f, 'remove MQINSKEY', 1, $n);
+    $t =~ s/$re//;
+
+    $re = qr/\n\/\*{20,}\/\n(?:\/\*[^\n]*\*\/\n){4}\/\*{20,}\/\n\nvoid findMQInstallDirectory\(char \*dirName, int dirNameLen\)\n.*?\n\}\n/s;
+    $n = () = $t =~ /$re/g;
+    edit($f, 'remove findMQInstallDirectory', 1, $n);
+    $t =~ s/$re//;
     $out{$f} = [$t, $crlf];
 }
 

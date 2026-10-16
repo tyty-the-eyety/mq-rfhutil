@@ -14,7 +14,7 @@ Contributors:
 Jim MacNair - Initial Contribution
 */
 
-// rfhconst.h - display, character, numeric, persistence and report constants,
+// rfhconst.h - display, encoding, MQMD option and code page default constants,
 // moved from rfhutil.h so that portable sources can use them without MFC.
 
 #pragma once

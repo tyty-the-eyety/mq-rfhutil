@@ -17,6 +17,7 @@ Jim MacNair - Initial Contribution
 // mqsubs.h: mq related subroutines header file
 //
 //////////////////////////////////////////////////////////////////////
+#pragma once
 #include "rfh_platform.h"
 #include "cmqc.h"
 

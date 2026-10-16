@@ -24,6 +24,10 @@ TEST(Mqsubs_CcsidType, EbcdicCodePagesAreEbcdic)
 TEST(Mqsubs_CcsidType, AsianCodePagesHaveTheirOwnTypes)
 {
     EXPECT_EQ(CHAR_TRAD_CHIN, getCcsidType(950));
+    EXPECT_EQ(CHAR_JAPANESE, getCcsidType(932));
+    EXPECT_EQ(CHAR_CHINESE, getCcsidType(936));
+    EXPECT_EQ(CHAR_KOREAN, getCcsidType(949));
+    EXPECT_EQ(CHAR_THAI, getCcsidType(838));
 }
 
 TEST(Mqsubs_CcsidType, AsciiAndUnicodeAreAscii)
@@ -61,14 +65,17 @@ TEST(Mqsubs_Encoding, IntegerAndDecimalDecodeBack)
 
 TEST(Mqsubs_Encoding, FloatDecodeIsInvertedHistoric)
 {
-    // Upstream bug, kept for compatibility; reported upstream: getFloatEncode tests
-    // single bits instead of comparing (encoding & MQENC_FLOAT_MASK). IEEE_NORMAL
-    // decodes as FLOAT_PC and IEEE_REVERSED as FLOAT_UNIX, the opposite of
-    // getEncodingValue, and S/390 (0x300, both bits) also decodes as FLOAT_PC.
+    // Upstream bugs, kept for compatibility; reported upstream. getFloatEncode tests
+    // single bits instead of comparing (encoding & MQENC_FLOAT_MASK):
+    //  (a) the IEEE normal/reversed mapping is swapped relative to getEncodingValue:
+    //      IEEE_NORMAL decodes as FLOAT_PC and IEEE_REVERSED as FLOAT_UNIX;
+    //  (b) S/390 (0x300) has both IEEE bits set, so it decodes as FLOAT_PC and
+    //      FLOAT_390 can never be returned.
     EXPECT_EQ(FLOAT_UNIX, getFloatEncode(getEncodingValue(NUMERIC_PC, NUMERIC_PC, FLOAT_PC)));
     EXPECT_EQ(FLOAT_PC, getFloatEncode(getEncodingValue(NUMERIC_HOST, NUMERIC_HOST, FLOAT_UNIX)));
     EXPECT_EQ(FLOAT_PC, getFloatEncode(785));
     EXPECT_EQ(FLOAT_TNS, getFloatEncode(0x411));
+    EXPECT_EQ(FLOAT_PC, getFloatEncode(0));
 }
 
 TEST(Mqsubs_ApplType, KnownTypesHaveNumberAndName)
@@ -103,6 +110,9 @@ TEST(Mqsubs_TranslateMqmd, BigEndianMqmdIsNormalisedAndIdsKept)
     md.Encoding = reverseBytes4(785);
     md.MsgSeqNumber = reverseBytes4(7);
     memcpy(md.MsgId, "ABCDEFGHIJKLMNOPQRSTUVWX", 24);
+    memcpy(md.CorrelId, "abcdefghijklmnopqrstuvwx", 24);
+    memcpy(md.GroupId, "0123456789ABCDEFGHIJKLMN", 24);
+    memcpy(md.AccountingToken, "TOKEN-0123456789-ABCDEFGHIJKLMNO", 32);
 
     EXPECT_TRUE(translateMQMD(&md));
     EXPECT_EQ(MQMD_VERSION_2, md.Version);
@@ -110,6 +120,27 @@ TEST(Mqsubs_TranslateMqmd, BigEndianMqmdIsNormalisedAndIdsKept)
     EXPECT_EQ(785, md.Encoding);
     EXPECT_EQ(7, md.MsgSeqNumber);
     EXPECT_EQ(0, memcmp(md.MsgId, "ABCDEFGHIJKLMNOPQRSTUVWX", 24)) << "byte-string ids are never reversed";
+    EXPECT_EQ(0, memcmp(md.CorrelId, "abcdefghijklmnopqrstuvwx", 24));
+    EXPECT_EQ(0, memcmp(md.GroupId, "0123456789ABCDEFGHIJKLMN", 24));
+    EXPECT_EQ(0, memcmp(md.AccountingToken, "TOKEN-0123456789-ABCDEFGHIJKLMNO", 32));
+}
+
+TEST(Mqsubs_TranslateMqmd, BigEndianVersion1MqmdLeavesVersion2FieldsAlone)
+{
+    MQMD2 md = { MQMD2_DEFAULT };
+    md.Version = reverseBytes4(MQMD_VERSION_1);
+    md.MsgSeqNumber = reverseBytes4(7);
+    md.Offset = reverseBytes4(9);
+    md.MsgFlags = reverseBytes4(11);
+    md.OriginalLength = reverseBytes4(13);
+
+    EXPECT_TRUE(translateMQMD(&md));
+    EXPECT_EQ(MQMD_VERSION_1, md.Version);
+    // a version 1 MQMD has no such fields, so their raw bytes are not interpreted
+    EXPECT_EQ(reverseBytes4(7), md.MsgSeqNumber);
+    EXPECT_EQ(reverseBytes4(9), md.Offset);
+    EXPECT_EQ(reverseBytes4(11), md.MsgFlags);
+    EXPECT_EQ(reverseBytes4(13), md.OriginalLength);
 }
 
 TEST(Mqsubs_TranslateMqmd, EbcdicMqmdTextFieldsBecomeAscii)
