@@ -39,6 +39,9 @@ CJsonParse::CJsonParse()
 	// do some initialization
 	numElements = 0;
 	jsonElems = NULL;
+	maxElements = 0;
+	depth = 0;
+	stopReason = JPARSE_OK;
 }
 
 CJsonParse::~CJsonParse()
@@ -159,6 +162,7 @@ int CJsonParse::parse(const char *jsonIn, int length)
 
 	// initialize the storage
 	memset(jsonElems, 0, memSize);
+	maxElements = (int)(memSize / sizeof(JSONSTRUCT));
 
 	// parse the JSON
 	result = parseJSON(jsonIn, length);
@@ -232,14 +236,49 @@ int CJsonParse::parseJSON(const char *jsonIn, int length)
 	root = insertEntry("root", 4, 0);
 
 	// start the parse process, starting with the top level element
+	depth = 0;
+	stopReason = JPARSE_OK;
 	parseLevel(ptr, endPtr, root);
 
+	if (JPARSE_TOO_DEEP == stopReason)
+	{
+		lastError = "Parse error - objects and arrays nested too deeply";
+		return stopReason;
+	}
+	if (stopReason != JPARSE_OK)
+	{
+		lastError = "Parse error - unexpected character";
+		return stopReason;
+	}
+
 	return result;
+}
+
+namespace
+{
+	// counts nesting for the life of one parseLevel or processArray call
+	class DepthGuard
+	{
+	public:
+		DepthGuard(int & depth) : m_depth(depth) { m_depth++; }
+		~DepthGuard() { m_depth--; }
+	private:
+		int & m_depth;
+	};
 }
 
 const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int parent)
 
 {
+	// stop before deep nesting exhausts the stack (each level recurses)
+	DepthGuard guard(depth);
+	if (depth > JPARSE_MAX_DEPTH)
+	{
+		stopReason = JPARSE_TOO_DEEP;
+		return endPtr;
+	}
+
+	const char *	passStart = NULL;		// where the current pass of the loop began
 	int				name = 0;
 	const char *	namePtr = NULL;				// pointer to element name
 	const char *	endNamePtr = NULL;				// pointer to end of name
@@ -267,6 +306,14 @@ const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int par
 	// continue until an ending brace character is found
 	while ((ptr < endPtr) && (ptr[0] != '}'))
 	{
+		// stop if the last pass consumed nothing, which malformed data can cause
+		if (ptr == passStart)
+		{
+			stopReason = JPARSE_MALFORMED;
+			return endPtr;
+		}
+		passStart = ptr;
+
 		// find the beginning of the name
 		ptr = skipWhiteSpace(ptr, endPtr);
 
@@ -475,6 +522,30 @@ int CJsonParse::insertEntry(const char *name, int nameLen, int parent)
 
 	// get a pointer to the application object
 	app = rfhGetTrace();
+
+	// parse() sizes the tree from a count of braces, colons and commas, which
+	// malformed data can exceed; grow it rather than write past the end
+	if (numElements >= maxElements)
+	{
+		int newMax = (maxElements > 0) ? maxElements * 2 : 64;
+		JSONSTRUCT * bigger = (JSONSTRUCT *)rfhMalloc(newMax * sizeof(JSONSTRUCT), "JSONELEM");
+		if (NULL == bigger)
+		{
+			// out of memory: reuse the last element rather than overrun
+			numElements = maxElements - 1;
+		}
+		else
+		{
+			memset(bigger, 0, newMax * sizeof(JSONSTRUCT));
+			if (jsonElems != NULL)
+			{
+				memcpy(bigger, jsonElems, numElements * sizeof(JSONSTRUCT));
+				rfhFree(jsonElems);
+			}
+			jsonElems = bigger;
+			maxElements = newMax;
+		}
+	}
 
 	// check for a name
 	if (nameLen > 0)
@@ -932,6 +1003,15 @@ char * CJsonParse::processElement(int elem, char *ptr, char *endPtr, BOOL includ
 const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int name, const char *namePtr, int nameLen, int parent)
 
 {
+	// stop before deep nesting exhausts the stack (each level recurses)
+	DepthGuard guard(depth);
+	if (depth > JPARSE_MAX_DEPTH)
+	{
+		stopReason = JPARSE_TOO_DEEP;
+		return endPtr;
+	}
+
+	const char *	passStart = NULL;		// where the current pass of the loop began
 	int				numValues=0;		// counter for trace output - number of values found
 	int				firstTime=1;		// remember the first element
 	int				name2;
@@ -963,6 +1043,14 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 
 	while ((ptr < endPtr) && (ptr[0] != ']'))
 	{
+		// stop if the last pass consumed nothing, which malformed data can cause
+		if (ptr == passStart)
+		{
+			stopReason = JPARSE_MALFORMED;
+			return endPtr;
+		}
+		passStart = ptr;
+
 		// what kind of value is this?
 		if ('\"' == ptr[0])
 		{

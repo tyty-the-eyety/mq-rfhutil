@@ -1061,6 +1061,12 @@ char * extractAttribute(char *VarName, char *VarValue, char *Ptr)
 
 				while (1)
 				{
+					// stop at the end of the text when the closing quote is missing
+					if (0 == tempValue[0])
+					{
+						break;
+					}
+
 					if ((tempValue[0] == quotechar) && (tempValue[1] != quotechar))
 					{
 						break;
@@ -1085,7 +1091,10 @@ char * extractAttribute(char *VarName, char *VarValue, char *Ptr)
 				}
 
 				// skip the trailing double quote or other character
-				tempValue++;
+				if (tempValue[0] != 0)
+				{
+					tempValue++;
+				}
 
 				// terminate the string properly
 				tempVarValue[0] = 0;
@@ -1126,8 +1135,10 @@ void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char 
 
 {
 	char	*tempPtr;
-	char	*tempVarName = (char *)rfhMalloc(8192,"XMLSUBVN");
-	char	*tempVarValue = (char *)rfhMalloc(8192,"XMLSUBVV");
+	// a name or value is never longer than the attribute text
+	size_t	workLen = strlen(tempVarAttr) + 8192;
+	char	*tempVarName = (char *)rfhMalloc(workLen,"XMLSUBVN");
+	char	*tempVarValue = (char *)rfhMalloc(workLen,"XMLSUBVV");
 	char	tempName[4];
 
 	// initialize a pointer to the beginning of the attribute list

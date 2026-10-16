@@ -8,6 +8,9 @@
 #include "comsubs.h"
 #include "xmlsubs.h"
 
+#include <string>
+#include <vector>
+
 // ---------------------------------------------------------------------------
 // removeEscSeq — unescape XML entities in-place
 // ---------------------------------------------------------------------------
@@ -273,4 +276,40 @@ TEST(XmlsubsBracket, FindEndBracketAtStart)
     char data[] = ">rest";
     char *result = findEndBracket(data);
     EXPECT_EQ(data, result);
+}
+
+// ---------------------------------------------------------------------------
+// processAttributes on malformed data (Plan 2B: these overran memory before;
+// ctest -L memcheck runs them under the guard allocator)
+// ---------------------------------------------------------------------------
+
+TEST(XmlsubsAttributes, ValuesAreListedUnderTheElement)
+{
+    char element[] = "root";
+    char varName[] = "";
+    char attrs[] = "a=\"1\" b='two'";
+    char out[256] = "";
+    processAttributes(element, varName, attrs, out);
+    EXPECT_STREQ("root.(XML.attr)a='1'\r\nroot.(XML.attr)b='two'\r\n", out);
+}
+
+TEST(XmlsubsAttributes, UnterminatedQuoteEndsAtTheEndOfTheText)
+{
+    char element[] = "root";
+    char varName[] = "";
+    char attrs[] = "a=\"open";
+    char out[256] = "";
+    processAttributes(element, varName, attrs, out);
+    EXPECT_STREQ("root.(XML.attr)a='open'\r\n", out);
+}
+
+TEST(XmlsubsAttributes, ValueLongerThan8KIsKept)
+{
+    char element[] = "r";
+    char varName[] = "";
+    std::string value(12000, 'v');
+    std::string attrs = "a='" + value + "'";
+    std::vector<char> out(20000, 0);
+    processAttributes(element, varName, &attrs[0], out.data());
+    EXPECT_EQ("r.(XML.attr)a='" + value + "'\r\n", std::string(out.data()));
 }

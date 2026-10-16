@@ -7,6 +7,8 @@
 #include "Names.h"
 #include "JsonParse.h"
 
+#include <string>
+
 // ---------------------------------------------------------------------------
 // Basic parsing
 // ---------------------------------------------------------------------------
@@ -274,4 +276,65 @@ TEST(JsonParse, ParseArrayCountElements)
     const char *val = p.getElemValue(items);
     ASSERT_NE(nullptr, val);
     EXPECT_NE(nullptr, strstr(val, "one"));
+}
+
+// ---------------------------------------------------------------------------
+// Malformed and deeply nested data (Plan 2B: these crashed, hung or overran
+// memory before; ctest -L memcheck runs them under the guard allocator)
+// ---------------------------------------------------------------------------
+
+TEST(JsonParse, MisplacedBracketIsAnErrorNotAHang)
+{
+    const char *json = "{]";
+    CJsonParse p;
+    EXPECT_EQ(JPARSE_MALFORMED, p.parse(json, (int)strlen(json)));
+}
+
+TEST(JsonParse, DeepNestingIsAnErrorNotAStackOverflow)
+{
+    std::string json;
+    for (int i = 0; i < 100000; i++)
+    {
+        json += "{\"k\":";
+    }
+    json += "1" + std::string(100000, '}');
+    CJsonParse p;
+    EXPECT_EQ(JPARSE_TOO_DEEP, p.parse(json.c_str(), (int)json.size()));
+}
+
+TEST(JsonParse, NestingUpToTheLimitParses)
+{
+    // levels of objects, each holding the next: {"k":{"k":...1}}
+    auto nested = [](int levels) {
+        std::string json;
+        for (int i = 0; i < levels; i++)
+        {
+            json += "{\"k\":";
+        }
+        return json + "1" + std::string(levels, '}');
+    };
+
+    std::string atLimit = nested(JPARSE_MAX_DEPTH);
+    CJsonParse p;
+    EXPECT_EQ(JPARSE_OK, p.parse(atLimit.c_str(), (int)atLimit.size()));
+
+    std::string over = nested(JPARSE_MAX_DEPTH + 1);
+    CJsonParse q;
+    EXPECT_EQ(JPARSE_TOO_DEEP, q.parse(over.c_str(), (int)over.size()));
+}
+
+TEST(JsonParse, NamesWithoutValuesDoNotOverrunTheTree)
+{
+    // parse() sizes the tree from the braces, colons and commas: 3 entries here,
+    // but each bare name is an entry of its own
+    const char *json = "{a b c d e f g h i j}";
+    CJsonParse p;
+    ASSERT_EQ(JPARSE_OK, p.parse(json, (int)strlen(json)));
+
+    std::string names;
+    for (int child = p.getFirstChild(0); child > 0; child = p.getNextSibling(child))
+    {
+        names += p.getElemName(child);
+    }
+    EXPECT_EQ("abcdefghij", names);
 }

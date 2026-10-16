@@ -81,3 +81,5 @@ function(rfh_add_memcheck_test name target filter)
 endfunction()
 
 rfh_add_memcheck_test(memcheck.GuardMalloc rfhutil_core_tests "GuardMalloc.*")
+
+rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")

@@ -33,6 +33,11 @@ Jim MacNair - Initial Contribution
 #define JPARSE_OK					0
 #define JPARSE_MALLOC_FAIL			1
 #define JPARSE_INVALID_START_CHAR	200
+#define JPARSE_TOO_DEEP				201	// objects and arrays nested deeper than JPARSE_MAX_DEPTH
+#define JPARSE_MALFORMED			202	// the parser could not move past a character
+
+// Each level of nesting recurses; this keeps well within a 1 MB Windows stack.
+#define JPARSE_MAX_DEPTH			256
 
 struct JSONSTRUCT
 {
@@ -71,6 +76,9 @@ private:
 	int parseJSON(const char *jsonIn, int length);
 	JSONSTRUCT * jsonElems;
 	int numElements;
+	int maxElements;			// capacity of jsonElems
+	int depth;					// current object and array nesting
+	int stopReason;				// JPARSE_OK, or why parsing stopped early
 	std::string lastError;
 	Names	names;
 };
