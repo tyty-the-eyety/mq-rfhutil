@@ -8,6 +8,7 @@
 #include "JsonParse.h"
 
 #include <string>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Basic parsing
@@ -337,4 +338,54 @@ TEST(JsonParse, NamesWithoutValuesDoNotOverrunTheTree)
         names += p.getElemName(child);
     }
     EXPECT_EQ("abcdefghij", names);
+}
+
+TEST(JsonParse, ReadsStopAtTheEndOfTheDataAfterNestedArrays)
+{
+    // the buffers hold exactly the text, with no NUL after it; leading blanks pad
+    // the length to a multiple of 16 so the guard page starts right after the text
+    auto parseExact = [](std::string text) {
+        text.insert(0, (16 - text.size() % 16) % 16, ' ');
+        std::vector<char> data(text.begin(), text.end());
+        CJsonParse p;
+        return p.parse(data.data(), (int)data.size());
+    };
+    EXPECT_EQ(JPARSE_OK, parseExact("{\"a\":[[1]]}"));
+    EXPECT_EQ(JPARSE_MALFORMED, parseExact("{\"a\":[{]"));
+}
+
+TEST(JsonParse, ParsingTwiceStartsFromAnEmptyTree)
+{
+    std::string big = "{";
+    for (int i = 0; i < 1000; i++)
+    {
+        big += (i ? ",\"k" : "\"k") + std::to_string(i) + "\":1";
+    }
+    big += "}";
+
+    CJsonParse p;
+    ASSERT_EQ(JPARSE_OK, p.parse(big.c_str(), (int)big.size()));
+
+    const char * small = "{\"x\":2}";
+    ASSERT_EQ(JPARSE_OK, p.parse(small, (int)strlen(small)));
+
+    int child = p.getFirstChild(0);
+    ASSERT_GT(child, 0);
+    EXPECT_STREQ("x", p.getElemName(child));
+    EXPECT_STREQ("2", p.getElemValue(child));
+    EXPECT_EQ(0, p.getNextSibling(child));
+}
+
+TEST(JsonParse, EmbeddedNulInAnArrayIsMalformed)
+{
+    std::string json("{\"a\":[\0]}", 9);
+    CJsonParse p;
+    EXPECT_EQ(JPARSE_MALFORMED, p.parse(json.data(), (int)json.size()));
+}
+
+TEST(JsonParse, EmbeddedNulAfterAValueIsMalformed)
+{
+    std::string json("{\"a\":1\0}", 8);
+    CJsonParse p;
+    EXPECT_EQ(JPARSE_MALFORMED, p.parse(json.data(), (int)json.size()));
 }

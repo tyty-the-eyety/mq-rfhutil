@@ -5,8 +5,13 @@
 #   RFHUtil/JsonParse.{h,cpp}: grow the parse tree instead of overrunning it, stop
 #     at JPARSE_MAX_DEPTH levels of nesting, and stop when a pass of the parser
 #     consumes nothing (for example "{]", which loops forever).
+#     Out of memory while growing the tree stops the parse with JPARSE_MALLOC_FAIL,
+#     a second parse() starts from an empty tree, and the two array reads of a
+#     comma no longer go past the end of the data.
 #   RFHUtil/xmlsubs.cpp: an attribute value without its closing quote ends at the
-#     end of the text, and attribute names and values are sized from the text.
+#     end of the text, attribute names and values are sized from the text, and
+#     processAttributes takes the size of its output (RFHUtil/xmlsubs.h and the four
+#     calls in RFHUtil/DataArea.cpp, which only Windows builds, follow).
 # Run once from the repository root.
 use strict; use warnings;
 
@@ -14,19 +19,22 @@ use strict; use warnings;
 my @pending;
 sub edit {
 	my ($path, $marker, @changes) = @_;
+	my $count = 0;
 	open my $in, '<:raw', $path or die "$path: $!";
 	my $text = do { local $/; <$in> }; close $in;
 	die "$path: the fix is already applied\n" if index($text, $marker) >= 0;
 	my $crlf = ($text =~ /\r\n/);
 	$text =~ s/\r\n/\n/g;
 	for my $c (@changes) {
-		my ($what, $old, $new) = @$c;
+		my ($what, $old, $new, $expect) = @$c;
+		$expect //= 1;
 		my $n = () = $text =~ /\Q$old\E/g;
-		die "$path: $what: matched $n time(s), expected 1\n" unless $n == 1;
-		$text =~ s/\Q$old\E/$new/;
+		die "$path: $what: matched $n time(s), expected $expect\n" unless $n == $expect;
+		$text =~ s/\Q$old\E/$new/g;
+		$count += $expect;
 	}
 	$text =~ s/\n/\r\n/g if $crlf;
-	push @pending, [$path, $text, scalar @changes];
+	push @pending, [$path, $text, $count];
 }
 
 edit('RFHUtil/JsonParse.h', 'JPARSE_TOO_DEEP',
@@ -35,6 +43,7 @@ edit('RFHUtil/JsonParse.h', 'JPARSE_TOO_DEEP',
 		. "#define JPARSE_TOO_DEEP\t\t\t\t201\t// objects and arrays nested deeper than JPARSE_MAX_DEPTH\n"
 		. "#define JPARSE_MALFORMED\t\t\t202\t// the parser could not move past a character\n\n"
 		. "// Each level of nesting recurses; this keeps well within a 1 MB Windows stack.\n"
+		. "// Arrays count as a level too, so {\"a\":[{\"a\":[... reaches the limit after 128 steps.\n"
 		. "#define JPARSE_MAX_DEPTH\t\t\t256\n"],
 	['members', "\tJSONSTRUCT * jsonElems;\n\tint numElements;\n",
 		"\tJSONSTRUCT * jsonElems;\n\tint numElements;\n"
@@ -54,6 +63,12 @@ my $guard = <<'G';
 
 G
 my $progress = <<'P';
+		// stop at once if an earlier step failed (out of memory, nesting too deep)
+		if (stopReason != JPARSE_OK)
+		{
+			return endPtr;
+		}
+
 		// stop if the last pass consumed nothing, which malformed data can cause
 		if (ptr == passStart)
 		{
@@ -72,6 +87,7 @@ edit('RFHUtil/JsonParse.cpp', 'stopReason',
 	['report the stop', "\t// start the parse process, starting with the top level element\n\tparseLevel(ptr, endPtr, root);\n",
 		"\t// start the parse process, starting with the top level element\n\tdepth = 0;\n\tstopReason = JPARSE_OK;\n\tparseLevel(ptr, endPtr, root);\n\n"
 		. "\tif (JPARSE_TOO_DEEP == stopReason)\n\t{\n\t\tlastError = \"Parse error - objects and arrays nested too deeply\";\n\t\treturn stopReason;\n\t}\n"
+		. "\tif (JPARSE_MALLOC_FAIL == stopReason)\n\t{\n\t\tlastError = \"Parse error - out of memory\";\n\t\treturn stopReason;\n\t}\n"
 		. "\tif (stopReason != JPARSE_OK)\n\t{\n\t\tlastError = \"Parse error - unexpected character\";\n\t\treturn stopReason;\n\t}\n"],
 	['depth guard class', "const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int parent)\n\n{\n",
 		"namespace\n{\n\t// counts nesting for the life of one parseLevel or processArray call\n\tclass DepthGuard\n\t{\n\tpublic:\n"
@@ -85,14 +101,24 @@ edit('RFHUtil/JsonParse.cpp', 'stopReason',
 		. "\tconst char *\tpassStart = NULL;\t\t// where the current pass of the loop began\n"],
 	['array progress', "\twhile ((ptr < endPtr) && (ptr[0] != ']'))\n\t{\n",
 		"\twhile ((ptr < endPtr) && (ptr[0] != ']'))\n\t{\n" . $progress],
+	['comma after an object in an array', "\t\t\t// check for a comma\n\t\t\tif (',' == ptr[0])\n",
+		"\t\t\t// check for a comma\n\t\t\tif ((ptr < endPtr) && (',' == ptr[0]))\n"],
+	['comma after a value in an array', "\t\t// check for a comma\n\t\tif (',' == ptr[0])\n",
+		"\t\t// check for a comma\n\t\tif ((ptr < endPtr) && (',' == ptr[0]))\n"],
+	['start from an empty tree', "\t// point to the JSON data\n\tptr = jsonIn;\n\tidx = 0;\n",
+		"\t// a second parse starts from an empty tree (the names stay: Names has no\n"
+		. "\t// reset, and a name found again is shared)\n"
+		. "\tif (jsonElems != NULL)\n\t{\n\t\trfhFree(jsonElems);\n\t\tjsonElems = NULL;\n\t}\n"
+		. "\tnumElements = 0;\n\tmaxElements = 0;\n\tdepth = 0;\n\tstopReason = JPARSE_OK;\n\n"
+		. "\t// point to the JSON data\n\tptr = jsonIn;\n\tidx = 0;\n"],
 	['grow the tree', "\t// check for a name\n\tif (nameLen > 0)\n\t{\n\t\tnameOfs = names.insertName(name, nameLen);\n\t}\n",
 		"\t// parse() sizes the tree from a count of braces, colons and commas, which\n"
 		. "\t// malformed data can exceed; grow it rather than write past the end\n"
 		. "\tif (numElements >= maxElements)\n\t{\n"
 		. "\t\tint newMax = (maxElements > 0) ? maxElements * 2 : 64;\n"
 		. "\t\tJSONSTRUCT * bigger = (JSONSTRUCT *)rfhMalloc(newMax * sizeof(JSONSTRUCT), \"JSONELEM\");\n"
-		. "\t\tif (NULL == bigger)\n\t\t{\n\t\t\t// out of memory: reuse the last element rather than overrun\n"
-		. "\t\t\tnumElements = maxElements - 1;\n\t\t}\n\t\telse\n\t\t{\n"
+		. "\t\tif (NULL == bigger)\n\t\t{\n\t\t\t// out of memory: link nothing and make the parse stop\n"
+		. "\t\t\tstopReason = JPARSE_MALLOC_FAIL;\n\t\t\treturn 0;\n\t\t}\n\t\telse\n\t\t{\n"
 		. "\t\t\tmemset(bigger, 0, newMax * sizeof(JSONSTRUCT));\n"
 		. "\t\t\tif (jsonElems != NULL)\n\t\t\t{\n"
 		. "\t\t\t\tmemcpy(bigger, jsonElems, numElements * sizeof(JSONSTRUCT));\n\t\t\t\trfhFree(jsonElems);\n\t\t\t}\n"
@@ -115,11 +141,58 @@ edit('RFHUtil/xmlsubs.cpp', 'workLen',
 		. "\tsize_t\tworkLen = strlen(tempVarAttr) + 8192;\n"
 		. "\tchar\t*tempVarName = (char *)rfhMalloc(workLen,\"XMLSUBVN\");\n"
 		. "\tchar\t*tempVarValue = (char *)rfhMalloc(workLen,\"XMLSUBVV\");\n"],
+	['bounded append helper', "////////////////////////////////////////////////////\n//\n// Routine to parse any attribute values that\n",
+		"// Append text to a string of destSize bytes, cutting it off when the room runs\n"
+		. "// out; the terminator is always kept\n"
+		. "static void appendBounded(char *dest, size_t destSize, const char *text)\n\n{\n"
+		. "\tsize_t\tused = 0;\n\tsize_t\tlen;\n\n"
+		. "\twhile ((used < destSize) && (dest[used] != 0))\n\t{\n\t\tused++;\n\t}\n\n"
+		. "\t// no room, or no terminator within the buffer\n"
+		. "\tif (used + 1 >= destSize)\n\t{\n\t\treturn;\n\t}\n\n"
+		. "\tlen = strlen(text);\n\tif (len > destSize - used - 1)\n\t{\n\t\tlen = destSize - used - 1;\n\t}\n\n"
+		. "\tmemcpy(dest + used, text, len);\n\tdest[used + len] = 0;\n}\n\n"
+		. "////////////////////////////////////////////////////\n//\n// Routine to parse any attribute values that\n"],
+	['output size parameter', "void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr)\n",
+		"void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr, size_t attrStrSize)\n"],
+	['bounded appends',
+		"\t\t\t\tstrcat(xmlAttrStr, xmlVarName);\n\t\t\t\tstrcat(xmlAttrStr, \".\");\n"
+		. "\t\t\t}\n\n\t\t\t// check for the variable name\n\t\t\tif ((varName != NULL) && (varName[0] != 0))\n\t\t\t{\n"
+		. "\t\t\t\tstrcat(xmlAttrStr, varName);\n\t\t\t\tstrcat(xmlAttrStr, \".\");\n\t\t\t}\n\n"
+		. "\t\t\tstrcat(xmlAttrStr, \"(XML.attr)\");\n\t\t\tstrcat(xmlAttrStr, tempVarName);\n"
+		. "\t\t\tstrcat(xmlAttrStr, \"='\");\n\t\t\tstrcat(xmlAttrStr, tempVarValue);\n"
+		. "\t\t\tstrcat(xmlAttrStr, \"'\");\n\t\t\tstrcat(xmlAttrStr, \"\\r\\n\");\n",
+		"\t\t\t\tappendBounded(xmlAttrStr, attrStrSize, xmlVarName);\n\t\t\t\tappendBounded(xmlAttrStr, attrStrSize, \".\");\n"
+		. "\t\t\t}\n\n\t\t\t// check for the variable name\n\t\t\tif ((varName != NULL) && (varName[0] != 0))\n\t\t\t{\n"
+		. "\t\t\t\tappendBounded(xmlAttrStr, attrStrSize, varName);\n\t\t\t\tappendBounded(xmlAttrStr, attrStrSize, \".\");\n\t\t\t}\n\n"
+		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"(XML.attr)\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, tempVarName);\n"
+		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"='\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, tempVarValue);\n"
+		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"'\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"\\r\\n\");\n"],
 );
 
+edit('RFHUtil/xmlsubs.h', 'attrStrSize',
+	['declaration', "void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr);",
+		"void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr, size_t attrStrSize);"],
+);
+
+# Windows only; not built here. The four calls pass xmlAttrStr, a static array.
+edit('RFHUtil/DataArea.cpp', 'tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr)',
+	['processAttributes calls', ", tempVarAttr, xmlAttrStr);", ", tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr));", 4],
+);
+
+# Write each file beside its target and rename it into place, so a failure part-way
+# leaves no half-written file; the temporary files are removed on failure.
+my @temps;
 for my $p (@pending) {
 	my ($path, $text, $count) = @$p;
-	open my $out, '>:raw', $path or die "$path: $!";
-	print $out $text; close $out;
+	my $tmp = "$path.tmp";
+	my $ok = open my $out, '>:raw', $tmp;
+	if ($ok) { push @temps, $tmp; $ok = print $out $text; $ok = close($out) && $ok; }
+	unless ($ok) { my $err = $!; unlink @temps; die "$tmp: $err\n"; }
+	my $mode = (stat $path)[2] & 07777;
+	chmod $mode, $tmp;
+}
+for my $p (@pending) {
+	my ($path, $text, $count) = @$p;
+	rename "$path.tmp", $path or die "$path: $!\n";
 	printf "%-22s %d change(s)\n", $path, $count;
 }

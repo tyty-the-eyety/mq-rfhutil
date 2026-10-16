@@ -43,7 +43,7 @@ int findDelimW(const RFH_UCS2 *datain,
 void replaceChars(const char * value, char *valStr);
 int insertEscChars(char * output, const char * input, int length);
 char * extractAttribute(char *VarName, char *VarValue, char *Ptr);
-void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr);
+void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr, size_t attrStrSize);
 int setEscChar(unsigned char *bufferin, unsigned char *bufferout);
 char * processTag(char *ptr, const char *tagName, char *dataArea, int maxLen, int *found);
 char * buildV1String(char *ptr, const char *name, LPCTSTR value, int curLen);

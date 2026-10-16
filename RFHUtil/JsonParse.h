@@ -37,6 +37,7 @@ Jim MacNair - Initial Contribution
 #define JPARSE_MALFORMED			202	// the parser could not move past a character
 
 // Each level of nesting recurses; this keeps well within a 1 MB Windows stack.
+// Arrays count as a level too, so {"a":[{"a":[... reaches the limit after 128 steps.
 #define JPARSE_MAX_DEPTH			256
 
 struct JSONSTRUCT

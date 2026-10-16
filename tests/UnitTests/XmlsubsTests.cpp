@@ -289,7 +289,7 @@ TEST(XmlsubsAttributes, ValuesAreListedUnderTheElement)
     char varName[] = "";
     char attrs[] = "a=\"1\" b='two'";
     char out[256] = "";
-    processAttributes(element, varName, attrs, out);
+    processAttributes(element, varName, attrs, out, sizeof(out));
     EXPECT_STREQ("root.(XML.attr)a='1'\r\nroot.(XML.attr)b='two'\r\n", out);
 }
 
@@ -299,7 +299,7 @@ TEST(XmlsubsAttributes, UnterminatedQuoteEndsAtTheEndOfTheText)
     char varName[] = "";
     char attrs[] = "a=\"open";
     char out[256] = "";
-    processAttributes(element, varName, attrs, out);
+    processAttributes(element, varName, attrs, out, sizeof(out));
     EXPECT_STREQ("root.(XML.attr)a='open'\r\n", out);
 }
 
@@ -310,6 +310,20 @@ TEST(XmlsubsAttributes, ValueLongerThan8KIsKept)
     std::string value(12000, 'v');
     std::string attrs = "a='" + value + "'";
     std::vector<char> out(20000, 0);
-    processAttributes(element, varName, &attrs[0], out.data());
+    processAttributes(element, varName, &attrs[0], out.data(), out.size());
     EXPECT_EQ("r.(XML.attr)a='" + value + "'\r\n", std::string(out.data()));
+}
+
+TEST(XmlsubsAttributes, ListLongerThanTheOutputIsCutOff)
+{
+    char element[] = "r";
+    char varName[] = "";
+    std::string attrs;
+    for (int i = 0; i < 4096; i++)
+    {
+        attrs += "a=1 ";
+    }
+    std::vector<char> out(1024, 0);
+    processAttributes(element, varName, &attrs[0], out.data(), out.size());
+    EXPECT_LT(strlen(out.data()), (size_t)1024);
 }

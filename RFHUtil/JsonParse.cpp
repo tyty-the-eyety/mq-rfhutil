@@ -89,6 +89,18 @@ int CJsonParse::parse(const char *jsonIn, int length)
 		}
 	}
 
+	// a second parse starts from an empty tree (the names stay: Names has no
+	// reset, and a name found again is shared)
+	if (jsonElems != NULL)
+	{
+		rfhFree(jsonElems);
+		jsonElems = NULL;
+	}
+	numElements = 0;
+	maxElements = 0;
+	depth = 0;
+	stopReason = JPARSE_OK;
+
 	// point to the JSON data
 	ptr = jsonIn;
 	idx = 0;
@@ -245,6 +257,11 @@ int CJsonParse::parseJSON(const char *jsonIn, int length)
 		lastError = "Parse error - objects and arrays nested too deeply";
 		return stopReason;
 	}
+	if (JPARSE_MALLOC_FAIL == stopReason)
+	{
+		lastError = "Parse error - out of memory";
+		return stopReason;
+	}
 	if (stopReason != JPARSE_OK)
 	{
 		lastError = "Parse error - unexpected character";
@@ -306,6 +323,12 @@ const char * CJsonParse::parseLevel(const char *ptr, const char *endPtr, int par
 	// continue until an ending brace character is found
 	while ((ptr < endPtr) && (ptr[0] != '}'))
 	{
+		// stop at once if an earlier step failed (out of memory, nesting too deep)
+		if (stopReason != JPARSE_OK)
+		{
+			return endPtr;
+		}
+
 		// stop if the last pass consumed nothing, which malformed data can cause
 		if (ptr == passStart)
 		{
@@ -531,8 +554,9 @@ int CJsonParse::insertEntry(const char *name, int nameLen, int parent)
 		JSONSTRUCT * bigger = (JSONSTRUCT *)rfhMalloc(newMax * sizeof(JSONSTRUCT), "JSONELEM");
 		if (NULL == bigger)
 		{
-			// out of memory: reuse the last element rather than overrun
-			numElements = maxElements - 1;
+			// out of memory: link nothing and make the parse stop
+			stopReason = JPARSE_MALLOC_FAIL;
+			return 0;
 		}
 		else
 		{
@@ -1043,6 +1067,12 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 
 	while ((ptr < endPtr) && (ptr[0] != ']'))
 	{
+		// stop at once if an earlier step failed (out of memory, nesting too deep)
+		if (stopReason != JPARSE_OK)
+		{
+			return endPtr;
+		}
+
 		// stop if the last pass consumed nothing, which malformed data can cause
 		if (ptr == passStart)
 		{
@@ -1108,7 +1138,7 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 			ptr = parseLevel(ptr, endPtr, name2);
 
 			// check for a comma
-			if (',' == ptr[0])
+			if ((ptr < endPtr) && (',' == ptr[0]))
 			{
 				// skip the comma and any following whitespace
 				ptr++;
@@ -1154,7 +1184,7 @@ const char * CJsonParse::processArray(const char *ptr, const char *endPtr, int n
 		}
 
 		// check for a comma
-		if (',' == ptr[0])
+		if ((ptr < endPtr) && (',' == ptr[0]))
 		{
 			// move on to the next character
 			ptr++;

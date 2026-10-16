@@ -5293,7 +5293,7 @@ void DataArea::getNameValueData(const unsigned char * input, int inputLen, unsig
 							xmlAttrStr[0] = 0;
 
 							// extract the individual attributes into a temporary string
-							processAttributes(xmlVarName, tempVarName, tempVarAttr, xmlAttrStr);
+							processAttributes(xmlVarName, tempVarName, tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr));
 
 							// capture the attributes in the output area
 							strcpy((char *) parsed_data + i, xmlAttrStr);
@@ -5510,7 +5510,7 @@ void DataArea::getNameValueData(const unsigned char * input, int inputLen, unsig
 						xmlAttrStr[0] = 0;
 
 						// get the attributes in the right display format
-						processAttributes(xmlVarName, "", tempVarAttr, xmlAttrStr);
+						processAttributes(xmlVarName, "", tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr));
 
 						// append the attribute lines to the output
 						strcpy((char *) parsed_data + i, xmlAttrStr);
@@ -5906,7 +5906,7 @@ void DataArea::getParsedData(const int charFormat)
 							xmlAttrStr[0] = 0;
 
 							// extract the individual attributes into a temporary string
-							processAttributes(xmlVarName, tempVarName, tempVarAttr, xmlAttrStr);
+							processAttributes(xmlVarName, tempVarName, tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr));
 
 							// capture the attributes in the output area
 							strcpy((char *) m_data_parsed + i, xmlAttrStr);
@@ -6112,7 +6112,7 @@ void DataArea::getParsedData(const int charFormat)
 						xmlAttrStr[0] = 0;
 
 						// get the attributes in the right display format
-						processAttributes(xmlVarName, "", tempVarAttr, xmlAttrStr);
+						processAttributes(xmlVarName, "", tempVarAttr, xmlAttrStr, sizeof(xmlAttrStr));
 
 						// append the attribute lines to the output
 						strcpy((char *) m_data_parsed + i, xmlAttrStr);

@@ -1124,6 +1124,35 @@ char * extractAttribute(char *VarName, char *VarValue, char *Ptr)
 	return tempValue;
 }
 
+// Append text to a string of destSize bytes, cutting it off when the room runs
+// out; the terminator is always kept
+static void appendBounded(char *dest, size_t destSize, const char *text)
+
+{
+	size_t	used = 0;
+	size_t	len;
+
+	while ((used < destSize) && (dest[used] != 0))
+	{
+		used++;
+	}
+
+	// no room, or no terminator within the buffer
+	if (used + 1 >= destSize)
+	{
+		return;
+	}
+
+	len = strlen(text);
+	if (len > destSize - used - 1)
+	{
+		len = destSize - used - 1;
+	}
+
+	memcpy(dest + used, text, len);
+	dest[used + len] = 0;
+}
+
 ////////////////////////////////////////////////////
 //
 // Routine to parse any attribute values that
@@ -1131,7 +1160,7 @@ char * extractAttribute(char *VarName, char *VarValue, char *Ptr)
 //
 ////////////////////////////////////////////////////
 
-void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr)
+void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char *xmlAttrStr, size_t attrStrSize)
 
 {
 	char	*tempPtr;
@@ -1163,23 +1192,23 @@ void processAttributes(char *xmlVarName, char *varName, char *tempVarAttr, char 
 			// check if there are any higher level names
 			if (strlen(xmlVarName) > 0)
 			{
-				strcat(xmlAttrStr, xmlVarName);
-				strcat(xmlAttrStr, ".");
+				appendBounded(xmlAttrStr, attrStrSize, xmlVarName);
+				appendBounded(xmlAttrStr, attrStrSize, ".");
 			}
 
 			// check for the variable name
 			if ((varName != NULL) && (varName[0] != 0))
 			{
-				strcat(xmlAttrStr, varName);
-				strcat(xmlAttrStr, ".");
+				appendBounded(xmlAttrStr, attrStrSize, varName);
+				appendBounded(xmlAttrStr, attrStrSize, ".");
 			}
 
-			strcat(xmlAttrStr, "(XML.attr)");
-			strcat(xmlAttrStr, tempVarName);
-			strcat(xmlAttrStr, "='");
-			strcat(xmlAttrStr, tempVarValue);
-			strcat(xmlAttrStr, "'");
-			strcat(xmlAttrStr, "\r\n");
+			appendBounded(xmlAttrStr, attrStrSize, "(XML.attr)");
+			appendBounded(xmlAttrStr, attrStrSize, tempVarName);
+			appendBounded(xmlAttrStr, attrStrSize, "='");
+			appendBounded(xmlAttrStr, attrStrSize, tempVarValue);
+			appendBounded(xmlAttrStr, attrStrSize, "'");
+			appendBounded(xmlAttrStr, attrStrSize, "\r\n");
 		}
 
 		tempPtr = extractAttribute(tempVarName, tempVarValue, tempPtr);
