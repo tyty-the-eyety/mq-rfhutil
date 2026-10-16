@@ -32,6 +32,7 @@ add_library(rfhcore STATIC
     mq/rfh_mq_session.cpp
     message/rfh_mqmd_fields.cpp
     message/rfh_header_chain.cpp
+    fileio/rfh_message_file.cpp
     ${RFHUTIL_SHARED_SOURCES}
 )
 
@@ -40,6 +41,7 @@ target_include_directories(rfhcore
         ${CMAKE_CURRENT_SOURCE_DIR}/platform
         ${CMAKE_CURRENT_SOURCE_DIR}/mq
         ${CMAKE_CURRENT_SOURCE_DIR}/message
+        ${CMAKE_CURRENT_SOURCE_DIR}/fileio
         ${PROJECT_SOURCE_DIR}/RFHUtil
         ${MQ_INCLUDE_DIR}
 )
@@ -63,6 +65,7 @@ if(NOT WIN32)
         mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp
         message/rfh_mqmd_fields.cpp
         message/rfh_header_chain.cpp
+        fileio/rfh_message_file.cpp
         PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
     # cmqstrc.h returns string literals as char *.
     set_source_files_properties(mq/rfh_result.cpp PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Wno-write-strings;-Wno-unused-function")
