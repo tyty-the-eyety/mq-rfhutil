@@ -3561,3 +3561,18 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - **Plan 2B:** the eight display formatters (character, hex, both, XML, JSON, parsed, fixed, COBOL) behind the Data tab.
 - **Plan 3:** the Qt6 application. It also moves the put and get MQMD paths (`setMessageMQMD` / `processMessageMQMD`) and the ID display (`SetId`) into the core.
 - **Header tabs (RFH, DLQ, CICS, IMS, JMS, PubSub):** these parse and rebuild header contents. Until they are ported, headers are carried as raw bytes.
+
+---
+
+## Execution notes
+
+- **Final state:** 463 tests; all pass except the skipped client test (needs a client-mode queue manager).
+- **Task 6 (MFC MQMD tab): pending, waiting for the owner's Windows build of Plan 1.** It did not run, so the MQMD tab still has its own `buildMQMD` / `processMQMD`, `tools/port/port-mqmdpage.pl` does not exist yet, and the CHANGELOG has no line for it.
+- **Plan erratum (Task 3 test code):** the plan's RFH2 chain test used a big-endian folder-length prefix (`"\0\0\0\x20"`) in a little-endian header. The queue manager rejects that with 2142. Fixed in 59e7509.
+- **Review-fix commits, by task:**
+  - Task 1 (88b6eb9, 5879139, 8bd66a7): `port-mqsubs.pl` works on CRLF trees and counts its matches; `mqsubs.h` has `#pragma once`; `mqsubs.cpp` includes `rfhconst.h` directly; the `getFloatEncode` upstream bugs are listed as two separate defects.
+  - Task 2 (0ef0146, 9759739, 07467a6): `clear()` zeroes the three ids as `clearMQMD` does; report choices default to -1 (none selected); `dateTime` is built from separate date and time strings, so a zero PutDate/PutTime gives " "; the format text ends at bytes 0x80 and above (MSVC `char` is signed); tests pin `clearMQMD`'s literals and the MQMD default layout.
+  - Task 3 (7264080, ff6f144, dbf92d0): a header whose length runs past the data ends the chain with a warning; a CICS v2 program header with its 180 bytes but not the 8-byte name is kept at 180; a failed repeat of a header type uses the cleared state; after an MQMDE the encoding is decoded; the CICS and truncated-RFH2 warnings are restored; the tests use guarded memory (buffers that end before a PROT_NONE page). All differences are listed in `core/message/rfh_header_chain.h`.
+  - Task 4 (45eb330, efed25e, 3564e55): `ReadResult.message.mqmd` is always the MQMD built from the tab; reading a path that is not a regular file fails and leaves the tab untouched; added `ReadResult::dataSource`; more documented differences in `core/fileio/rfh_message_file.h` (no group/segment branch, AccountingToken kept rather than reversed, write errors reported, warnings returned separately).
+  - Task 5 (5971b9a, b2e05a8, 59e7509, 76e0e08): `put` walks the joined payload and warns when it does not split back into exactly the headers sent ("headers do not match the MQMD format chain; a get splits them differently"); `get` returns the header warnings; live tests added.
+- **Upstream report:** the draft issue (ten bugs: the four from Plan 1 plus the six reported here) is a draft for the owner to file; nothing was filed.

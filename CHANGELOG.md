@@ -11,6 +11,12 @@ Newest updates are at the top of this file
 - The existing unit tests also run on Linux (`ctest --preset linux-debug`).
 - `tests/core/gtest_compat.h` supplies `GTEST_SKIP` for the googletest 1.8.1
   NuGet package used by the Windows unit test project.
+- Message files: `fileio::read` / `fileio::write` read and write RFHUtil message
+  files (optional MQMD, MQ headers, body) byte-for-byte compatibly with Windows.
+- `mqmd_fields` converts between the MQMD tab's fields and an MQMD; `walkHeaders`
+  finds DLQ, CICS, IMS, RFH1, RFH2 and MQMDE headers. `MqSession` carries MQ
+  headers separately from the body: `put` warns when the headers do not match the
+  MQMD format chain, and `get` returns the header warnings.
 
 ### Changed
 - comsubs, xmlsubs, JsonParse, XMLParse and Names use `core/platform` instead of
@@ -20,6 +26,9 @@ Newest updates are at the top of this file
   layer too.
 - `CRfhutilApp` implements the `RfhTrace` interface and installs itself for
   tracing; it uninstalls itself on exit.
+- The display and encoding constants moved from `rfhutil.h` to `rfhconst.h`;
+  `mqsubs.cpp` is shared with the portable core and its unused
+  `findMQInstallDirectory` was removed.
 
 ## Build 240 (V10.0.0.0 build 240) July 2026
 * Merge the large PR from Matthias

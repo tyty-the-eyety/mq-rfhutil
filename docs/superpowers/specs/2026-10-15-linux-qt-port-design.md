@@ -170,21 +170,56 @@ class MqSession {                         // one thread at a time; handles use M
 
 struct Message {                          // core/message/rfh_message.h
   MQMD2 mqmd = {MQMD2_DEFAULT};
-  std::vector<unsigned char> body;        // MQ headers stay inside body for now
-  // HeaderChain headers: Plan 2 (not yet implemented)
+  std::vector<unsigned char> headers;     // MQ headers (DLQ, CICS, IMS, RFH1, RFH2, MQMDE) as raw bytes
+  std::vector<unsigned char> body;        // the data after them
 };
 
-// Plan 2 (not yet implemented): mqmd_fields, fileio and format.
-namespace mqmd_fields {                   // replaces MQMDPAGE::buildMQMD and the reverse direction
-  Result toMqmd(const MqmdFields&, MQMD2&);
-  MqmdFields fromMqmd(const MQMD2&);
+struct MqmdFields {                       // core/message/rfh_mqmd_fields.h: what the MQMD tab shows
+  std::string format, ccsid, msgType, expiry, feedback, priority, backoutCount = "0",
+              replyToQ, replyToQMgr, userId, accountingToken, applIdentity, applOrigin,
+              putApplName, putApplType, dateTime, seqNo = "1", offset, originalLength = "-1";
+  int persistence, encoding, pdEncoding, floatEncoding;                  // radio groups
+  int reportException, reportExpiration, reportCoa, reportCod;           // -1 = none selected
+  bool reportPan, reportNan, reportActivity, reportDiscard, reportPassMsgId, reportPassCorrelId,
+       reportPassDiscardAndExpiry, groupYes, groupLast, segmentYes, segmentLast, segmentAllowed;
+  MQBYTE24 msgId, correlId, groupId;
+};
+
+namespace mqmd_fields {                   // replaces MQMDPAGE::buildMQMD, processMQMD's field setting, clearMQMD
+  void toMqmd(const MqmdFields&, MQMD2&);             // start from MQMD2_DEFAULT
+  bool fromMqmd(const MQMD2&, MqmdFields&);           // native-encoding version 1 or 2; false otherwise
+  void clear(MqmdFields&);
+  std::string msgTypeText(MQLONG msgType);            // "8 Datagram"
 }
 
-namespace fileio {
-  Result read(const std::filesystem::path&, Message&, const ReadOptions&);
-  Result write(const std::filesystem::path&, const Message&, const WriteOptions&);  // include MQMD/headers flags
+enum class HeaderType { DeadLetter, Cics, Ims, Rfh1, Rfh2, MdExtension };
+struct HeaderInfo { HeaderType type; size_t offset; size_t length; };
+struct HeaderChain {                      // core/message/rfh_header_chain.h
+  std::vector<HeaderInfo> headers;
+  size_t bodyOffset = 0;                  // total length of the headers
+  std::string bodyFormat;
+  int bodyCcsid = 0, charFormat = 0, encoding = 0;
+  bool hasMdExtension = false;
+  MdExtensionFields mdExtension = {};     // groupId, msgSeqNumber, offset, msgFlags, originalLength
+  std::vector<std::string> warnings;
+};
+HeaderChain walkHeaders(const unsigned char * data, size_t length, const std::string & format,
+                        int ccsid, int charFormat, int encoding);   // replaces DataArea::parseMsgHeaders' chain
+LeadingHeader detectLeadingHeader(const unsigned char * data, size_t length);   // DataArea::checkDataForHeader
+bool looksLikeEbcdic(const unsigned char * data, size_t length);                // DataArea::checkForEBCDIC
+
+namespace fileio {                        // core/fileio/rfh_message_file.h
+  struct ReadOptions { int fileCcsid = 0; bool ignoreHeaders = false, removeCrLf = false,
+                       unixLineEnds = false; int ansiCcsid = 0; };
+  struct ReadResult { Message message; bool hadMqmd = false; HeaderChain chain; int fileCcsid,
+                      fileIntFormat, charFormat, numericFormat, pdFormat, floatFormat;
+                      std::string dataSource; };
+  Result read(const std::string & path, const ReadOptions &, MqmdFields & fields, ReadResult & out);
+  struct WriteOptions { bool includeMqmd = false; bool dataOnly = false; };
+  Result write(const std::string & path, const Message &, const WriteOptions &);
 }
 
+// Plan 2B (not yet implemented): format.
 namespace format {
   Result render(const Message&, View, const RenderOptions&, std::string& out);  // View: Char|Hex|Both|Xml|Json|Parsed|Cobol|Fixed
 }
@@ -347,3 +382,10 @@ The headers in core/ are authoritative; this section summarises them.
 - **Debug dump files:** Debug dump files on Linux go to fixed names in /tmp
   (rfhdump.txt, namedump.txt); move them to a per-user directory before
   packaging (Plan 4).
+- **Message files:** big-endian MQMD ids are kept (Windows reverses them); an
+  MQMDE is read at its real offset and swapped only for host data; over-long
+  MQMD fields are truncated instead of overrunning; headers are written back as
+  read until the header tabs are ported; the save-RFH read option is not
+  supported yet. Also unsupported: the group/segment read branch. A header whose
+  length runs past the data ends the chain with a warning. Reading a path that is
+  not a regular file fails and leaves the MQMD tab untouched.
