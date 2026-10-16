@@ -3199,6 +3199,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 `MQMDPAGE.cpp` goes from 472 lines to 138 for these functions. The report, flag and persistence helpers stay, because `setMessageMQMD` and `processMessageMQMD` (the put and get paths) still use them. They move to the core with Plan 3's MQ tabs. Both projects compile `core/message/rfh_mqmd_fields.cpp`.
 
+Notes:
+- The replacement buildMQMD drops Windows' entry and exit trace lines and processMQMD keeps only the mqmd dump; acceptable, as the core traces nothing here.
+- The Task 6 commit message and the CHANGELOG line should also mention the AccountingToken (a big-endian MQMD now keeps it unreversed).
+
 The script also adds two include directories, because that core file includes `rfhconst.h` from `RFHUtil/`:
 - in RFHUtil.vcxproj: `..\core\message;.`
 - in Client.vcxproj: `..\core\message;..\RFHUtil`
@@ -3468,7 +3472,7 @@ Expected:
 cmake --build --preset linux-debug && ctest --preset linux-debug
 ```
 
-Expected: `100% tests passed, 0 tests failed out of 406`.
+Expected: `100% tests passed, 0 tests failed out of 465`.
 
 - [ ] **Step 3: Commit**
 
@@ -3576,3 +3580,4 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Task 4 (45eb330, efed25e, 3564e55): `ReadResult.message.mqmd` is always the MQMD built from the tab; reading a path that is not a regular file fails and leaves the tab untouched; added `ReadResult::dataSource`; more documented differences in `core/fileio/rfh_message_file.h` (no group/segment branch, AccountingToken kept rather than reversed, write errors reported, warnings returned separately).
   - Task 5 (5971b9a, b2e05a8, 59e7509, 76e0e08): `put` walks the joined payload and warns when it does not split back into exactly the headers sent ("headers do not match the MQMD format chain; a get splits them differently"); `get` returns the header warnings; live tests added.
 - **Upstream report:** the draft issue (ten bugs: the four from Plan 1 plus the six reported here) is a draft for the owner to file; nothing was filed.
+- **Tidy-up after the final review:** `mqmd_fields::applyMdExtension` is the one owner of the MQMDE-to-tab step, `walkHeaders(…, const MQMD2 &)` of the walk start from an MQMD, and the spec, comments, indentation of the core tests and `port-mqsubs.pl` (no double blank line left by the MQINSKEY removal) were corrected. 465 tests (463 + 2 new); Task 6's expected count is 465.

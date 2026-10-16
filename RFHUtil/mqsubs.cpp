@@ -24,7 +24,6 @@ Jim MacNair - Initial Contribution
 #include "rfhconst.h"	// direct: rfhutil.h is blocked in the portable build
 #include "cmqc.h"
 
-
 ///////////////////////////////////////////////////////////////////////
 //
 // Subroutine to recognize code pages and return the code page type.

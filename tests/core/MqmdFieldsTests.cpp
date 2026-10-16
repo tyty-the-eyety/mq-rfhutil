@@ -9,6 +9,7 @@
 
 #include <cmqc.h>
 
+#include "rfh_header_chain.h"
 #include "rfh_mqmd_fields.h"
 #include "mq_layout.h"
 
@@ -531,4 +532,34 @@ TEST(MqmdFields, FromMqmdVersion1StillCopiesGroupId)
     MqmdFields f;
     ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
     EXPECT_EQ(0, memcmp(f.groupId, "GROUPID-1234567890123456", 24));
+}
+
+TEST(MqmdFields, ApplyMdExtensionSetsVersion2Fields)
+{
+    rfh::MdExtensionFields e = {};
+    memcpy(e.groupId, "GROUPID-1234567890123456", 24);
+    e.msgSeqNumber = 7;
+    e.offset = 100;
+    e.originalLength = 250;
+    e.msgFlags = MQMF_MSG_IN_GROUP | MQMF_LAST_SEGMENT | MQMF_SEGMENTATION_ALLOWED;
+
+    MqmdFields f;
+    f.format = "MQSTR";
+    f.msgType = "8 Datagram";
+    f.segmentYes = true;
+    f.groupLast = true;
+    rfh::mqmd_fields::applyMdExtension(e, f);
+
+    EXPECT_EQ(0, memcmp(f.groupId, "GROUPID-1234567890123456", 24));
+    EXPECT_EQ("7", f.seqNo);
+    EXPECT_EQ("100", f.offset);
+    EXPECT_EQ("250", f.originalLength);
+    EXPECT_TRUE(f.groupYes);
+    EXPECT_FALSE(f.groupLast);
+    EXPECT_FALSE(f.segmentYes);
+    EXPECT_TRUE(f.segmentLast);
+    EXPECT_TRUE(f.segmentAllowed);
+    // nothing outside the version 2 fields changes
+    EXPECT_EQ("MQSTR", f.format);
+    EXPECT_EQ("8 Datagram", f.msgType);
 }

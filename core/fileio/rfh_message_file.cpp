@@ -225,6 +225,9 @@ namespace rfh
 
 			if (!options.ignoreHeaders)
 			{
+				// read starts from the MQMD tab's fields, which match the MQMD apart from
+				// fromMqmd's format cut-off at the first byte <= 0x20 or >= 0x80; deliberate,
+				// because Windows walks from the tab
 				out.chain = walkHeaders(data.data(), data.size(), fields.format,
 				                        atoi(fields.ccsid.c_str()), out.charFormat, fields.encoding);
 				out.message.headers.assign(data.begin(), data.begin() + out.chain.bodyOffset);
@@ -236,16 +239,7 @@ namespace rfh
 				// an MQMDE carries version 2 MQMD fields onto the MQMD tab
 				if (out.chain.hasMdExtension)
 				{
-					const MdExtensionFields & e = out.chain.mdExtension;
-					memcpy(fields.groupId, e.groupId, sizeof(fields.groupId));
-					fields.seqNo = number(e.msgSeqNumber);
-					fields.offset = number(e.offset);
-					fields.originalLength = number(e.originalLength);
-					fields.groupYes = (e.msgFlags & MQMF_MSG_IN_GROUP) != 0;
-					fields.groupLast = (e.msgFlags & MQMF_LAST_MSG_IN_GROUP) != 0;
-					fields.segmentYes = (e.msgFlags & MQMF_SEGMENT) != 0;
-					fields.segmentLast = (e.msgFlags & MQMF_LAST_SEGMENT) != 0;
-					fields.segmentAllowed = (e.msgFlags & MQMF_SEGMENTATION_ALLOWED) != 0;
+					mqmd_fields::applyMdExtension(out.chain.mdExtension, fields);
 				}
 			}
 
@@ -349,10 +343,7 @@ namespace rfh
 			}
 
 			// the breakdown names each header kind, as Windows does
-			HeaderChain chain = walkHeaders(headers.data(), headers.size(),
-			                                std::string(message.mqmd.Format, MQ_FORMAT_LENGTH),
-			                                message.mqmd.CodedCharSetId, getCcsidType(message.mqmd.CodedCharSetId),
-			                                getIntEncode(message.mqmd.Encoding));
+			HeaderChain chain = walkHeaders(headers.data(), headers.size(), message.mqmd);
 			HeaderLengths l = lengthsOf(chain);
 
 			std::string breakdown;

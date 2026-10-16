@@ -12,7 +12,7 @@ Newest updates are at the top of this file
 - `tests/core/gtest_compat.h` supplies `GTEST_SKIP` for the googletest 1.8.1
   NuGet package used by the Windows unit test project.
 - Message files: `fileio::read` / `fileio::write` read and write RFHUtil message
-  files (optional MQMD, MQ headers, body) byte-for-byte compatibly with Windows.
+  files (optional MQMD, MQ headers, body) byte-for-byte compatibly with Windows (see the spec for the deliberate differences).
 - `mqmd_fields` converts between the MQMD tab's fields and an MQMD; `walkHeaders`
   finds DLQ, CICS, IMS, RFH1, RFH2 and MQMDE headers. `MqSession` carries MQ
   headers separately from the body: `put` warns when the headers do not match the

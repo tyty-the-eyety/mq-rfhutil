@@ -410,9 +410,7 @@ namespace rfh
 			payload = &joined;
 
 			// walk what is sent exactly as a get will, to see where it splits the data
-			splitAt = walkHeaders(payload->data(), payload->size(), std::string(message.mqmd.Format, MQ_FORMAT_LENGTH),
-			                      message.mqmd.CodedCharSetId, getCcsidType(message.mqmd.CodedCharSetId),
-			                      getIntEncode(message.mqmd.Encoding)).bodyOffset;
+			splitAt = walkHeaders(payload->data(), payload->size(), message.mqmd).bodyOffset;
 		}
 
 		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)payload->size(),
@@ -552,8 +550,7 @@ namespace rfh
 
 				// split the MQ headers named by the MQMD format chain from the body
 				// the chain's warnings are returned with the result
-				HeaderChain chain = walkHeaders(buffer.data(), received, std::string(md.Format, MQ_FORMAT_LENGTH),
-				                                md.CodedCharSetId, getCcsidType(md.CodedCharSetId), getIntEncode(md.Encoding));
+				HeaderChain chain = walkHeaders(buffer.data(), received, md);
 				message.headers.assign(buffer.begin(), buffer.begin() + chain.bodyOffset);
 				message.body.assign(buffer.begin() + chain.bodyOffset, buffer.begin() + received);
 				headerWarnings = chain.warnings;

@@ -14,6 +14,7 @@
 
 #include <string>
 
+#include "rfh_header_chain.h"
 #include "rfhconst.h"
 
 namespace rfh
@@ -91,6 +92,9 @@ namespace rfh
 		// pass the bytes that follow the 324-byte MQMD (or zeros) to get Windows' result.
 		// Returns false, leaving fields unchanged, for any other version.
 		bool fromMqmd(const MQMD2 & mqmd, MqmdFields & fields);
+
+		// Sets the MQMD tab's version 2 fields from an MQMDE, as MQMDPAGE::processMQMDE does
+		void applyMdExtension(const MdExtensionFields & e, MqmdFields & fields);
 
 		// Resets fields as MQMDPAGE::clearMQMD does; only the float encoding is left
 		// unchanged.

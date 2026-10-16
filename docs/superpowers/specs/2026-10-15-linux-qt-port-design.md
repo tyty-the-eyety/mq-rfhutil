@@ -95,7 +95,8 @@ mq-rfhutil/
 
 ## 4. Core API
 
-All names are in namespace `rfh`.
+All names are in namespace `rfh`. The block below is a summary of the declarations; the
+headers in core/ are authoritative.
 
 ```cpp
 struct Result {
@@ -188,23 +189,31 @@ struct MqmdFields {                       // core/message/rfh_mqmd_fields.h: wha
 namespace mqmd_fields {                   // replaces MQMDPAGE::buildMQMD, processMQMD's field setting, clearMQMD
   void toMqmd(const MqmdFields&, MQMD2&);             // start from MQMD2_DEFAULT
   bool fromMqmd(const MQMD2&, MqmdFields&);           // native-encoding version 1 or 2; false otherwise
+  void applyMdExtension(const MdExtensionFields&, MqmdFields&);   // processMQMDE: the version 2 fields
   void clear(MqmdFields&);
   std::string msgTypeText(MQLONG msgType);            // "8 Datagram"
 }
 
 enum class HeaderType { DeadLetter, Cics, Ims, Rfh1, Rfh2, MdExtension };
 struct HeaderInfo { HeaderType type; size_t offset; size_t length; };
+struct MdExtensionFields { MQBYTE24 groupId; MQLONG msgSeqNumber, offset, msgFlags, originalLength; };
+struct LeadingHeader {                    // what a file without an MQMD starts with
+  bool found = false;
+  std::string format;                     // e.g. MQFMT_RF_HEADER_2, blank padded
+  int ccsid = 0, charFormat = 0, encoding = 0, pdEncoding = 0, floatEncoding = 0;
+};
 struct HeaderChain {                      // core/message/rfh_header_chain.h
   std::vector<HeaderInfo> headers;
   size_t bodyOffset = 0;                  // total length of the headers
   std::string bodyFormat;
-  int bodyCcsid = 0, charFormat = 0, encoding = 0;
+  int bodyCcsid = 0, charFormat = 0, encoding = 0;   // encoding is -1 after an invalid DLQ
   bool hasMdExtension = false;
   MdExtensionFields mdExtension = {};     // groupId, msgSeqNumber, offset, msgFlags, originalLength
   std::vector<std::string> warnings;
 };
 HeaderChain walkHeaders(const unsigned char * data, size_t length, const std::string & format,
                         int ccsid, int charFormat, int encoding);   // replaces DataArea::parseMsgHeaders' chain
+HeaderChain walkHeaders(const unsigned char * data, size_t length, const MQMD2 &);   // starts from the MQMD
 LeadingHeader detectLeadingHeader(const unsigned char * data, size_t length);   // DataArea::checkDataForHeader
 bool looksLikeEbcdic(const unsigned char * data, size_t length);                // DataArea::checkForEBCDIC
 
@@ -230,8 +239,6 @@ namespace format {
 RfhTrace * rfhGetTrace();
 void rfhSetTrace(RfhTrace *);
 ```
-
-The headers in core/ are authoritative; this section summarises them.
 
 ### Data flow
 
@@ -389,3 +396,10 @@ The headers in core/ are authoritative; this section summarises them.
   supported yet. Also unsupported: the group/segment read branch. A header whose
   length runs past the data ends the chain with a warning. Reading a path that is
   not a regular file fails and leaves the MQMD tab untouched.
+- **Message file and header differences:**
+  - the AccountingToken of a big-endian MQMD is kept unreversed, like the ids
+  - header warnings accumulate in Result.warnings (Windows' RFH message replaces earlier ones)
+  - write failures are reported (Windows ignores them)
+  - a header type that appears twice is summed in the read status text
+  - an MQMDE shorter than 72 bytes ends the chain
+  - a failed repeat of a header type uses the cleared state (Windows reuses the earlier parse and can loop)

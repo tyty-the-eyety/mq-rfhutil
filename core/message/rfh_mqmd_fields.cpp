@@ -100,6 +100,16 @@ namespace rfh
 				return flags;
 			}
 
+			// The five MsgFlags check boxes, shared by processMQMD and processMQMDE
+			void setFlagBoxes(MQLONG msgFlags, MqmdFields & f)
+			{
+				f.groupYes = (msgFlags & MQMF_MSG_IN_GROUP) != 0;
+				f.groupLast = (msgFlags & MQMF_LAST_MSG_IN_GROUP) != 0;
+				f.segmentYes = (msgFlags & MQMF_SEGMENT) != 0;
+				f.segmentLast = (msgFlags & MQMF_LAST_SEGMENT) != 0;
+				f.segmentAllowed = (msgFlags & MQMF_SEGMENTATION_ALLOWED) != 0;
+			}
+
 			// MQMDPAGE::getPersistence
 			MQLONG persistenceValue(int persistence)
 			{
@@ -337,15 +347,20 @@ namespace rfh
 			{
 				f.seqNo = number(mqmd.MsgSeqNumber);
 				f.offset = number(mqmd.Offset);
-				f.groupYes = (mqmd.MsgFlags & MQMF_MSG_IN_GROUP) != 0;
-				f.groupLast = (mqmd.MsgFlags & MQMF_LAST_MSG_IN_GROUP) != 0;
-				f.segmentYes = (mqmd.MsgFlags & MQMF_SEGMENT) != 0;
-				f.segmentLast = (mqmd.MsgFlags & MQMF_LAST_SEGMENT) != 0;
-				f.segmentAllowed = (mqmd.MsgFlags & MQMF_SEGMENTATION_ALLOWED) != 0;
+				setFlagBoxes(mqmd.MsgFlags, f);
 				f.originalLength = number(mqmd.OriginalLength);
 			}
 
 			return true;
+		}
+
+		void applyMdExtension(const MdExtensionFields & e, MqmdFields & f)
+		{
+			memcpy(f.groupId, e.groupId, sizeof(f.groupId));
+			f.seqNo = number(e.msgSeqNumber);
+			f.offset = number(e.offset);
+			f.originalLength = number(e.originalLength);
+			setFlagBoxes(e.msgFlags, f);
 		}
 
 		std::string msgTypeText(MQLONG msgType)

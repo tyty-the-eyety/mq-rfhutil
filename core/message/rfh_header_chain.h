@@ -75,6 +75,10 @@ namespace rfh
 	HeaderChain walkHeaders(const unsigned char * data, size_t length, const std::string & format,
 	                        int ccsid, int charFormat, int encoding);
 
+	// Walks the headers of data that follows mqmd, starting from its Format, CodedCharSetId
+	// and Encoding. Every caller that has an MQMD (put, get, file write) uses this.
+	HeaderChain walkHeaders(const unsigned char * data, size_t length, const MQMD2 & mqmd);
+
 	// What a file without an MQMD starts with, judged as DataArea::checkDataForHeader
 	// does: a DLQ, CICS, IMS, RFH1 or RFH2 header in ASCII or EBCDIC, either byte order.
 	struct LeadingHeader

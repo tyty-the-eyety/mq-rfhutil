@@ -130,6 +130,7 @@ namespace rfh
 					// the name does not, the header is kept at its base length: Windows
 					// recognises it and reads the name past the data.
 					MQLONG linkType = readLong(p + 52, reverse);
+					// n >= MQCIH_LENGTH_1 + kCicsProgramName mirrors Windows' check; implied by the next condition
 					if ((MQCLT_PROGRAM == linkType) && (n >= MQCIH_LENGTH_1 + kCicsProgramName) &&
 					    (length + kCicsProgramName <= n))
 					{
@@ -272,8 +273,8 @@ namespace rfh
 			size_t len = parse(data + ofs, length - ofs, s, chain);
 			if (len > length - ofs)
 			{
-				// backstop: the parsers bound their own lengths, so this should not happen
-				// deliberate difference: Windows would carry on past the data
+				// Unreachable today, because every parser bounds its own length; kept as a
+				// guard for future parsers. See the header comment for the difference from Windows.
 				chain.warnings.push_back("header length runs past the end of the data");
 				s.nextFormat.clear();
 				return true;
@@ -310,6 +311,12 @@ namespace rfh
 		chain.charFormat = s.charFormat;
 		chain.encoding = s.encoding;
 		return chain;
+	}
+
+	HeaderChain walkHeaders(const unsigned char * data, size_t length, const MQMD2 & mqmd)
+	{
+		return walkHeaders(data, length, std::string(mqmd.Format, MQ_FORMAT_LENGTH), mqmd.CodedCharSetId,
+		                   getCcsidType(mqmd.CodedCharSetId), getIntEncode(mqmd.Encoding));
 	}
 
 	LeadingHeader detectLeadingHeader(const unsigned char * data, size_t length)

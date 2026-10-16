@@ -580,3 +580,29 @@ TEST(HeaderChain, EveryTruncationOfAFullChainStaysInBounds)
     EXPECT_EQ(6u, whole.headers.size());
     EXPECT_EQ("MQSTR", whole.bodyFormat);
 }
+
+TEST(HeaderChain, WalkingFromAnMqmdStartsWithItsFormatCcsidAndEncoding)
+{
+    auto rfh = L::rfh2(Order::Big, 785, 500, "MQSTR");
+    auto data = L::join({ rfh.data, L::text("body") });
+
+    MQMD2 md = { MQMD2_DEFAULT };
+    md.Version = MQMD_VERSION_2;
+    memcpy(md.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
+    md.CodedCharSetId = 819;
+    md.Encoding = 785;
+
+    GuardedBuffer guarded(data);
+    HeaderChain viaMqmd = walkHeaders(guarded.data(), guarded.length(), md);
+    HeaderChain explicitly = walkHeaders(guarded.data(), guarded.length(), std::string(md.Format, MQ_FORMAT_LENGTH),
+                                         819, CHAR_ASCII, NUMERIC_HOST);
+
+    ASSERT_EQ(1u, viaMqmd.headers.size());
+    EXPECT_EQ(explicitly.headers.size(), viaMqmd.headers.size());
+    EXPECT_EQ(explicitly.bodyOffset, viaMqmd.bodyOffset);
+    EXPECT_EQ(explicitly.bodyFormat, viaMqmd.bodyFormat);
+    EXPECT_EQ(explicitly.bodyCcsid, viaMqmd.bodyCcsid);
+    EXPECT_EQ(explicitly.charFormat, viaMqmd.charFormat);
+    EXPECT_EQ(explicitly.encoding, viaMqmd.encoding);
+    EXPECT_EQ(NUMERIC_HOST, viaMqmd.encoding);
+}

@@ -79,7 +79,7 @@ my %out;	# path => [text, crlf]; written only after every edit succeeded
     edit($f, 'include rfhconst.h', 1, $n);
     $t =~ s/$re/$1#include "rfhconst.h"\t\/\/ direct: rfhutil.h is blocked in the portable build\n/;
 
-    $re = qr/^#define MQINSKEY [^\n]*\n/m;
+    $re = qr/^#define MQINSKEY [^\n]*\n\n?/m;
     $n = () = $t =~ /$re/g;
     edit($f, 'remove MQINSKEY', 1, $n);
     $t =~ s/$re//;
