@@ -42,7 +42,8 @@ target_link_libraries(rfhutil_unit_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_unit_tests)
 
 add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core/MqmdFieldsTests.cpp core/HeaderChainTests.cpp core/MessageFileTests.cpp
-    core/GuardMallocTests.cpp core/DataFormatterTests.cpp)
+    core/GuardMallocTests.cpp core/DataFormatterTests.cpp
+    core/FormatTests.cpp)
 if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")
@@ -85,3 +86,4 @@ rfh_add_memcheck_test(memcheck.GuardMalloc rfhutil_core_tests "GuardMalloc.*")
 rfh_add_memcheck_test(memcheck.DataFormatter rfhutil_core_tests "DataFormatter.*")
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
+rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "DataFormatter.*:Format_*")
