@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <stddef.h>
 #include <string.h>
 
 #include <cmqc.h>
@@ -36,6 +37,99 @@ TEST(MqmdFields, StructureMatchesDocumentedLayout)
 {
 	ASSERT_EQ(L::mqmd::Length2, sizeof(MQMD2));
 	ASSERT_EQ(L::mqmd::Length1, sizeof(MQMD1));
+
+	EXPECT_EQ(O::Report, offsetof(MQMD2, Report));
+	EXPECT_EQ(O::MsgType, offsetof(MQMD2, MsgType));
+	EXPECT_EQ(O::Expiry, offsetof(MQMD2, Expiry));
+	EXPECT_EQ(O::Feedback, offsetof(MQMD2, Feedback));
+	EXPECT_EQ(O::Encoding, offsetof(MQMD2, Encoding));
+	EXPECT_EQ(O::CodedCharSetId, offsetof(MQMD2, CodedCharSetId));
+	EXPECT_EQ(O::Format, offsetof(MQMD2, Format));
+	EXPECT_EQ(O::Priority, offsetof(MQMD2, Priority));
+	EXPECT_EQ(O::Persistence, offsetof(MQMD2, Persistence));
+	EXPECT_EQ(O::MsgId, offsetof(MQMD2, MsgId));
+	EXPECT_EQ(O::CorrelId, offsetof(MQMD2, CorrelId));
+	EXPECT_EQ(O::BackoutCount, offsetof(MQMD2, BackoutCount));
+	EXPECT_EQ(O::ReplyToQ, offsetof(MQMD2, ReplyToQ));
+	EXPECT_EQ(O::ReplyToQMgr, offsetof(MQMD2, ReplyToQMgr));
+	EXPECT_EQ(O::UserIdentifier, offsetof(MQMD2, UserIdentifier));
+	EXPECT_EQ(O::AccountingToken, offsetof(MQMD2, AccountingToken));
+	EXPECT_EQ(O::ApplIdentityData, offsetof(MQMD2, ApplIdentityData));
+	EXPECT_EQ(O::PutApplType, offsetof(MQMD2, PutApplType));
+	EXPECT_EQ(O::PutApplName, offsetof(MQMD2, PutApplName));
+	EXPECT_EQ(O::PutDate, offsetof(MQMD2, PutDate));
+	EXPECT_EQ(O::PutTime, offsetof(MQMD2, PutTime));
+	EXPECT_EQ(O::ApplOriginData, offsetof(MQMD2, ApplOriginData));
+	EXPECT_EQ(O::GroupId, offsetof(MQMD2, GroupId));
+	EXPECT_EQ(O::MsgSeqNumber, offsetof(MQMD2, MsgSeqNumber));
+	EXPECT_EQ(O::Offset, offsetof(MQMD2, Offset));
+	EXPECT_EQ(O::MsgFlags, offsetof(MQMD2, MsgFlags));
+	EXPECT_EQ(O::OriginalLength, offsetof(MQMD2, OriginalLength));
+}
+
+TEST(MqmdFields, DefaultLayoutMatchesMqmd2DefaultNumbers)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	std::vector<unsigned char> raw = bytesOf(md);
+	L::Bytes d = L::defaultMqmd2();
+	const size_t numeric[] = { 4, O::Report, O::MsgType, O::Expiry, O::Feedback, O::Encoding,
+		O::CodedCharSetId, O::Priority, O::Persistence, O::BackoutCount, O::PutApplType,
+		O::MsgSeqNumber, O::Offset, O::MsgFlags, O::OriginalLength };
+	for (size_t offset : numeric)
+	{
+		EXPECT_EQ(0, memcmp(&raw[offset], &d.data[offset], 4)) << "offset " << offset;
+	}
+}
+
+TEST(MqmdFields, ClearMatchesClearMQMD)
+{
+	MqmdFields f;
+	f.format = "x"; f.ccsid = "x"; f.msgType = "x"; f.expiry = "x"; f.feedback = "x";
+	f.priority = "x"; f.backoutCount = "x"; f.replyToQ = "x"; f.replyToQMgr = "x";
+	f.userId = "x"; f.accountingToken = "x"; f.applIdentity = "x"; f.applOrigin = "x";
+	f.putApplName = "x"; f.putApplType = "x"; f.dateTime = "x"; f.seqNo = "x";
+	f.offset = "x"; f.originalLength = "x";
+	f.persistence = MQPERSIST_YES;
+	f.encoding = NUMERIC_HOST;
+	f.pdEncoding = NUMERIC_HOST;
+	f.floatEncoding = FLOAT_390;
+	f.reportException = f.reportExpiration = f.reportCoa = f.reportCod = REPORT_FULL;
+	f.reportPan = f.reportNan = f.reportActivity = f.reportDiscard = true;
+	f.reportPassMsgId = f.reportPassCorrelId = f.reportPassDiscardAndExpiry = true;
+	f.groupYes = f.groupLast = f.segmentYes = f.segmentLast = f.segmentAllowed = true;
+	memset(f.msgId, 1, sizeof(f.msgId));
+	memset(f.correlId, 2, sizeof(f.correlId));
+	memset(f.groupId, 3, sizeof(f.groupId));
+
+	rfh::mqmd_fields::clear(f);
+
+	MqmdFields d;
+	d.floatEncoding = FLOAT_390;
+	EXPECT_EQ(-1, f.reportException);
+	EXPECT_EQ(-1, f.reportExpiration);
+	EXPECT_EQ(-1, f.reportCoa);
+	EXPECT_EQ(-1, f.reportCod);
+	EXPECT_EQ(d.format, f.format); EXPECT_EQ(d.ccsid, f.ccsid); EXPECT_EQ(d.msgType, f.msgType);
+	EXPECT_EQ(d.expiry, f.expiry); EXPECT_EQ(d.feedback, f.feedback); EXPECT_EQ(d.priority, f.priority);
+	EXPECT_EQ(d.backoutCount, f.backoutCount); EXPECT_EQ(d.replyToQ, f.replyToQ);
+	EXPECT_EQ(d.replyToQMgr, f.replyToQMgr); EXPECT_EQ(d.userId, f.userId);
+	EXPECT_EQ(d.accountingToken, f.accountingToken); EXPECT_EQ(d.applIdentity, f.applIdentity);
+	EXPECT_EQ(d.applOrigin, f.applOrigin); EXPECT_EQ(d.putApplName, f.putApplName);
+	EXPECT_EQ(d.putApplType, f.putApplType); EXPECT_EQ(d.dateTime, f.dateTime);
+	EXPECT_EQ(d.seqNo, f.seqNo); EXPECT_EQ(d.offset, f.offset);
+	EXPECT_EQ(d.originalLength, f.originalLength);
+	EXPECT_EQ(d.persistence, f.persistence); EXPECT_EQ(d.encoding, f.encoding);
+	EXPECT_EQ(d.pdEncoding, f.pdEncoding); EXPECT_EQ(d.floatEncoding, f.floatEncoding);
+	EXPECT_EQ(d.reportPan, f.reportPan); EXPECT_EQ(d.reportNan, f.reportNan);
+	EXPECT_EQ(d.reportActivity, f.reportActivity); EXPECT_EQ(d.reportDiscard, f.reportDiscard);
+	EXPECT_EQ(d.reportPassMsgId, f.reportPassMsgId); EXPECT_EQ(d.reportPassCorrelId, f.reportPassCorrelId);
+	EXPECT_EQ(d.reportPassDiscardAndExpiry, f.reportPassDiscardAndExpiry);
+	EXPECT_EQ(d.groupYes, f.groupYes); EXPECT_EQ(d.groupLast, f.groupLast);
+	EXPECT_EQ(d.segmentYes, f.segmentYes); EXPECT_EQ(d.segmentLast, f.segmentLast);
+	EXPECT_EQ(d.segmentAllowed, f.segmentAllowed);
+	EXPECT_EQ(0, memcmp(d.msgId, f.msgId, 24));
+	EXPECT_EQ(0, memcmp(d.correlId, f.correlId, 24));
+	EXPECT_EQ(0, memcmp(d.groupId, f.groupId, 24));
 }
 
 TEST(MqmdFields, DefaultFieldsGiveDocumentedDefaultsExceptTabValues)
@@ -314,4 +408,112 @@ TEST(MqmdFields, RoundTripThroughFieldsIsByteIdentical)
 	MqmdFields f;
 	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(in, f));
 	EXPECT_EQ(e.data, bytesOf(built(f)));
+}
+
+TEST(MqmdFields, FromMqmdWithZeroDateAndTimeGivesJustTheSeparator)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	MqmdFields f;
+	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+	EXPECT_EQ(" ", f.dateTime);
+}
+
+TEST(MqmdFields, BlankDateTimeTextWritesOnlyOneBlankHistoric)
+{
+	MqmdFields f;
+	f.dateTime = " ";
+	MQMD2 md = built(f);
+	EXPECT_EQ(0, memcmp(md.PutDate, " \0\0\0\0\0\0\0", 8));
+	EXPECT_EQ(0, memcmp(md.PutTime, "\0\0\0\0\0\0\0\0", 8));
+}
+
+TEST(MqmdFields, NulInPutDateCutsOnlyTheDatePartHistoric)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	memcpy(md.PutDate, "2026\0\0\0\0", 8);
+	memcpy(md.PutTime, "12345678", 8);
+	MqmdFields f;
+	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+	EXPECT_EQ("2026/ 12:34:56.78", f.dateTime);
+}
+
+TEST(MqmdFields, FormatBytesAbove7FEndTheTextHistoric)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	memcpy(md.Format, "MQ\xC1STR  ", 8);
+	MqmdFields f;
+	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+	EXPECT_EQ("MQ", f.format);
+}
+
+TEST(MqmdFields, UnknownPutApplTypeRoundTrip)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	md.PutApplType = 65536;
+	MqmdFields f;
+	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+	EXPECT_EQ("", f.putApplType);
+	MQMD2 out = { MQMD2_DEFAULT };
+	out.PutApplType = 77;
+	rfh::mqmd_fields::toMqmd(f, out);
+	EXPECT_EQ(77, out.PutApplType);
+}
+
+TEST(MqmdFields, ReportChoicesRoundTripWithPrecedence)
+{
+	struct Group { MQLONG base, data, full; int MqmdFields::*member; } groups[] = {
+		{ MQRO_EXCEPTION, MQRO_EXCEPTION_WITH_DATA, MQRO_EXCEPTION_WITH_FULL_DATA, &MqmdFields::reportException },
+		{ MQRO_EXPIRATION, MQRO_EXPIRATION_WITH_DATA, MQRO_EXPIRATION_WITH_FULL_DATA, &MqmdFields::reportExpiration },
+		{ MQRO_COA, MQRO_COA_WITH_DATA, MQRO_COA_WITH_FULL_DATA, &MqmdFields::reportCoa },
+		{ MQRO_COD, MQRO_COD_WITH_DATA, MQRO_COD_WITH_FULL_DATA, &MqmdFields::reportCod } };
+	for (const Group & g : groups)
+	{
+		const MQLONG reports[] = { g.base, g.data, g.full };
+		const int choices[] = { REPORT_YES, REPORT_DATA, REPORT_FULL };
+		for (int i = 0; i < 3; i++)
+		{
+			MQMD2 md = { MQMD2_DEFAULT };
+			md.Report = reports[i];
+			MqmdFields f;
+			ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+			EXPECT_EQ(choices[i], f.*(g.member));
+			MqmdFields back;
+			back.*(g.member) = choices[i];
+			EXPECT_EQ(reports[i], built(back).Report);
+		}
+		MqmdFields none;
+		none.*(g.member) = -1;
+		EXPECT_EQ(0, built(none).Report);
+	}
+}
+
+TEST(MqmdFields, AccountingTokenHexHandling)
+{
+	MqmdFields f;
+	f.accountingToken = "abc";
+	MQMD2 md = built(f);
+	const unsigned char odd[2] = { 0xAB, 0x00 };
+	EXPECT_EQ(0, memcmp(md.AccountingToken, odd, 2));
+
+	f.accountingToken = std::string(70, '1');
+	md = built(f);
+	for (int i = 0; i < 32; i++)
+	{
+		EXPECT_EQ(0x11, md.AccountingToken[i]) << i;
+	}
+
+	f.accountingToken = "abcdef";
+	md = built(f);
+	const unsigned char lower[3] = { 0xAB, 0xCD, 0xEF };
+	EXPECT_EQ(0, memcmp(md.AccountingToken, lower, 3));
+}
+
+TEST(MqmdFields, FromMqmdVersion1StillCopiesGroupId)
+{
+	MQMD2 md = { MQMD2_DEFAULT };
+	md.Version = MQMD_VERSION_1;
+	memcpy(md.GroupId, "GROUPID-1234567890123456", 24);
+	MqmdFields f;
+	ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, f));
+	EXPECT_EQ(0, memcmp(f.groupId, "GROUPID-1234567890123456", 24));
 }

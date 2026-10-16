@@ -127,10 +127,7 @@ namespace rfh
 		void clear(MqmdFields & f)
 		{
 			MqmdFields cleared;
-			cleared.floatEncoding = f.floatEncoding;	// clearMQMD leaves it alone
-			memcpy(cleared.msgId, f.msgId, sizeof(cleared.msgId));
-			memcpy(cleared.correlId, f.correlId, sizeof(cleared.correlId));
-			memcpy(cleared.groupId, f.groupId, sizeof(cleared.groupId));
+			cleared.floatEncoding = f.floatEncoding;	// clearMQMD leaves only this alone
 			f = cleared;
 		}
 
@@ -282,13 +279,13 @@ namespace rfh
 			f.pdEncoding = getPDEncode(mqmd.Encoding);
 			f.ccsid = number(mqmd.CodedCharSetId);
 
-			// Windows turns every byte at or below a blank into the end of the text
+			// every byte at or below a blank, or above 0x7F, ends the text: MSVC's char is signed
 			char format[MQ_FORMAT_LENGTH + 1];
 			memcpy(format, mqmd.Format, MQ_FORMAT_LENGTH);
 			format[MQ_FORMAT_LENGTH] = 0;
 			for (int i = 0; i < MQ_FORMAT_LENGTH; i++)
 			{
-				if ((unsigned char)format[i] <= ' ')
+				if ((signed char)format[i] <= ' ')
 				{
 					format[i] = 0;
 				}
@@ -313,22 +310,26 @@ namespace rfh
 			f.putApplType = getApplTypeDisplay(mqmd.PutApplType);
 			f.putApplName = trimmedField(mqmd.PutApplName, sizeof(mqmd.PutApplName));
 
-			char dateTime[24];
-			memcpy(dateTime, mqmd.PutDate, 4);
-			dateTime[4] = '/';
-			memcpy(dateTime + 5, mqmd.PutDate + 4, 2);
-			dateTime[7] = '/';
-			memcpy(dateTime + 8, mqmd.PutDate + 6, 2);
-			dateTime[10] = ' ';
-			memcpy(dateTime + 11, mqmd.PutTime, 2);
-			dateTime[13] = ':';
-			memcpy(dateTime + 14, mqmd.PutTime + 2, 2);
-			dateTime[16] = ':';
-			memcpy(dateTime + 17, mqmd.PutTime + 4, 2);
-			dateTime[19] = '.';
-			memcpy(dateTime + 20, mqmd.PutTime + 6, 2);
-			dateTime[22] = 0;
-			f.dateTime = dateTime;
+			// two separate C strings, as processMQMD builds them: a NUL in PutDate cuts only the date
+			char date[12];
+			memcpy(date, mqmd.PutDate, 4);
+			date[4] = '/';
+			memcpy(date + 5, mqmd.PutDate + 4, 2);
+			date[7] = '/';
+			memcpy(date + 8, mqmd.PutDate + 6, 2);
+			date[10] = 0;
+
+			char time[12];
+			memcpy(time, mqmd.PutTime, 2);
+			time[2] = ':';
+			memcpy(time + 3, mqmd.PutTime + 2, 2);
+			time[5] = ':';
+			memcpy(time + 6, mqmd.PutTime + 4, 2);
+			time[8] = '.';
+			memcpy(time + 9, mqmd.PutTime + 6, 2);
+			time[11] = 0;
+
+			f.dateTime = std::string(date) + " " + time;
 
 			f.applOrigin = trimmedField(mqmd.ApplOriginData, sizeof(mqmd.ApplOriginData));
 

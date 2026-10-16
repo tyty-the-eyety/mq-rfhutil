@@ -45,7 +45,9 @@ namespace mq_layout
 		std::vector<unsigned char> data;
 	};
 
-	// MQMD version 2 (364 bytes) with the MQMD2_DEFAULT values, little-endian.
+	// MQMD version 2 with the MQMD2_DEFAULT numeric values and blank-filled text fields,
+	// as mqmd_fields::toMqmd writes them (the C MQMD2_DEFAULT has zero bytes in the text
+	// fields).
 	inline Bytes defaultMqmd2(Order order = Order::Little)
 	{
 		Bytes b(364);

@@ -18,6 +18,7 @@
 
 namespace rfh
 {
+	// The defaults are the state MQMDPAGE::clearMQMD leaves.
 	struct MqmdFields
 	{
 		// text fields, exactly as shown on the MQMD tab
@@ -41,15 +42,16 @@ namespace rfh
 		std::string offset;
 		std::string originalLength = "-1";	// MQOL_UNDEFINED
 
-		// radio groups
+		// radio groups; the report choices are REPORT_NONE / REPORT_YES / REPORT_DATA /
+		// REPORT_FULL, and -1 means "none selected" and builds no report bits
 		int persistence = MQPERSIST_NO;		// MQPERSIST_NO / MQPERSIST_YES / MQPERSIST_AS_Q
 		int encoding = NUMERIC_PC;			// NUMERIC_PC / NUMERIC_HOST
 		int pdEncoding = NUMERIC_PC;
 		int floatEncoding = FLOAT_PC;		// FLOAT_PC / FLOAT_UNIX / FLOAT_390 / FLOAT_TNS
-		int reportException = REPORT_NONE;	// REPORT_NONE / REPORT_YES / REPORT_DATA / REPORT_FULL
-		int reportExpiration = REPORT_NONE;
-		int reportCoa = REPORT_NONE;
-		int reportCod = REPORT_NONE;
+		int reportException = -1;
+		int reportExpiration = -1;
+		int reportCoa = -1;
+		int reportCod = -1;
 
 		// check boxes
 		bool reportPan = false;
@@ -76,17 +78,20 @@ namespace rfh
 		// Fills mqmd from fields, as MQMDPAGE::buildMQMD does. mqmd must already hold
 		// the values to keep for empty text fields (normally MQMD2_DEFAULT). Fields
 		// longer than their MQMD field are truncated; Windows overruns into the next
-		// MQMD field instead (Format, ReplyToQ, ReplyToQMgr).
+		// MQMD field instead (Format, ReplyToQ, ReplyToQMgr). StrucId and Version are not
+		// set, and Format is copied without blank filling, so start from MQMD2_DEFAULT.
 		void toMqmd(const MqmdFields & fields, MQMD2 & mqmd);
 
 		// Sets fields from a native-encoding MQMD of version 1 or 2, as
 		// MQMDPAGE::processMQMD does after its byte-order and EBCDIC translation.
-		// The float encoding is left unchanged, as on Windows. Returns false, leaving
-		// fields unchanged, for any other version.
+		// The float encoding is left unchanged, as on Windows. The document's display
+		// state (numeric, packed decimal and character format) is not set here; callers
+		// derive it from the MQMD. msgType and putApplType are read by their leading
+		// number. Returns false, leaving fields unchanged, for any other version.
 		bool fromMqmd(const MQMD2 & mqmd, MqmdFields & fields);
 
-		// Resets fields as MQMDPAGE::clearMQMD does. The float encoding and the three
-		// identifiers are left unchanged, as on Windows.
+		// Resets fields as MQMDPAGE::clearMQMD does; only the float encoding is left
+		// unchanged.
 		void clear(MqmdFields & fields);
 
 		// "8 Datagram" for 8, "" for types the MQMD tab does not name (including
