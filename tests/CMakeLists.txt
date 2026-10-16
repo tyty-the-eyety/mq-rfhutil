@@ -86,4 +86,4 @@ rfh_add_memcheck_test(memcheck.GuardMalloc rfhutil_core_tests "GuardMalloc.*")
 rfh_add_memcheck_test(memcheck.DataFormatter rfhutil_core_tests "DataFormatter.*")
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
-rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "DataFormatter.*:Format_*")
+rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")

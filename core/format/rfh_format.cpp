@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "DataFormatter.h"
 #include "comsubs.h"
 #include "mqsubs.h"
 #include "rfh_header_chain.h"
@@ -14,9 +15,9 @@ namespace rfh
 {
 	namespace format
 	{
-		RenderOptions defaultsFor(const Message & message, std::vector<std::string> & warnings)
+		DataFormats defaultsFor(const Message & message, std::vector<std::string> & warnings)
 		{
-			RenderOptions options;
+			DataFormats options;
 
 			// DataArea::processMessage
 			options.intFormat = ((message.mqmd.Encoding & MQENC_INTEGER_REVERSED) > 0) ? NUMERIC_PC : NUMERIC_HOST;
@@ -39,16 +40,21 @@ namespace rfh
 			}
 
 			// DataArea::parseMsgHeaders: the data after the last header
-			HeaderChain chain = walkHeaders(message.headers.data(), message.headers.size(), message.mqmd);
+			// The character type comes from the repaired code page while the walk uses
+			// the raw one, as on Windows.
+			MQLONG typeCcsid = ((ccsid < 0) || (ccsid > 99999)) ? reverseBytes4(ccsid) : ccsid;
+			HeaderChain chain = walkHeaders(message.headers.data(), message.headers.size(),
+				std::string(message.mqmd.Format, MQ_FORMAT_LENGTH), message.mqmd.CodedCharSetId,
+				getCcsidType(typeCcsid), getIntEncode(message.mqmd.Encoding));
 			options.charFormat = chain.charFormat;
 			options.numericFormat = chain.encoding;
 			options.pdNumericFormat = (NUMERIC_PC == chain.encoding) ? NUMERIC_PC : NUMERIC_HOST;
 			return options;
 		}
 
-		RenderOptions defaultsFor(const fileio::ReadResult & read)
+		DataFormats defaultsFor(const fileio::ReadResult & read)
 		{
-			RenderOptions options;
+			DataFormats options;
 			options.ccsid = read.fileCcsid;
 			options.intFormat = read.fileIntFormat;
 			options.charFormat = read.charFormat;
@@ -62,53 +68,54 @@ namespace rfh
 			out.clear();
 
 			// on the heap: its XML work areas are about 125 KB
-			std::unique_ptr<DataFormatter> formatter(new DataFormatter());
-			formatter->setData(message.body.data(), (unsigned int)message.body.size());
-			formatter->fileCcsid = options.ccsid;
-			formatter->fileIntFormat = options.intFormat;
-			formatter->m_char_format = options.charFormat;
-			formatter->display = options.display;
-			formatter->conversionTableDir = options.conversionTableDir;
+			std::unique_ptr<DataFormatter> owned(new DataFormatter());
+			DataFormatter & formatter = *owned;
+			formatter.setData(message.body.data(), (unsigned int)message.body.size());
+			formatter.fileCcsid = options.ccsid;
+			formatter.fileIntFormat = options.intFormat;
+			formatter.m_char_format = options.charFormat;
+			formatter.display = options.display;
+			formatter.conversionTableDir = options.conversionTableDir;
 
 			const unsigned char * text = NULL;
 			switch (view)
 			{
 			case View::Character:
-				formatter->getCharacterData(options.charFormat, options.crlf, options.edi, options.bom, options.indent);
-				text = formatter->m_data_ascii;
+				formatter.getCharacterData(options.charFormat, options.crlf, options.edi, options.bom, options.indent);
+				text = formatter.m_data_ascii;
 				break;
 			case View::Hex:
-				formatter->getHexData();
-				text = formatter->m_data_hex;
+				formatter.getHexData();
+				text = formatter.m_data_hex;
 				break;
 			case View::Both:
-				formatter->getBothData(options.charFormat, options.bom);
-				text = formatter->m_data_both;
+				formatter.getBothData(options.charFormat, options.bom);
+				text = formatter.m_data_both;
 				break;
 			case View::Xml:
-				formatter->getXmlData(options.charFormat);
-				text = formatter->m_data_xml;
+				formatter.getXmlData(options.charFormat);
+				text = formatter.m_data_xml;
 				break;
 			case View::Parsed:
-				formatter->getParsedData(options.charFormat);
-				text = formatter->m_data_parsed;
+				formatter.getParsedData(options.charFormat);
+				text = formatter.m_data_parsed;
 				break;
 			case View::Json:
-				formatter->getJsonData(options.charFormat);
-				text = formatter->m_data_json;
+				formatter.getJsonData(options.charFormat);
+				text = formatter.m_data_json;
 				break;
 			case View::Fixed:
-				formatter->getFixData(options.charFormat);
-				text = formatter->m_data_fix;
+				formatter.getFixData(options.charFormat);
+				text = formatter.m_data_fix;
 				break;
 			case View::Cobol:
 				return Result::failure("the COBOL view is not supported yet");
 			}
 
 			Result result = Result::success();
-			if (!formatter->m_error_msg.empty())
+			if (!formatter.m_error_msg.empty())
 			{
-				result.warnings.push_back(formatter->m_error_msg);
+				result.warnings.push_back(formatter.m_error_msg);
 			}
 			if (text != NULL)
 			{

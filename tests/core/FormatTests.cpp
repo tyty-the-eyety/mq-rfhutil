@@ -126,6 +126,64 @@ TEST(Format_Character, UnicodeIsShownAsItsBytes)
               render(message(std::string("H\0i\0", 4), 1200), View::Character, options(1200)));
 }
 
+// --- byte order mark and double-byte data -------------------------------------
+
+TEST(Format_Bom, CharacterViewSkipsTheMarkWhenHonoured)
+{
+    RenderOptions o = options();
+    o.bom = true;
+    EXPECT_EQ("00000000 \xff" "ab", render(message("\xfe\xff" "ab"), View::Character, o));
+    EXPECT_EQ("00000000 \xfe\xff" "ab", render(message("\xfe\xff" "ab"), View::Character, options()));
+}
+
+TEST(Format_Bom, BothViewSkipsTheMarkWhenHonoured)
+{
+    RenderOptions o = options();
+    o.bom = true;
+    EXPECT_EQ("00000000 FF6162                              \xff" "ab",
+              render(message("\xfe\xff" "ab"), View::Both, o));
+}
+
+TEST(Format_Bom, HexViewIsUnchanged)
+{
+    EXPECT_EQ("00000000 FEFF6162", render(message("\xfe\xff" "ab"), View::Hex, options()));
+}
+
+TEST(Format_Character, ADoubleByteCharacterAtColumnThirtyOneMakesALineOfThirtyThree)
+{
+    std::string body(31, 'a');
+    body += "\x82\xa0";
+    body += "bc";
+    RenderOptions o = options(932, CHAR_JAPANESE);
+    EXPECT_EQ("00000000 " + std::string(31, 'a') + "\x82\xa0\r\n00000033 bc",
+              render(message(body, 932), View::Character, o));
+}
+
+TEST(Format_Options, ApplyReplacesOnlyTheFormats)
+{
+    RenderOptions o = options();
+    o.crlf = true;
+    o.copybookPath = "book.cpy";
+    DataFormats f;
+    f.ccsid = 37;
+    f.intFormat = NUMERIC_HOST;
+    f.charFormat = CHAR_EBCDIC;
+    f.numericFormat = NUMERIC_HOST;
+    f.pdNumericFormat = NUMERIC_HOST;
+    o.apply(f);
+    EXPECT_EQ(37, o.ccsid);
+    EXPECT_EQ(CHAR_EBCDIC, o.charFormat);
+    EXPECT_EQ(NUMERIC_HOST, o.pdNumericFormat);
+    EXPECT_TRUE(o.crlf);
+    EXPECT_EQ("book.cpy", o.copybookPath);
+}
+
+TEST(Format_Cobol, FailsUntilTheViewIsImplemented)
+{
+    std::string out;
+    EXPECT_FALSE(format::render(message("x"), View::Cobol, options(), out).ok());
+}
+
 // --- both view ----------------------------------------------------------------
 
 TEST(Format_Both, HexThenTextSixteenBytesALine)
@@ -162,7 +220,7 @@ TEST(Format_Defaults, AfterAGetTheyFollowTheLastHeader)
     m.headers = L::rfh2(Order::Little, 785, 500, "MQSTR").data;
 
     std::vector<std::string> warnings;
-    RenderOptions o = defaultsFor(m, warnings);
+    DataFormats o = defaultsFor(m, warnings);
     EXPECT_EQ(819, o.ccsid) << "the code page is the MQMD's, as DataArea::fileCcsid";
     EXPECT_EQ(NUMERIC_PC, o.intFormat);
     EXPECT_EQ(CHAR_EBCDIC, o.charFormat);
@@ -174,15 +232,47 @@ TEST(Format_Defaults, AfterAGetTheyFollowTheLastHeader)
 TEST(Format_Defaults, AfterAGetAReversedCodePageIsRepaired)
 {
     std::vector<std::string> warnings;
-    RenderOptions o = defaultsFor(message("x", reverseBytes4(500)), warnings);
+    DataFormats o = defaultsFor(message("x", reverseBytes4(500)), warnings);
     EXPECT_EQ(500, o.ccsid);
+    EXPECT_EQ(CHAR_EBCDIC, o.charFormat) << "the type comes from the repaired code page";
     EXPECT_TRUE(warnings.empty());
+}
+
+TEST(Format_Defaults, AfterAGetAReversedJapaneseCodePageIsJapanese)
+{
+    std::vector<std::string> warnings;
+    DataFormats o = defaultsFor(message("x", reverseBytes4(932)), warnings);
+    EXPECT_EQ(932, o.ccsid);
+    EXPECT_EQ(CHAR_JAPANESE, o.charFormat);
+}
+
+TEST(Format_Defaults, AfterAGetWithoutHeadersTheMqmdDecides)
+{
+    std::vector<std::string> warnings;
+    EXPECT_EQ(CHAR_EBCDIC, defaultsFor(message("x", 500), warnings).charFormat);
+    EXPECT_EQ(CHAR_JAPANESE, defaultsFor(message("x", 932), warnings).charFormat);
+    DataFormats o = defaultsFor(message("x", 819, 785), warnings);
+    EXPECT_EQ(NUMERIC_HOST, o.intFormat);
+    EXPECT_EQ(NUMERIC_HOST, o.numericFormat);
+}
+
+TEST(Format_Defaults, AfterAGetAnInvalidDlqEndsTheChainWithAsciiAndNoEncoding)
+{
+    Message m = message("", 819, 546);
+    memcpy(m.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
+    m.headers = L::rfh2(Order::Little, 546, 819, "MQDEAD").data;
+
+    std::vector<std::string> warnings;
+    DataFormats o = defaultsFor(m, warnings);
+    EXPECT_EQ(CHAR_ASCII, o.charFormat);
+    EXPECT_EQ(-1, o.numericFormat);
+    EXPECT_EQ(NUMERIC_HOST, o.pdNumericFormat);
 }
 
 TEST(Format_Defaults, AfterAGetAnInvalidCodePageIsZeroWithAWarning)
 {
     std::vector<std::string> warnings;
-    RenderOptions o = defaultsFor(message("x", 100000), warnings);
+    DataFormats o = defaultsFor(message("x", 100000), warnings);
     EXPECT_EQ(0, o.ccsid);
     ASSERT_EQ(1u, warnings.size());
     EXPECT_EQ("Invalid code page in MQMD - 100000\r\n", warnings[0]);
@@ -196,7 +286,7 @@ TEST(Format_Defaults, AfterAReadTheyAreTheReadResults)
     read.charFormat = CHAR_EBCDIC;
     read.numericFormat = NUMERIC_HOST;
     read.pdFormat = NUMERIC_PC;
-    RenderOptions o = defaultsFor(read);
+    DataFormats o = defaultsFor(read);
     EXPECT_EQ(37, o.ccsid);
     EXPECT_EQ(NUMERIC_HOST, o.intFormat);
     EXPECT_EQ(CHAR_EBCDIC, o.charFormat);

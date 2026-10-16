@@ -11,6 +11,15 @@
 // positive number, otherwise 1252 (Western European, the common Windows default).
 int rfh_get_acp();
 
+// The Windows ANSI and OEM code pages the display formatters (DataFormatter) show
+// text in. On Windows these are GetACP() and GetOEMCP(), which CRfhutilApp holds as
+// ansi and oem.
+struct DisplayCodepages
+{
+	int ansi;
+	int oem;
+};
+
 // TRUE if conversions to and from the code page are available on this system.
 BOOL rfh_is_codepage_installed(int ccsid);
 

@@ -48,6 +48,7 @@ http://www.apache.org/licenses/LICENSE-2.0
 #include <string>
 #include <vector>
 
+#include "rfh_codepage.h"
 #include "rfh_platform.h"
 
 // Zero bytes the formatters may read after their data and their work buffers.
@@ -56,14 +57,6 @@ const unsigned int kLookAheadPad = 32;
 // Size of the file name buffers in the moved code that build a conversion table
 // path (fileName[512]).
 const int kTablePathMax = 512;
-
-// The Windows ANSI and OEM code pages the formatters display in. On Windows these
-// are GetACP() and GetOEMCP(), which CRfhutilApp holds as ansi and oem.
-struct DisplayCodepages
-{
-	int ansi;
-	int oem;
-};
 
 class DataFormatter
 {
