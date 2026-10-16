@@ -447,3 +447,16 @@ TEST(JsonParse, BuildParsedAreaOutputThatFitsIsUnchanged)
     p.buildParsedArea(withRoot, sizeof(withRoot), TRUE);
     EXPECT_STREQ("root.x.a[1]=\"1\"\r\nroot.x.a[2]=\"2\"\r\nroot.x.b=3", withRoot);
 }
+
+TEST(JsonParse, BuildParsedAreaKeepsAValueThatFitsExactly)
+{
+    // "a=1" and its terminator need 4 bytes; the buffer holds 6 (the guard page
+    // follows it under memcheck)
+    const char * json = "{\"a\":1}";
+    CJsonParse p;
+    ASSERT_EQ(JPARSE_OK, p.parse(json, (int)strlen(json)));
+
+    std::vector<char> out(6, 'x');
+    p.buildParsedArea(out.data(), (int)out.size(), FALSE);
+    EXPECT_STREQ("a=1", out.data());
+}

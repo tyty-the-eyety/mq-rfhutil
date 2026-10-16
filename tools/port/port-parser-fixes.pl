@@ -113,8 +113,8 @@ edit('RFHUtil/JsonParse.cpp', 'stopReason',
 		. "\tif (jsonElems != NULL)\n\t{\n\t\trfhFree(jsonElems);\n\t\tjsonElems = NULL;\n\t}\n"
 		. "\tnumElements = 0;\n\tmaxElements = 0;\n\tdepth = 0;\n\tstopReason = JPARSE_OK;\n\n"
 		. "\t// point to the JSON data\n\tptr = jsonIn;\n\tidx = 0;\n"],
-	# buildParsedArea and what it calls: every write stays below endPtr, which is
-	# one byte short of the buffer so that the terminator always fits
+	# buildParsedArea and what it calls: the output pointer never passes endPtr - 1,
+	# so the terminator always fits and output that fits is unchanged
 	['index length variable', "\tint\t\t\tsibCount;\n\tint\t\t\tsib;\n\tchar *\t\tnamePtr;\n",
 		"\tint\t\t\tsibCount;\n\tint\t\t\tsib;\n\tint\t\t\twritten;\n\tchar *\t\tnamePtr;\n"],
 	['index of a repeated name', "\t\t\t// insert an index\n\t\t\tsprintf(ptr, \"[%d]\", sibCount + 1);\n\n"
@@ -129,13 +129,12 @@ edit('RFHUtil/JsonParse.cpp', 'stopReason',
 		"\t\t\t\t// insert an index of 1, if it fits\n\t\t\t\tif (endPtr - ptr > 3)\n\t\t\t\t{\n"
 		. "\t\t\t\t\tstrcpy(ptr, \"[1]\");\n\t\t\t\t\tptr += 3;\n\t\t\t\t}\n"],
 	['equal sign', "\t\t// insert an equal sign\n\t\tptr[0] = '=';\n\t\tptr++;\n",
-		"\t\t// insert an equal sign, if there is room\n\t\tif (ptr < endPtr)\n\t\t{\n\t\t\tptr[0] = '=';\n\t\t\tptr++;\n\t\t}\n"],
+		"\t\t// insert an equal sign, leaving room for the terminator\n\t\tif (ptr + 1 < endPtr)\n\t\t{\n\t\t\tptr[0] = '=';\n\t\t\tptr++;\n\t\t}\n"],
+	['period', "\t\t\t// insert a period\n\t\t\tptr[0] = '.';\n\t\t\tptr++;\n",
+		"\t\t\t// insert a period, leaving room for the terminator\n\t\t\tif (ptr + 1 < endPtr)\n\t\t\t{\n\t\t\t\tptr[0] = '.';\n\t\t\t\tptr++;\n\t\t\t}\n"],
 	['no buffer', "\t// initialize the output data to a null string\n\toutput[0] = 0;\n",
 		"\t// there must be room for the terminator\n\tif (maxLen < 1)\n\t{\n\t\treturn;\n\t}\n\n"
 		. "\t// initialize the output data to a null string\n\toutput[0] = 0;\n"],
-	['keep the terminator inside', "\tptr = processElement(0, output, output + maxLen, includeRoot);\n",
-		"\t// the output stops one byte short of the buffer, which is kept for the terminator\n"
-		. "\tptr = processElement(0, output, output + maxLen - 1, includeRoot);\n"],
 	['grow the tree', "\t// check for a name\n\tif (nameLen > 0)\n\t{\n\t\tnameOfs = names.insertName(name, nameLen);\n\t}\n",
 		"\t// parse() sizes the tree from a count of braces, colons and commas, which\n"
 		. "\t// malformed data can exceed; grow it rather than write past the end\n"

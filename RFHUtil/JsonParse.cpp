@@ -673,9 +673,12 @@ char * CJsonParse::appendName(int elem, char *ptr, char *endPtr, BOOL includeRoo
 	{
 		if ((elem != 0) && ((jsonElems[elem].parent > 0) || includeRoot))
 		{
-			// insert a period
-			ptr[0] = '.';
-			ptr++;
+			// insert a period, leaving room for the terminator
+			if (ptr + 1 < endPtr)
+			{
+				ptr[0] = '.';
+				ptr++;
+			}
 		}
 
 		// get a pointer to the name
@@ -918,8 +921,7 @@ void CJsonParse::buildParsedArea(char *output, int maxLen, BOOL includeRoot)
 	}
 
 	// start the process
-	// the output stops one byte short of the buffer, which is kept for the terminator
-	ptr = processElement(0, output, output + maxLen - 1, includeRoot);
+	ptr = processElement(0, output, output + maxLen, includeRoot);
 
 	// terminate the string
 	ptr[0] = 0;
@@ -992,8 +994,8 @@ char * CJsonParse::processElement(int elem, char *ptr, char *endPtr, BOOL includ
 		// need to output this element
 		ptr = addName(elem, ptr, endPtr, includeRoot);
 
-		// insert an equal sign, if there is room
-		if (ptr < endPtr)
+		// insert an equal sign, leaving room for the terminator
+		if (ptr + 1 < endPtr)
 		{
 			ptr[0] = '=';
 			ptr++;
