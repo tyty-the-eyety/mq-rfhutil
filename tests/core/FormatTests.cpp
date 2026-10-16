@@ -293,3 +293,102 @@ TEST(Format_Defaults, AfterAReadTheyAreTheReadResults)
     EXPECT_EQ(NUMERIC_HOST, o.numericFormat);
     EXPECT_EQ(NUMERIC_PC, o.pdNumericFormat);
 }
+
+// --- XML view -----------------------------------------------------------------
+
+TEST(Format_Xml, ElementsAreIndentedOneSpaceALevel)
+{
+    EXPECT_EQ("<a>\r\n"
+              " <b x=\"1\">text</b>\r\n"
+              " <c/>\r\n"
+              "</a>",
+              render(message("<a><b x=\"1\">text</b><c/></a>"), View::Xml, options()));
+}
+
+TEST(Format_Xml, EbcdicIsTranslated)
+{
+    EXPECT_EQ("<a>\r\n"
+              " <b>cafe</b>\r\n"
+              "</a>",
+              render(message(ebcdic("<a><b>cafe</b></a>"), 500, 785), View::Xml, options(500, CHAR_EBCDIC)));
+}
+
+TEST(Format_Xml, DataThatIsNotXmlGetsTheWindowsMessage)
+{
+    EXPECT_EQ("*****RFHUtil format problem - Data does not appear to be XML\r\n"
+              "*****No beginning bracket found\r\n",
+              render(message("plain text"), View::Xml, options()));
+}
+
+// --- parsed view --------------------------------------------------------------
+
+TEST(Format_Parsed, ElementsAreDottedPathsWithValues)
+{
+    EXPECT_EQ("a\r\n"
+              "a.b='text'\r\n"
+              "a.(XML.attr)x='1'\r\n"
+              "a.c=''",
+              render(message("<a><b x=\"1\">text</b><c/></a>"), View::Parsed, options()));
+}
+
+TEST(Format_Parsed, AnUnterminatedAttributeQuoteEndsAtTheEndOfTheTag)
+{
+    // xmlsubs.cpp's extractAttribute ran past the end of the text before Plan 2B
+    std::string out = render(message("<a x=\"open>t</a>"), View::Parsed, options());
+    EXPECT_NE(std::string::npos, out.find("a.(XML.attr)x='open"));
+}
+
+// --- JSON view ----------------------------------------------------------------
+
+TEST(Format_Json, MembersBecomeDottedNameValueLines)
+{
+    EXPECT_EQ("a=1\r\n"
+              "b.c=\"x\"",
+              render(message("{\"a\":1,\"b\":{\"c\":\"x\"}}"), View::Json, options()));
+}
+
+TEST(Format_Json, ArraysAreShownAsIbmsParserLeavesThem)
+{
+    // CJsonParse keeps only the last array element and the text up to the next
+    // name; this is IBM's behaviour (reported upstream), pinned here
+    EXPECT_EQ("a=1\r\n"
+              "b=\"x\"\r\n"
+              ",\"c\".d=null",
+              render(message("{\"a\":1,\"b\":[true,\"x\"],\"c\":{\"d\":null}}"), View::Json, options()));
+}
+
+TEST(Format_Json, DataThatIsNotJsonIsAWarningAndNoText)
+{
+    std::string out;
+    Result r = format::render(message("not json"), View::Json, options(), out);
+    EXPECT_TRUE(r.ok());
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_EQ("Error parsing user data", r.warnings[0]);
+    EXPECT_EQ("", out);
+}
+
+TEST(Format_Json, MalformedJsonIsAWarningNotAHang)
+{
+    std::string out;
+    Result r = format::render(message("{]"), View::Json, options(), out);
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_EQ("Error parsing user data", r.warnings[0]);
+}
+
+// --- fixed (FIX protocol) view ------------------------------------------------
+
+TEST(Format_Fixed, EachSohEndsALine)
+{
+    EXPECT_EQ("8=FIX.4.2\r\n"
+              "35=D\r\n"
+              "10=123\r\n",
+              render(message("8=FIX.4.2\x01" "35=D\x01" "10=123\x01"), View::Fixed, options()));
+}
+
+TEST(Format_Fixed, EbcdicAccentedLettersAreShown)
+{
+    // 0x51 is e-acute in code page 500; DataArea indexed its display table with a
+    // signed char, which for this byte reads before the table
+    std::string body = ebcdic("58=caf") + "\x51" + "\x01";
+    EXPECT_EQ("58=caf\xe9\r\n", render(message(body, 500, 785), View::Fixed, options(500, CHAR_EBCDIC)));
+}
