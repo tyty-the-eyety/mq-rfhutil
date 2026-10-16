@@ -57,59 +57,7 @@ Jim MacNair - Initial Contribution
 // P2.1: Timer IDs
 #define IDT_HEALTH_CHECK	1001
 
-// Display format types
-#define DATA_CHARACTER	0
-#define	DATA_HEX		1
-#define	DATA_BOTH		2
-#define	DATA_XML		3
-#define	DATA_PARSED		4
-#define	DATA_COBOL		5
-#define	DATA_JSON		6
-#define DATA_FIX		7
-
-// Character display types
-#define CHAR_ASCII		0
-#define CHAR_EBCDIC		1
-#define CHAR_CHINESE	2
-#define CHAR_KOREAN		3
-#define CHAR_TRAD_CHIN	4
-#define CHAR_JAPANESE	5
-#define CHAR_THAI		6
-#define CHAR_RUSSIAN	7
-#define CHAR_UNICODE	8
-
-#define IGNORE_CRLF		0
-#define HONOR_CRLF		1
-
-#define NUMERIC_PC		0
-#define NUMERIC_HOST	1
-
-#define FLOAT_PC		0
-#define FLOAT_UNIX		1
-#define FLOAT_390		2
-#define FLOAT_TNS		3
-
-#define BIND_AS_Q		0
-#define BIND_ON_OPEN	1
-#define BIND_NOT_FIXED	2
-#define BIND_GROUP		3
-
-#define MQPERSIST_NO	0
-#define MQPERSIST_YES	1
-#define MQPERSIST_AS_Q	2
-
-#define REPORT_NONE		0
-#define REPORT_YES		1
-#define REPORT_DATA		2
-#define REPORT_FULL		3
-
-#define GROUP_NO		0
-#define GROUP_YES		1
-#define GROUP_LAST		2
-
-#define SEGMENT_NO		0
-#define SEGMENT_YES		1
-#define SEGMENT_LAST	2
+#include "rfhconst.h"
 
 #define PS_PERSIST_NONE	0
 #define PS_ASPUB		0
@@ -136,16 +84,6 @@ Jim MacNair - Initial Contribution
 #define JMS_OBJECT		3
 #define JMS_MAP			4
 #define JMS_NONE		5
-
-// code page defaults
-#define RFH_NAMEVALUE_CCSID_DEFAULT 1208
-#define DEF_EBCDIC_CCSID			500
-#define DEF_ASCII_CCSID				437
-
-// encoding types
-#define DEF_PC_ENCODING				546
-#define DEF_HOST_ENCODING			785
-#define DEF_UNIX_ENCODING			273
 
 #define SAVE_DELIM_CHAR	0
 #define SAVE_DELIM_HEX	1

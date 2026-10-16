@@ -17,10 +17,10 @@ Jim MacNair - Initial Contribution
 // mqsubs.h: mq related subroutines header file
 //
 //////////////////////////////////////////////////////////////////////
+#include "rfh_platform.h"
 #include "cmqc.h"
 
 int getCcsidType(const int ccsid);
-void findMQInstallDirectory(char *dirName, int dirNameLen);
 const char * getApplTypeDisplay(int putType);
 int getEncodingValue(int encodeType, int pdEncodeType, int floatEncodeType);
 int getIntEncode(int encoding);

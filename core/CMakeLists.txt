@@ -20,6 +20,7 @@ set(RFHUTIL_SHARED_SOURCES
     ${PROJECT_SOURCE_DIR}/RFHUtil/XMLParse.cpp
     ${PROJECT_SOURCE_DIR}/RFHUtil/Names.cpp
     ${PROJECT_SOURCE_DIR}/RFHUtil/mqerror.cpp
+    ${PROJECT_SOURCE_DIR}/RFHUtil/mqsubs.cpp
 )
 
 add_library(rfhcore STATIC

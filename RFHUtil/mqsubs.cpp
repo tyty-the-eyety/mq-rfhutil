@@ -21,9 +21,9 @@ Jim MacNair - Initial Contribution
 #include "stdafx.h"
 #include "comsubs.h"
 #include "rfhutil.h"
+#include "rfhconst.h"
 #include "cmqc.h"
 
-#define MQINSKEY "SOFTWARE\\IBM\\MQSeries\\CurrentVersion\\Configuration\\AllQueueManagers"
 
 ///////////////////////////////////////////////////////////////////////
 //
@@ -114,53 +114,6 @@ int getCcsidType(const int ccsid)
 	}
 
 	return result;
-}
-
-/**************************************************************/
-/*                                                            */
-/* Routine to look up the default directory for the client    */
-/* channel table, which is the MQ install directory.          */
-/*                                                            */
-/**************************************************************/
-
-void findMQInstallDirectory(char *dirName, int dirNameLen)
-
-{
-	int			ret;
-	int			ret2;
-	int			length=0;
-	HKEY		regkey;
-	DWORD		valueType;
-	DWORD		subKeyNameSize;
-
-	dirName[0] = 0;
-	length = dirNameLen;
-
-	/* open the registry key that we will enumerate */
-	ret = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
-					   MQINSKEY,
-					   0,
-					   KEY_QUERY_VALUE,
-					   &regkey);
-
-	if (ERROR_SUCCESS == ret)
-	{
-		subKeyNameSize;
-		ret = RegQueryValueEx(regkey,
-							  "DefaultPrefix",
-							  0,
-							  &valueType,
-							  (unsigned char *)dirName,
-							  (unsigned long *)&length);
-
-		/* close the key */
-		ret2 = RegCloseKey(regkey);
-	}
-	else
-	{
-		printf("Could not locate default MQ install directory\n");
-		fflush(stdout);
-	}
 }
 
 const char * getApplTypeDisplay(int putType)
