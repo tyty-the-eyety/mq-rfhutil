@@ -40,17 +40,24 @@ int rfh_ucs2_to_c_locale(const RFH_UCS2 * ucs, char * mbs, int mbsBytes);
 int rfh_c_locale_to_ucs2(const char * mbs, RFH_UCS2 * ucs, int ucsChars);
 
 #ifndef _WIN32
-// Win32 flag values. Linux accepts both and ignores them: iconv produces
-// precomposed characters.
+// Win32 flag values. WC_DISCARDNS and WC_DEFAULTCHAR: Windows honours these only
+// with WC_COMPOSITECHECK, which the shared sources never pass; Linux ignores them.
+// MB_PRECOMPOSED is the only nonzero flag rfh_MultiByteToWideChar accepts on Linux
+// (iconv produces precomposed characters).
 #define WC_DISCARDNS	0x0010
 #define WC_DEFAULTCHAR	0x0040
+#define MB_PRECOMPOSED	0x0001
 #endif
 
 // WideCharToMultiByte for UCS-2 in host byte order. Converts inChars code units
 // (inChars >= 0) to codepage and returns the bytes written, or 0 when the code page
 // is not available or the output does not fit in outBytes (Windows returns 0 with
 // ERROR_INSUFFICIENT_BUFFER). There is no size-query mode: outBytes must be
-// positive. On Linux a character the code page cannot represent becomes
+// positive. A surrogate pair converts as one character. Code page 932 means
+// Windows-31J, as on Windows (likewise 936, 949 and 950). *usedDefaultChar is set to
+// FALSE and then to TRUE if a default character is used. On Linux 65001 and 1208
+// accept a default character, whereas Windows rejects lpDefaultChar for CP_UTF8.
+// On Linux a character the code page cannot represent becomes
 // defaultChar[0] ('?' when defaultChar is NULL) and sets *usedDefaultChar when that
 // is non-NULL; Windows may choose a "best fit" character instead.
 int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * in, int inChars,
@@ -58,8 +65,10 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 
 // MultiByteToWideChar to UCS-2 in host byte order. Converts inBytes bytes
 // (inBytes >= 0) and returns the code units written, or 0 when the code page is not
-// available or the output does not fit in outChars. flags must be 0. On Linux an
-// incomplete or invalid sequence ends the conversion, and the code units converted
+// available or the output does not fit in outChars. flags must be 0 (or, on Linux,
+// MB_PRECOMPOSED; other flags give 0). On Linux bytes 0x81, 0x8D, 0x8F, 0x90 and
+// 0x9D of code page 1252 map to the C1 controls of the same value, as on Windows (and
+// the reverse in rfh_WideCharToMultiByte). An incomplete or invalid sequence ends the conversion, and the code units converted
 // before it are returned.
 int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
 	RFH_UCS2 * out, int outChars);

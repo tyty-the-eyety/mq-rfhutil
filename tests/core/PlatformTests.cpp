@@ -212,11 +212,28 @@ TEST(Platform_Codepage, CLocaleToUcs2ExactFitHasNoTerminator)
 }
 
 #ifndef _WIN32
+// Saves RFHUTIL_ACP and restores it (or removes it) when the test ends.
+struct AcpEnvGuard
+{
+    AcpEnvGuard()
+    {
+        const char * old = getenv("RFHUTIL_ACP");
+        had = (old != nullptr);
+        if (had) saved = old;
+    }
+    ~AcpEnvGuard()
+    {
+        if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
+    }
+    std::string saved;
+    bool had;
+};
+#endif
+
+#ifndef _WIN32
 TEST(Platform_Codepage, GetAcpHonoursEnvironment)
 {
-    const char * old = getenv("RFHUTIL_ACP");
-    std::string saved = old ? old : "";
-    bool had = (old != nullptr);
+    AcpEnvGuard guard;
 
     setenv("RFHUTIL_ACP", "437", 1);
     EXPECT_EQ(437, rfh_get_acp());
@@ -224,8 +241,6 @@ TEST(Platform_Codepage, GetAcpHonoursEnvironment)
     EXPECT_EQ(1252, rfh_get_acp());
     setenv("RFHUTIL_ACP", "abc", 1);
     EXPECT_EQ(1252, rfh_get_acp());
-
-    if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
 }
 #endif
 
@@ -385,17 +400,13 @@ TEST(Platform_Codepage, MbclenIsOneInASingleByteAnsiCodePage)
 #ifndef _WIN32
 TEST(Platform_Codepage, MbclenRecognisesShiftJisLeadBytes)
 {
-    const char * old = getenv("RFHUTIL_ACP");
-    std::string saved = old ? old : "";
-    bool had = (old != nullptr);
+    AcpEnvGuard guard;
 
     setenv("RFHUTIL_ACP", "932", 1);
     const unsigned char lead[] = { 0x81, 0x40, 0 };
     const unsigned char single[] = { 'a', 0 };
     EXPECT_EQ(2, rfh_mbclen(lead));
     EXPECT_EQ(1, rfh_mbclen(single));
-
-    if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
 }
 #endif
 
@@ -407,3 +418,101 @@ TEST(Platform_Snprintf, TruncateModeTerminatesAndReportsTruncation)
     EXPECT_EQ(3, _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%d", 123));
     EXPECT_STREQ("123", buf);
 }
+
+TEST(Platform_Codepage, ConversionFlushesTheConverter)
+{
+    // glibc holds the base character back in CP1258 until the converter is flushed
+    REQUIRE_CODEPAGE(1258);
+    RFH_UCS2 out[2] = { 0 };
+    EXPECT_EQ(1, rfh_MultiByteToWideChar(1258, 0, "a", 1, out, 2));
+    EXPECT_EQ((RFH_UCS2)'a', out[0]);
+
+    const RFH_UCS2 in[] = { 'a' };
+    char narrow[2] = { 0 };
+    EXPECT_EQ(1, rfh_WideCharToMultiByte(1258, 0, in, 1, narrow, sizeof(narrow), ".", NULL));
+    EXPECT_EQ('a', narrow[0]);
+
+    char one[1] = { 0 };
+    EXPECT_EQ(1, rfh_convert_char(1258, 1252, "a", one, 1));
+    EXPECT_EQ('a', one[0]);
+}
+
+TEST(Platform_Codepage, WideToAnsiClearsUsedDefaultWhenNothingIsReplaced)
+{
+    const RFH_UCS2 in[] = { 'a' };
+    char out[4] = { 0 };
+    BOOL usedDefault = TRUE;
+    EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 1, out, sizeof(out), ".", &usedDefault));
+    EXPECT_FALSE(usedDefault);
+}
+
+TEST(Platform_Codepage, SurrogatePairConvertsToUtf8)
+{
+    const RFH_UCS2 in[] = { 0xD83D, 0xDE00 };
+    char out[8] = { 0 };
+    EXPECT_EQ(4, rfh_WideCharToMultiByte(65001, 0, in, 2, out, sizeof(out), NULL, NULL));
+    EXPECT_EQ(0, memcmp(out, "\xf0\x9f\x98\x80", 4));
+}
+
+TEST(Platform_Codepage, SurrogatePairNotInTheCodePageIsOneDefaultCharacter)
+{
+    const RFH_UCS2 in[] = { 0xD83D, 0xDE00 };
+    char out[8] = { 0 };
+    BOOL usedDefault = FALSE;
+    EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 2, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ('.', out[0]);
+    EXPECT_TRUE(usedDefault);
+}
+
+#ifndef _WIN32
+TEST(Platform_Codepage, Code932IsWindows31J)
+{
+    REQUIRE_CODEPAGE(932);
+    const RFH_UCS2 roman[] = { 0x2160 };    // roman numeral one: NEC row 13, in Windows-31J only
+    char out[4] = { 0 };
+    EXPECT_EQ(2, rfh_WideCharToMultiByte(932, 0, roman, 1, out, sizeof(out), ".", NULL));
+    EXPECT_EQ(0, memcmp(out, "\x87\x54", 2));
+
+    RFH_UCS2 wide[2] = { 0 };
+    EXPECT_EQ(1, rfh_MultiByteToWideChar(932, 0, "\x87\x40", 2, wide, 2));
+    EXPECT_EQ(0x2460, wide[0]);     // circled digit one
+}
+
+TEST(Platform_Codepage, Code1252MapsItsFiveUndefinedBytesToTheSameCodePoints)
+{
+    RFH_UCS2 wide[4] = { 0 };
+    EXPECT_EQ(3, rfh_MultiByteToWideChar(1252, 0, "a\x81" "b", 3, wide, 4));
+    EXPECT_EQ((RFH_UCS2)'a', wide[0]);
+    EXPECT_EQ(0x0081, wide[1]);
+    EXPECT_EQ((RFH_UCS2)'b', wide[2]);
+
+    const unsigned char undefined[] = { 0x81, 0x8D, 0x8F, 0x90, 0x9D };
+    for (unsigned char byte : undefined)
+    {
+        char in[1] = { (char)byte };
+        RFH_UCS2 unit[1] = { 0 };
+        EXPECT_EQ(1, rfh_MultiByteToWideChar(1252, 0, in, 1, unit, 1));
+        EXPECT_EQ((RFH_UCS2)byte, unit[0]);
+
+        char back[2] = { 0 };
+        BOOL usedDefault = FALSE;
+        EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, unit, 1, back, sizeof(back), ".", &usedDefault));
+        EXPECT_EQ((char)byte, back[0]);
+        EXPECT_FALSE(usedDefault);
+    }
+}
+
+TEST(Platform_Codepage, MultiByteToWideCharAcceptsPrecomposedAndRejectsOtherFlags)
+{
+    RFH_UCS2 out[2] = { 0 };
+    EXPECT_EQ(1, rfh_MultiByteToWideChar(1252, MB_PRECOMPOSED, "a", 1, out, 2));
+    EXPECT_EQ(0, rfh_MultiByteToWideChar(1252, 0x8, "a", 1, out, 2));
+}
+
+TEST(Platform_Snprintf, FailuresLeaveAnEmptyString)
+{
+    char buf[6] = { 'x', 'x', 'x', 'x', 'x', 0 };
+    EXPECT_EQ(-1, _snprintf_s(buf, sizeof(buf), 3, "%s", "abc"));
+    EXPECT_EQ(0, buf[0]);
+}
+#endif

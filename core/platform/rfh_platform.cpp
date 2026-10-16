@@ -124,8 +124,13 @@ const char * rfh_dump_path(const char * baseName)
 #ifndef _WIN32
 int _snprintf_s(char * buffer, size_t sizeOfBuffer, size_t count, const char * format, ...)
 {
-	if ((buffer == NULL) || (sizeOfBuffer == 0) || (count != _TRUNCATE))
+	if ((buffer == NULL) || (sizeOfBuffer == 0))
 	{
+		return -1;
+	}
+	if (count != _TRUNCATE)
+	{
+		buffer[0] = 0;
 		return -1;
 	}
 
@@ -134,7 +139,12 @@ int _snprintf_s(char * buffer, size_t sizeOfBuffer, size_t count, const char * f
 	int needed = vsnprintf(buffer, sizeOfBuffer, format, args);
 	va_end(args);
 
-	if ((needed < 0) || ((size_t)needed >= sizeOfBuffer))
+	if (needed < 0)
+	{
+		buffer[0] = 0;
+		return -1;
+	}
+	if ((size_t)needed >= sizeOfBuffer)
 	{
 		return -1;
 	}

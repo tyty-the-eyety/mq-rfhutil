@@ -114,6 +114,20 @@ namespace
 	// converterFor key for UCS-2 in host byte order; CCSIDs are positive
 	const int kHostUcs2 = -1;
 
+	// Windows maps these five bytes of 1252 to the C1 control of the same value; glibc
+	// rejects them.
+	bool isUndefined1252(unsigned int value)
+	{
+		return (value == 0x81) || (value == 0x8D) || (value == 0x8F) || (value == 0x90) || (value == 0x9D);
+	}
+
+	// Writes out the converter's pending shift state or held-back character after the
+	// last input. False if it does not fit.
+	bool flushConverter(iconv_t cd, char ** outPtr, size_t * outLeft)
+	{
+		return (iconv(cd, NULL, NULL, outPtr, outLeft) != (size_t)-1) || (errno != E2BIG);
+	}
+
 	// iconv names to try for an IBM CCSID, most specific first.
 	std::vector<std::string> iconvNames(int ccsid)
 	{
@@ -128,6 +142,12 @@ namespace
 			{ 923, "ISO-8859-15" },
 			{ 1089, "ISO-8859-6" },
 			{ 1208, "UTF-8" },
+			// Windows ANSI double-byte code pages, not glibc's IBM variants (IBM943 for
+			// 932 differs from Windows-31J, for example in the NEC row 13 characters)
+			{ 932, "CP932" },
+			{ 936, "CP936" },
+			{ 949, "CP949" },
+			{ 950, "CP950" },
 			// Windows code page numbers that differ from the IBM CCSID
 			{ 20127, "ASCII" },
 			{ 65001, "UTF-8" },
@@ -295,6 +315,11 @@ int rfh_convert_char(int fromCcsid, int toCcsid, const char * input, char * outp
 		return 0;
 	}
 
+	if (!flushConverter(cd, &outPtr, &outLeft))
+	{
+		return 0;
+	}
+
 	return (int)((size_t)outputMax - outLeft);
 }
 
@@ -355,15 +380,38 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 		return 0;
 	}
 	iconv(cd, NULL, NULL, NULL, NULL);
+	if (usedDefaultChar != NULL)
+	{
+		*usedDefaultChar = FALSE;
+	}
 
-	// one code unit at a time, so that each unrepresentable one becomes the default
+	// one character at a time, so that each unrepresentable one becomes the default
 	char * outPtr = out;
 	size_t outLeft = (size_t)outBytes;
 	for (int i = 0; i < inChars; i++)
 	{
-		RFH_UCS2 unit = in[i];
-		char * inPtr = (char *)&unit;
-		size_t inLeft = sizeof(unit);
+		RFH_UCS2 units[2] = { in[i], 0 };
+		size_t inLeft = sizeof(RFH_UCS2);
+
+		if ((codepage == 1252) && isUndefined1252(units[0]))
+		{
+			if (outLeft == 0)
+			{
+				return 0;
+			}
+			*outPtr++ = (char)units[0];
+			outLeft--;
+			continue;
+		}
+
+		if ((units[0] >= 0xD800) && (units[0] <= 0xDBFF) && (i + 1 < inChars) && (in[i + 1] >= 0xDC00) && (in[i + 1] <= 0xDFFF))
+		{
+			units[1] = in[i + 1];
+			inLeft = 2 * sizeof(RFH_UCS2);
+			i++;
+		}
+
+		char * inPtr = (char *)units;
 		if (iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1)
 		{
 			if (errno == E2BIG)
@@ -384,13 +432,18 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 			}
 		}
 	}
+
+	if (!flushConverter(cd, &outPtr, &outLeft))
+	{
+		return 0;
+	}
 	return (int)((size_t)outBytes - outLeft);
 }
 
 int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
 	RFH_UCS2 * out, int outChars)
 {
-	if ((codepage <= 0) || (flags != 0) || (inBytes < 0) || (outChars <= 0))
+	if ((codepage <= 0) || ((flags != 0) && (flags != MB_PRECOMPOSED)) || (inBytes < 0) || (outChars <= 0))
 	{
 		return 0;
 	}
@@ -405,7 +458,44 @@ int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, i
 	size_t inLeft = (size_t)inBytes;
 	char * outPtr = (char *)out;
 	size_t outLeft = (size_t)outChars * sizeof(RFH_UCS2);
-	if ((iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1) && (errno == E2BIG))
+
+	if (codepage == 1252)
+	{
+		// single-byte: convert a byte at a time to place the five undefined bytes
+		while (inLeft > 0)
+		{
+			if (isUndefined1252((unsigned char)*inPtr))
+			{
+				if (outLeft < sizeof(RFH_UCS2))
+				{
+					return 0;
+				}
+				*(RFH_UCS2 *)outPtr = (RFH_UCS2)(unsigned char)*inPtr;
+				outPtr += sizeof(RFH_UCS2);
+				outLeft -= sizeof(RFH_UCS2);
+				inPtr++;
+				inLeft--;
+				continue;
+			}
+
+			size_t one = 1;
+			if (iconv(cd, &inPtr, &one, &outPtr, &outLeft) == (size_t)-1)
+			{
+				if (errno == E2BIG)
+				{
+					return 0;
+				}
+				break;
+			}
+			inLeft--;
+		}
+	}
+	else if ((iconv(cd, &inPtr, &inLeft, &outPtr, &outLeft) == (size_t)-1) && (errno == E2BIG))
+	{
+		return 0;
+	}
+
+	if (!flushConverter(cd, &outPtr, &outLeft))
 	{
 		return 0;
 	}
