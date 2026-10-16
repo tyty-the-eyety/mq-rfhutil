@@ -164,13 +164,32 @@ TEST(MqSession, UnknownQueueManagerFails)
     EXPECT_FALSE(session.isConnected());
 }
 
+namespace
+{
+    // An RFH2 with name/value data, so StrucLength is larger than the fixed 36 bytes.
+    mq_layout::Bytes rfh2WithFolder(const std::string & format = "MQSTR")
+    {
+        const std::string folder = "<mcd><Msd>jms_text</Msd></mcd>  ";    // 32 bytes
+        return mq_layout::rfh2(mq_layout::Order::Little, 546, 1208, format, std::string("\x20\0\0\0", 4) + folder);    // folder length, little endian like the header
+    }
+
+    Message rfh2Message(const mq_layout::Bytes & rfh, const char * format, const std::string & text)
+    {
+        Message m = textMessage(text);
+        memcpy(m.mqmd.Format, format, MQ_FORMAT_LENGTH);
+        m.headers = rfh.data;
+        return m;
+    }
+}
+
 TEST_F(MqBindingsTest, Rfh2HeaderIsSeparatedFromTheBody)
 {
-    auto rfh = mq_layout::rfh2(mq_layout::Order::Little, 546, 1208, "MQSTR");
-    Message out = textMessage("after the header");
-    memcpy(out.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
-    out.headers = rfh.data;
-    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+    auto rfh = rfh2WithFolder();
+    ASSERT_GT(rfh.data.size(), 36u);
+    Message out = rfh2Message(rfh, MQFMT_RF_HEADER_2, "after the header");
+    Result p = session.put(kQueue, out, PutOptions());
+    ASSERT_TRUE(p.ok()) << p.text;
+    EXPECT_TRUE(p.warnings.empty());
 
     Message in;
     Result r = session.get(kQueue, in, GetOptions());
@@ -178,6 +197,113 @@ TEST_F(MqBindingsTest, Rfh2HeaderIsSeparatedFromTheBody)
     EXPECT_EQ(rfh.data, in.headers);
     EXPECT_EQ("after the header", bodyText(in));
     EXPECT_EQ(0, memcmp(in.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH));
+}
+
+TEST_F(MqBindingsTest, PutWarnsWhenFormatDoesNotNameTheHeaders)
+{
+    auto rfh = rfh2WithFolder();
+    Message out = rfh2Message(rfh, MQFMT_STRING, "body");
+    Result p = session.put(kQueue, out, PutOptions());
+    ASSERT_TRUE(p.ok()) << p.text;
+    ASSERT_EQ(1u, p.warnings.size());
+    EXPECT_EQ("headers do not match the MQMD format chain; a get returns them as body", p.warnings[0]);
+
+    Message in;
+    ASSERT_TRUE(session.get(kQueue, in, GetOptions()).ok());
+    EXPECT_TRUE(in.headers.empty());
+    std::vector<unsigned char> expected = rfh.data;
+    expected.insert(expected.end(), out.body.begin(), out.body.end());
+    EXPECT_EQ(expected, in.body);
+}
+
+TEST_F(MqBindingsTest, BrowseKeepsHeadersPerMessage)
+{
+    auto rfh = rfh2WithFolder();
+    Message withHeader = rfh2Message(rfh, MQFMT_RF_HEADER_2, "first");
+    Message plain = textMessage("second");
+    ASSERT_TRUE(session.put(kQueue, withHeader, PutOptions()).ok());
+    ASSERT_TRUE(session.put(kQueue, plain, PutOptions()).ok());
+
+    GetOptions browse;
+    Message m;
+    browse.mode = GetMode::BrowseFirst;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_EQ(rfh.data, m.headers);
+    EXPECT_EQ("first", bodyText(m));
+
+    browse.mode = GetMode::BrowseNext;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_TRUE(m.headers.empty()) << "headers of the previous message must not linger";
+    EXPECT_EQ("second", bodyText(m));
+
+    browse.mode = GetMode::BrowsePrevious;
+    ASSERT_TRUE(session.get(kQueue, m, browse).ok());
+    EXPECT_EQ(rfh.data, m.headers);
+    EXPECT_EQ("first", bodyText(m));
+}
+
+TEST_F(MqBindingsTest, DeadLetterThenRfh2ChainIsSeparated)
+{
+    auto dlh = mq_layout::dlh(mq_layout::Order::Little, 546, 1208, "MQHRF2");
+    auto rfh = rfh2WithFolder();
+    Message out = textMessage("dead body");
+    memcpy(out.mqmd.Format, MQFMT_DEAD_LETTER_HEADER, MQ_FORMAT_LENGTH);
+    out.headers = dlh.data;
+    out.headers.insert(out.headers.end(), rfh.data.begin(), rfh.data.end());
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    GetOptions get;
+    get.matchMsgId = true;
+    memcpy(get.msgId, out.mqmd.MsgId, sizeof(get.msgId));
+    Message in;
+    Result r = session.get(kQueue, in, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(172u + rfh.data.size(), in.headers.size());
+    EXPECT_EQ(out.headers, in.headers);
+    EXPECT_EQ("dead body", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, SmallBufferStillSeparatesHeaders)
+{
+    auto rfh = rfh2WithFolder();
+    Message out = rfh2Message(rfh, MQFMT_RF_HEADER_2, "after the header");
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    GetOptions get;
+    get.initialBufferSize = 16;
+    Message in;
+    Result r = session.get(kQueue, in, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(rfh.data, in.headers);
+    EXPECT_EQ("after the header", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, ConvertedHeadersAreSeparatedByTheirConvertedLength)
+{
+    auto rfh = rfh2WithFolder();
+    Message out = rfh2Message(rfh, MQFMT_RF_HEADER_2, "convert me");
+    out.mqmd.CodedCharSetId = 1208;
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    GetOptions get;
+    get.convert = true;
+    get.convertCcsid = 500;
+    get.convertEncoding = MQENC_S390;
+    Message in;
+    Result r = session.get(kQueue, in, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(500, in.mqmd.CodedCharSetId);
+
+    // Observed on IBM MQ 9.4: the converted RFH2 keeps its length (72 bytes here), is
+    // big endian with an EBCDIC StrucId, and the body follows as EBCDIC text.
+    ASSERT_EQ(rfh.data.size(), in.headers.size());
+    EXPECT_EQ(0xD9, in.headers[0]);
+    EXPECT_EQ(0xC6, in.headers[1]);
+    EXPECT_EQ(0xC8, in.headers[2]);
+    EXPECT_EQ(0x40, in.headers[3]);
+    EXPECT_EQ(rfh.data.size(), (size_t)(in.headers[8] << 24 | in.headers[9] << 16 | in.headers[10] << 8 | in.headers[11]));
+    ASSERT_EQ(10u, in.body.size());
+    EXPECT_EQ(0x83, in.body[0]);    // EBCDIC 'c'
 }
 
 TEST_F(MqBindingsTest, PutThenGetReturnsSameMessage)

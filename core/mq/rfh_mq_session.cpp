@@ -355,6 +355,7 @@ namespace rfh
 			return notConnected();
 		}
 
+		// guards the MQLONG cast; MQ reports MAXMSGL limits itself
 		if (message.headers.size() + message.body.size() > (size_t)std::numeric_limits<MQLONG>::max())
 		{
 			return Result::failure("Message is larger than MQ allows");
@@ -397,6 +398,14 @@ namespace rfh
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
+		// walk the headers the way a get will, to see whether the MQMD format names them
+		HeaderChain sent;
+		if (!message.headers.empty())
+		{
+			sent = walkHeaders(message.headers.data(), message.headers.size(), std::string(message.mqmd.Format, MQ_FORMAT_LENGTH),
+			                   message.mqmd.CodedCharSetId, getCcsidType(message.mqmd.CodedCharSetId), getIntEncode(message.mqmd.Encoding));
+		}
+
 		// on the wire the MQ headers simply precede the body
 		std::vector<unsigned char> * payload = &message.body;
 		std::vector<unsigned char> joined;
@@ -412,7 +421,12 @@ namespace rfh
 		        payload->empty() ? nullptr : payload->data(), &cc, &rc);
 		dropIfBroken(rc);
 
-		return Result::fromMq("MQPUT", cc, rc);
+		Result r = Result::fromMq("MQPUT", cc, rc);
+		if (r.ok() && !message.headers.empty() && (sent.bodyOffset != message.headers.size()))
+		{
+			r.warnings.push_back("headers do not match the MQMD format chain; a get returns them as body");
+		}
+		return r;
 	}
 
 	Result MqSession::getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs)
@@ -532,20 +546,23 @@ namespace rfh
 				continue;
 			}
 
+			std::vector<std::string> headerWarnings;
 			if (cc != MQCC_FAILED)
 			{
 				message.mqmd = md;
 				size_t received = std::min<size_t>((size_t)dataLength, buffer.size());
 
 				// split the MQ headers named by the MQMD format chain from the body
-				// header warnings are not reported on get yet
+				// the chain's warnings are returned with the result
 				HeaderChain chain = walkHeaders(buffer.data(), received, std::string(md.Format, MQ_FORMAT_LENGTH),
 				                                md.CodedCharSetId, getCcsidType(md.CodedCharSetId), getIntEncode(md.Encoding));
 				message.headers.assign(buffer.begin(), buffer.begin() + chain.bodyOffset);
 				message.body.assign(buffer.begin() + chain.bodyOffset, buffer.begin() + received);
+				headerWarnings = chain.warnings;
 			}
 
 			Result r = Result::fromMq("MQGET", cc, rc);
+			r.warnings.insert(r.warnings.end(), headerWarnings.begin(), headerWarnings.end());
 			if (retryByMsgId && (rc == MQRC_NO_MSG_AVAILABLE))
 			{
 				r.text += " - message was removed before it could be re-read";
