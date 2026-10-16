@@ -7,7 +7,9 @@
 #     consumes nothing (for example "{]", which loops forever).
 #     Out of memory while growing the tree stops the parse with JPARSE_MALLOC_FAIL,
 #     a second parse() starts from an empty tree, and the two array reads of a
-#     comma no longer go past the end of the data.
+#     comma no longer go past the end of the data. buildParsedArea (with
+#     processElement and appendName) keeps every write, and its terminator, inside
+#     the output buffer; output that fits is unchanged.
 #   RFHUtil/xmlsubs.cpp: an attribute value without its closing quote ends at the
 #     end of the text, attribute names and values are sized from the text, and
 #     processAttributes takes the size of its output (RFHUtil/xmlsubs.h and the four
@@ -111,6 +113,29 @@ edit('RFHUtil/JsonParse.cpp', 'stopReason',
 		. "\tif (jsonElems != NULL)\n\t{\n\t\trfhFree(jsonElems);\n\t\tjsonElems = NULL;\n\t}\n"
 		. "\tnumElements = 0;\n\tmaxElements = 0;\n\tdepth = 0;\n\tstopReason = JPARSE_OK;\n\n"
 		. "\t// point to the JSON data\n\tptr = jsonIn;\n\tidx = 0;\n"],
+	# buildParsedArea and what it calls: every write stays below endPtr, which is
+	# one byte short of the buffer so that the terminator always fits
+	['index length variable', "\tint\t\t\tsibCount;\n\tint\t\t\tsib;\n\tchar *\t\tnamePtr;\n",
+		"\tint\t\t\tsibCount;\n\tint\t\t\tsib;\n\tint\t\t\twritten;\n\tchar *\t\tnamePtr;\n"],
+	['index of a repeated name', "\t\t\t// insert an index\n\t\t\tsprintf(ptr, \"[%d]\", sibCount + 1);\n\n"
+		. "\t\t\t// skip the inserted characters\n\t\t\twhile (ptr[0] != ']')\n\t\t\t{\n"
+		. "\t\t\t\t// move on to the next character\n\t\t\t\tptr++;\n\t\t\t}\n\n"
+		. "\t\t\t// skip the ending bracket\n\t\t\tptr++;\n",
+		"\t\t\t// insert an index, but only if all of it fits below the end of the buffer\n"
+		. "\t\t\twritten = snprintf(ptr, endPtr - ptr, \"[%d]\", sibCount + 1);\n\n"
+		. "\t\t\t// skip the inserted characters\n"
+		. "\t\t\tif ((written > 0) && (written < endPtr - ptr))\n\t\t\t{\n\t\t\t\tptr += written;\n\t\t\t}\n"],
+	['index of 1', "\t\t\t\t// insert an index of 1\n\t\t\t\tstrcpy(ptr, \"[1]\");\n\t\t\t\tptr += 3;\n",
+		"\t\t\t\t// insert an index of 1, if it fits\n\t\t\t\tif (endPtr - ptr > 3)\n\t\t\t\t{\n"
+		. "\t\t\t\t\tstrcpy(ptr, \"[1]\");\n\t\t\t\t\tptr += 3;\n\t\t\t\t}\n"],
+	['equal sign', "\t\t// insert an equal sign\n\t\tptr[0] = '=';\n\t\tptr++;\n",
+		"\t\t// insert an equal sign, if there is room\n\t\tif (ptr < endPtr)\n\t\t{\n\t\t\tptr[0] = '=';\n\t\t\tptr++;\n\t\t}\n"],
+	['no buffer', "\t// initialize the output data to a null string\n\toutput[0] = 0;\n",
+		"\t// there must be room for the terminator\n\tif (maxLen < 1)\n\t{\n\t\treturn;\n\t}\n\n"
+		. "\t// initialize the output data to a null string\n\toutput[0] = 0;\n"],
+	['keep the terminator inside', "\tptr = processElement(0, output, output + maxLen, includeRoot);\n",
+		"\t// the output stops one byte short of the buffer, which is kept for the terminator\n"
+		. "\tptr = processElement(0, output, output + maxLen - 1, includeRoot);\n"],
 	['grow the tree', "\t// check for a name\n\tif (nameLen > 0)\n\t{\n\t\tnameOfs = names.insertName(name, nameLen);\n\t}\n",
 		"\t// parse() sizes the tree from a count of braces, colons and commas, which\n"
 		. "\t// malformed data can exceed; grow it rather than write past the end\n"

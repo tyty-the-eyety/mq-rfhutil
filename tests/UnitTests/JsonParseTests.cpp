@@ -389,3 +389,61 @@ TEST(JsonParse, EmbeddedNulAfterAValueIsMalformed)
     CJsonParse p;
     EXPECT_EQ(JPARSE_MALFORMED, p.parse(json.data(), (int)json.size()));
 }
+
+// ---------------------------------------------------------------------------
+// buildParsedArea stays within its buffer (Plan 2B: valid JSON overran it)
+// ---------------------------------------------------------------------------
+
+TEST(JsonParse, BuildParsedAreaStaysWithinTheBufferOnLargeDocuments)
+{
+    // 10 levels of 30-character keys around 1000 leaves, so the dotted paths
+    // (about 330 bytes each) fill the buffer that getJsonData sizes from the file
+    const std::string key(30, 'k');
+    std::string json = "{\"top\":";
+    for (int i = 0; i < 10; i++)
+    {
+        json += "{\"" + key + "\":";
+    }
+    json += "{";
+    for (int i = 0; i < 1000; i++)
+    {
+        json += (i ? ",\"a\":1" : "\"a\":1");
+    }
+    json += "}" + std::string(10, '}') + "}";
+
+    CJsonParse p;
+    ASSERT_EQ(JPARSE_OK, p.parse(json.c_str(), (int)json.size()));
+
+    // DataArea::getJsonData allocates fileSize*16 + 8192 and passes 192 less;
+    // the buffer is exactly maxLen (rounded to 16 so that the guard page follows
+    // the last byte), so any write past maxLen faults under memcheck
+    int fileSize = (int)json.size();
+    int maxLen = ((fileSize * 16 + 8000) + 15) / 16 * 16;
+    std::vector<char> out(maxLen, 'x');
+    p.buildParsedArea(out.data(), maxLen, FALSE);
+
+    EXPECT_LT(strlen(out.data()), (size_t)maxLen);
+
+    std::string expected = "top";
+    for (int i = 0; i < 10; i++)
+    {
+        expected += "." + key;
+    }
+    expected += ".a[1]=1\r\n";
+    EXPECT_EQ(expected, std::string(out.data(), expected.size()));
+}
+
+TEST(JsonParse, BuildParsedAreaOutputThatFitsIsUnchanged)
+{
+    const char * json = "{\"x\":{\"a\":\"1\",\"a\":\"2\",\"b\":3}}";
+    CJsonParse p;
+    ASSERT_EQ(JPARSE_OK, p.parse(json, (int)strlen(json)));
+
+    char out[256] = {};
+    p.buildParsedArea(out, sizeof(out), FALSE);
+    EXPECT_STREQ("x.a[1]=\"1\"\r\nx.a[2]=\"2\"\r\nx.b=3", out);
+
+    char withRoot[256] = {};
+    p.buildParsedArea(withRoot, sizeof(withRoot), TRUE);
+    EXPECT_STREQ("root.x.a[1]=\"1\"\r\nroot.x.a[2]=\"2\"\r\nroot.x.b=3", withRoot);
+}

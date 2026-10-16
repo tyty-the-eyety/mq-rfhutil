@@ -325,5 +325,7 @@ TEST(XmlsubsAttributes, ListLongerThanTheOutputIsCutOff)
     }
     std::vector<char> out(1024, 0);
     processAttributes(element, varName, &attrs[0], out.data(), out.size());
-    EXPECT_LT(strlen(out.data()), (size_t)1024);
+    // filled to the last byte before the terminator, starting with the first attribute
+    EXPECT_EQ((size_t)1023, strlen(out.data()));
+    EXPECT_EQ(0, strncmp("r.(XML.attr)a='1'\r\nr.(XML.attr)a='1'\r\n", out.data(), 38));
 }

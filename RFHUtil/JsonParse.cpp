@@ -666,6 +666,7 @@ char * CJsonParse::appendName(int elem, char *ptr, char *endPtr, BOOL includeRoo
 	int			len;
 	int			sibCount;
 	int			sib;
+	int			written;
 	char *		namePtr;
 
 	if (ptr < endPtr)
@@ -713,18 +714,14 @@ char * CJsonParse::appendName(int elem, char *ptr, char *endPtr, BOOL includeRoo
 		// were previous siblings found?
 		if (sibCount > 0)
 		{
-			// insert an index
-			sprintf(ptr, "[%d]", sibCount + 1);
+			// insert an index, but only if all of it fits below the end of the buffer
+			written = snprintf(ptr, endPtr - ptr, "[%d]", sibCount + 1);
 
 			// skip the inserted characters
-			while (ptr[0] != ']')
+			if ((written > 0) && (written < endPtr - ptr))
 			{
-				// move on to the next character
-				ptr++;
+				ptr += written;
 			}
-
-			// skip the ending bracket
-			ptr++;
 		}
 		else
 		{
@@ -751,9 +748,12 @@ char * CJsonParse::appendName(int elem, char *ptr, char *endPtr, BOOL includeRoo
 			// were any siblings with the same name found?
 			if (sibCount > 0)
 			{
-				// insert an index of 1
-				strcpy(ptr, "[1]");
-				ptr += 3;
+				// insert an index of 1, if it fits
+				if (endPtr - ptr > 3)
+				{
+					strcpy(ptr, "[1]");
+					ptr += 3;
+				}
 			}
 		}
 	}
@@ -901,6 +901,12 @@ void CJsonParse::buildParsedArea(char *output, int maxLen, BOOL includeRoot)
 		app->logTraceEntry(traceInfo);
 	}
 
+	// there must be room for the terminator
+	if (maxLen < 1)
+	{
+		return;
+	}
+
 	// initialize the output data to a null string
 	output[0] = 0;
 
@@ -912,7 +918,8 @@ void CJsonParse::buildParsedArea(char *output, int maxLen, BOOL includeRoot)
 	}
 
 	// start the process
-	ptr = processElement(0, output, output + maxLen, includeRoot);
+	// the output stops one byte short of the buffer, which is kept for the terminator
+	ptr = processElement(0, output, output + maxLen - 1, includeRoot);
 
 	// terminate the string
 	ptr[0] = 0;
@@ -985,9 +992,12 @@ char * CJsonParse::processElement(int elem, char *ptr, char *endPtr, BOOL includ
 		// need to output this element
 		ptr = addName(elem, ptr, endPtr, includeRoot);
 
-		// insert an equal sign
-		ptr[0] = '=';
-		ptr++;
+		// insert an equal sign, if there is room
+		if (ptr < endPtr)
+		{
+			ptr[0] = '=';
+			ptr++;
+		}
 
 		// get a pointer to the value
 		valuePtr = names.getNameAddr(jsonElems[elem].value);
