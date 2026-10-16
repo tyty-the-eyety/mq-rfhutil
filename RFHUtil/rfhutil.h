@@ -278,10 +278,10 @@ public:
 	void saveRecentFileList();
 	void setMostRecentFilePath(LPCTSTR fileName);
 	void saveClientQM(const char * qm);
-	void dumpTraceData(const char * label, const unsigned char * data, unsigned int length);
+	void dumpTraceData(const char * label, const unsigned char * data, unsigned int length) override;
 	void createAuditRecord(LPCTSTR qMgr, LPCTSTR qName, LPCTSTR activity, MQLONG reason);
-	BOOL isTraceEnabled();
-	void logTraceEntry(LPCTSTR traceInfo);
+	BOOL isTraceEnabled() override;
+	void logTraceEntry(LPCTSTR traceInfo) override;
 	void getCopyright(CString &copyRight);
 	int getBuild();
 	int getRevision();

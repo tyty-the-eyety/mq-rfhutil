@@ -40,6 +40,28 @@ sub edit {
     save($f, $t, $crlf);
 }
 
+# ---------------------------------------------------------------- Client.vcxproj (rfhutilc.exe)
+{
+    my $f = 'Client/Client.vcxproj'; my ($t, $crlf) = load($f);
+    edit($f, 'include dirs', 6, scalar($t =~ s/<AdditionalIncludeDirectories>\$\(MQ_HOME\)\\tools\\c\\include<\/AdditionalIncludeDirectories>/<AdditionalIncludeDirectories>..\\core\\platform;\$(MQ_HOME)\\tools\\c\\include<\/AdditionalIncludeDirectories>/g));
+    edit($f, 'sources', 1, scalar($t =~ s/^(\s*)<ClCompile Include="\.\.\\RFHUtil\\comsubs\.cpp" \/>\n/$1<ClCompile Include="..\\RFHUtil\\comsubs.cpp" \/>\n$1<ClCompile Include="..\\RFHUtil\\uisubs.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_platform.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_codepage.cpp" \/>\n$1<ClCompile Include="..\\core\\platform\\rfh_trace.cpp" \/>\n/m));
+    edit($f, 'headers', 1, scalar($t =~ s/^(\s*)<ClInclude Include="\.\.\\RFHUtil\\comsubs\.h" \/>\n/$1<ClInclude Include="..\\RFHUtil\\comsubs.h" \/>\n$1<ClInclude Include="..\\RFHUtil\\uisubs.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_platform.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_codepage.h" \/>\n$1<ClInclude Include="..\\core\\platform\\rfh_trace.h" \/>\n/m));
+    save($f, $t, $crlf);
+}
+
+# ---------------------------------------------------------------- Client.vcxproj.filters
+{
+    my $f = 'Client/Client.vcxproj.filters'; my ($t, $crlf) = load($f);
+    my $entry = sub {
+        my ($tag, $filter, $indent, @names) = @_;
+        return join('', map { "$indent<$tag Include=\"$_\">\n$indent  <Filter>$filter</Filter>\n$indent</$tag>\n" } @names);
+    };
+    my @plat = ('..\core\platform\rfh_platform', '..\core\platform\rfh_codepage', '..\core\platform\rfh_trace');
+    edit($f, 'filter headers', 1, scalar($t =~ s{^([ \t]*)(<ClInclude Include="\.\.\\RFHUtil\\comsubs\.h">\n.*?</ClInclude>\n)}{$1 . $2 . $entry->('ClInclude', 'Header Files', $1, '..\RFHUtil\uisubs.h', map { "$_.h" } @plat)}mse));
+    edit($f, 'filter sources', 1, scalar($t =~ s{^([ \t]*)(<ClCompile Include="\.\.\\RFHUtil\\comsubs\.cpp">\n.*?</ClCompile>\n)}{$1 . $2 . $entry->('ClCompile', 'Source Files', $1, '..\RFHUtil\uisubs.cpp', map { "$_.cpp" } @plat)}mse));
+    save($f, $t, $crlf);
+}
+
 # ---------------------------------------------------------------- UnitTests.vcxproj
 {
     my $f = 'tests/UnitTests/UnitTests.vcxproj'; my ($t, $crlf) = load($f);
@@ -54,6 +76,9 @@ sub edit {
     my $f = 'RFHUtil/rfhutil.h'; my ($t, $crlf) = load($f);
     edit($f, 'include trace', 1, scalar($t =~ s/^(#include "DataArea\.h"[^\n]*\n)/$1#include "rfh_trace.h"\n/m));
     edit($f, 'base class', 1, scalar($t =~ s/^class CRfhutilApp : public CWinApp$/class CRfhutilApp : public CWinApp, public RfhTrace/m));
+    edit($f, 'override dumpTraceData', 1, scalar($t =~ s/^(\tvoid dumpTraceData\(const char \* label, const unsigned char \* data, unsigned int length\))(;\n)/$1 override$2/m));
+    edit($f, 'override isTraceEnabled', 1, scalar($t =~ s/^(\tBOOL isTraceEnabled\(\))(;\n)/$1 override$2/m));
+    edit($f, 'override logTraceEntry', 1, scalar($t =~ s/^(\tvoid logTraceEntry\(LPCTSTR traceInfo\))(;\n)/$1 override$2/m));
     edit($f, 'verboseTrace member', 1, scalar($t =~ s/^\tBOOL verboseTrace;\n//m));
     save($f, $t, $crlf);
 

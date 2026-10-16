@@ -35,6 +35,18 @@
     <ClInclude Include="..\RFHUtil\comsubs.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\RFHUtil\uisubs.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\core\platform\rfh_platform.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\core\platform\rfh_codepage.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\core\platform\rfh_trace.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\RFHUtil\ConnUser.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -178,6 +190,18 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\RFHUtil\comsubs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\RFHUtil\uisubs.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\core\platform\rfh_platform.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\core\platform\rfh_codepage.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\core\platform\rfh_trace.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\RFHUtil\ConnUser.cpp">
