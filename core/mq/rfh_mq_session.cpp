@@ -398,23 +398,21 @@ namespace rfh
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
-		// walk the headers the way a get will, to see whether the MQMD format names them
-		HeaderChain sent;
-		if (!message.headers.empty())
-		{
-			sent = walkHeaders(message.headers.data(), message.headers.size(), std::string(message.mqmd.Format, MQ_FORMAT_LENGTH),
-			                   message.mqmd.CodedCharSetId, getCcsidType(message.mqmd.CodedCharSetId), getIntEncode(message.mqmd.Encoding));
-		}
-
 		// on the wire the MQ headers simply precede the body
 		std::vector<unsigned char> * payload = &message.body;
 		std::vector<unsigned char> joined;
+		size_t splitAt = 0;
 		if (!message.headers.empty())
 		{
 			joined.reserve(message.headers.size() + message.body.size());
 			joined.insert(joined.end(), message.headers.begin(), message.headers.end());
 			joined.insert(joined.end(), message.body.begin(), message.body.end());
 			payload = &joined;
+
+			// walk what is sent exactly as a get will, to see where it splits the data
+			splitAt = walkHeaders(payload->data(), payload->size(), std::string(message.mqmd.Format, MQ_FORMAT_LENGTH),
+			                      message.mqmd.CodedCharSetId, getCcsidType(message.mqmd.CodedCharSetId),
+			                      getIntEncode(message.mqmd.Encoding)).bodyOffset;
 		}
 
 		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)payload->size(),
@@ -422,9 +420,9 @@ namespace rfh
 		dropIfBroken(rc);
 
 		Result r = Result::fromMq("MQPUT", cc, rc);
-		if (r.ok() && !message.headers.empty() && (sent.bodyOffset != message.headers.size()))
+		if (r.ok() && !message.headers.empty() && (splitAt != message.headers.size()))
 		{
-			r.warnings.push_back("headers do not match the MQMD format chain; a get returns them as body");
+			r.warnings.push_back("headers do not match the MQMD format chain; a get splits them differently");
 		}
 		return r;
 	}

@@ -206,7 +206,7 @@ TEST_F(MqBindingsTest, PutWarnsWhenFormatDoesNotNameTheHeaders)
     Result p = session.put(kQueue, out, PutOptions());
     ASSERT_TRUE(p.ok()) << p.text;
     ASSERT_EQ(1u, p.warnings.size());
-    EXPECT_EQ("headers do not match the MQMD format chain; a get returns them as body", p.warnings[0]);
+    EXPECT_EQ("headers do not match the MQMD format chain; a get splits them differently", p.warnings[0]);
 
     Message in;
     ASSERT_TRUE(session.get(kQueue, in, GetOptions()).ok());
@@ -214,6 +214,42 @@ TEST_F(MqBindingsTest, PutWarnsWhenFormatDoesNotNameTheHeaders)
     std::vector<unsigned char> expected = rfh.data;
     expected.insert(expected.end(), out.body.begin(), out.body.end());
     EXPECT_EQ(expected, in.body);
+}
+
+TEST_F(MqBindingsTest, PutWarnsWhenBodyContinuesTheHeaderChain)
+{
+    auto dlh = mq_layout::dlh(mq_layout::Order::Little, 546, 1208, "MQHRF2");
+    auto rfh = rfh2WithFolder();
+    Message out = textMessage("");
+    memcpy(out.mqmd.Format, MQFMT_DEAD_LETTER_HEADER, MQ_FORMAT_LENGTH);
+    out.headers = dlh.data;
+    out.body = rfh.data;    // the body itself starts with a valid RFH2
+    Result p = session.put(kQueue, out, PutOptions());
+    ASSERT_TRUE(p.ok()) << p.text;
+    ASSERT_EQ(1u, p.warnings.size());
+    EXPECT_EQ("headers do not match the MQMD format chain; a get splits them differently", p.warnings[0]);
+
+    Message in;
+    ASSERT_TRUE(session.get(kQueue, in, GetOptions()).ok());
+    EXPECT_EQ(dlh.data.size() + rfh.data.size(), in.headers.size());
+    EXPECT_GT(in.headers.size(), out.headers.size());
+}
+
+TEST_F(MqBindingsTest, GetReturnsHeaderWarnings)
+{
+    auto cih = mq_layout::cih(mq_layout::Order::Little, 2, MQCLT_TRANSACTION, 546, 999999, "MQSTR");
+    Message out = textMessage("cics body");
+    memcpy(out.mqmd.Format, MQFMT_CICS, MQ_FORMAT_LENGTH);
+    out.headers = cih.data;
+    ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+    Message in;
+    Result r = session.get(kQueue, in, GetOptions());
+    ASSERT_TRUE(r.ok()) << r.text;
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_EQ("*** Errors parsing CICS header\r\n", r.warnings[0]);
+    EXPECT_EQ(180u, in.headers.size());
+    EXPECT_EQ("cics body", bodyText(in));
 }
 
 TEST_F(MqBindingsTest, BrowseKeepsHeadersPerMessage)

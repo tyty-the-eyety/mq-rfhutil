@@ -107,8 +107,8 @@ namespace rfh
 		bool isConnected() const { return hConn != MQHC_UNUSABLE_HCONN; }
 
 		// Puts message to queue: message.headers followed by message.body.
-		// message.mqmd.Format must name the first header; put warns when the headers do
-		// not form that chain. On success message.mqmd holds the descriptor MQ returned
+		// message.mqmd.Format must name the first header; put warns when a get would
+		// split the data anywhere but between the headers and the body. On success message.mqmd holds the descriptor MQ returned
 		// (new MsgId, put date and time, ...).
 		Result put(const std::string & queue, Message & message, const PutOptions & options);
 
