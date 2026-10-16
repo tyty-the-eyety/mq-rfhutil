@@ -58,10 +58,16 @@ my @rewrites = (
 	['CP_OEMCP is the display OEM code page', 1, sub { $_[0] =~ s/\bCP_OEMCP\b/app->oem/g }],
 	['C-locale wcstombs', 2, sub { $_[0] =~ s/wcstombs\(\(char \*\)newData, (\(const RFH_UCS2 \*\)\([^)]*\)), /rfh_ucs2_to_c_locale($1, (char *)newData, /g }],
 	['MQ table directory separator', 3, sub { $_[0] =~ s/"\\\\conv\\\\table\\\\/RFH_DIR_SEP "/g }],
-	['no table directory, no tables', 3, sub { $_[0] =~ s/\btbl = fopen\(fileName, "rb"\);/tbl = conversionTableDir.empty() ? NULL : fopen(fileName, "rb");/g }],
+	['no usable table directory, no tables', 3, sub { $_[0] =~ s/\btbl = fopen\(fileName, "rb"\);/tbl = tablesUsable() ? fopen(fileName, "rb") : NULL;/g }],
 	# memory safety (deliberate differences; see DataFormatter.h)
 	['both view buffer', 1, sub { $_[0] =~ s/len = \(fileLength << 2\) \+ 65;/len = ((fileLength + 15) \/ 16) * 65 + 65;\t\t\/\/ 65 bytes per line of 16; Windows allocates (fileLength << 2) + 65/g }],
 	['fixed view table index', 1, sub { $_[0] =~ s/m_data_fix\[len\] = invalidCharTable\[tempTxt\[0\]\];/m_data_fix[len] = invalidCharTable[(unsigned char)tempTxt[0]];/g }],
+	['tag name copy stops at the work area', 2, sub { $_[0] =~ s/tempVarName\[j\+\+\] = tempData\[buffer\+\+\];/if ((size_t)j < sizeof(tempVarName) - 1) { tempVarName[j++] = tempData[buffer]; } buffer++;/g }],
+	['attribute copy stops at the work area', 2, sub { $_[0] =~ s/tempVarAttr\[attrLen\+\+\] = tempData\[buffer\+\+\];/if ((size_t)attrLen < sizeof(tempVarAttr) - 1) { tempVarAttr[attrLen++] = tempData[buffer]; } buffer++;/g }],
+	['end tag name terminator stops at the work area', 2, sub { $_[0] =~ s/tempEndVarName\[k\+\+\] = 0;/if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = 0; }/g }],
+	['end tag name copy stops at the work area', 2, sub { $_[0] =~ s/tempEndVarName\[k\+\+\] = tempData\[buffer\+\+\];/if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = tempData[buffer]; } buffer++;/g }],
+	['value copy stops at the work area', 2, sub { $_[0] =~ s/while \(\(buffer < remaining\) && \(tempData\[buffer\] != '<'\)\)(\s*\{\s*\/\/ check if we have non-whitespace characters)/while ((buffer < remaining) && (tempData[buffer] != '<') && (templen < (sizeof(tempVarValue) - 1)))$1/g }],
+	['UCS-2 fallback loop stays within the data', 1, sub { $_[0] =~ s/for \(i=0; i<\(int\)fileSize; i\+\+\)(\s*\{\s*\/\/ translate a character from UCS to code page 1252\s*charCount = WCSto1252\()&ucsChar\[i\]/for (i=0; i<(int)((fileSize - extraOffset) \/ 2); i++)$1(const RFH_UCS2 *)(fileData + extraOffset) + i/g }],
 	['EDI blank skip', 1, sub { $_[0] =~ s/while \(data\[buffer \+ newline\] <= ' '\)/while ((newline < remaining) && (data[buffer + newline] <= ' '))/g }],
 );
 for my $r (@rewrites) {

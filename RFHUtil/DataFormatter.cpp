@@ -24,6 +24,11 @@ http://www.apache.org/licenses/LICENSE-2.0
 #include "DataFormatter.h"
 #include "cmqc.h"
 
+// The moved code assumes a little-endian host, as Windows is.
+#ifndef _WIN32
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "DataFormatter assumes a little-endian host");
+#endif
+
 // from DataArea.cpp
 #define MAX_ASCII_CHAR	32
 #define MAX_XML_INDENT_LEVELS	15
@@ -68,6 +73,13 @@ DataFormatter::DataFormatter()
 	saveIndentOn = FALSE;
 
 	// see DataFormatter.h: built here rather than in the first character view
+	memset(xmlVarName, 0, sizeof(xmlVarName));
+	memset(tempVarValue, 0, sizeof(tempVarValue));
+	memset(tempVarName, 0, sizeof(tempVarName));
+	memset(tempEndVarName, 0, sizeof(tempEndVarName));
+	memset(tempVarAttr, 0, sizeof(tempVarAttr));
+	memset(xmlAttrStr, 0, sizeof(xmlAttrStr));
+
 	buildInvalidCharTable(invalidCharTable);
 	invalidCharTableNotBuilt = FALSE;
 
@@ -102,8 +114,13 @@ DataFormatter::~DataFormatter()
 
 void DataFormatter::setData(const unsigned char * bytes, unsigned int size)
 {
-	ownedData.assign(bytes, bytes + size);
-	ownedData.resize(size + kLookAheadPad, 0);
+	// exactly the data and its pad, so the guard allocator sees any read past them
+	std::vector<unsigned char> copy(size + kLookAheadPad, 0);
+	if (size > 0)
+	{
+		memcpy(copy.data(), bytes, size);
+	}
+	ownedData.swap(copy);
 	fileData = ownedData.data();
 	fileSize = size;
 	sourceData = bytes;
@@ -120,11 +137,16 @@ void DataFormatter::dumpTraceData(const char * label, const unsigned char * data
 }
 
 // DataArea finds MQ's install directory here and appends conv\table to it; the
-// formatter is given the table directory itself.
+// formatter is given the table directory itself. A directory that leaves no room
+// for a table file name is not copied (see tablesUsable).
 void DataFormatter::findMQInstallDirectory(unsigned char * dir, int dirSize)
 {
-	strncpy((char *)dir, conversionTableDir.c_str(), dirSize - 1);
-	dir[dirSize - 1] = 0;
+	dir[0] = 0;
+	if (tablesUsable())
+	{
+		strncpy((char *)dir, conversionTableDir.c_str(), dirSize - 1);
+		dir[dirSize - 1] = 0;
+	}
 }
 
 // See DataFormatter.h: every buffer the formatters allocate is followed by
@@ -1329,10 +1351,10 @@ unsigned char * DataFormatter::getTranslatedData(int * length, const int charFor
 			{
 				// the conversion failed
 				// try translating to code page 1252 from UCS
-				for (i=0; i<(int)fileSize; i++)
+				for (i=0; i<(int)((fileSize - extraOffset) / 2); i++)
 				{
 					// translate a character from UCS to code page 1252
-					charCount = WCSto1252(&ucsChar[i], newData + i);
+					charCount = WCSto1252((const RFH_UCS2 *)(fileData + extraOffset) + i, newData + i);
 				}
 
 				// count for the trace line
@@ -2843,7 +2865,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 					if (0 == endName)
 					{
 						//capture the variable name
-						tempVarName[j++] = tempData[buffer++];
+						if ((size_t)j < sizeof(tempVarName) - 1) { tempVarName[j++] = tempData[buffer]; } buffer++;
 					}
 					else
 					{
@@ -2851,7 +2873,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 						if ((attrLen > 0) || (tempData[buffer] > ' '))
 						{
 							// capture the attributes
-							tempVarAttr[attrLen++] = tempData[buffer++];
+							if ((size_t)attrLen < sizeof(tempVarAttr) - 1) { tempVarAttr[attrLen++] = tempData[buffer]; } buffer++;
 						}
 						else
 						{
@@ -3061,7 +3083,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 						else
 						{
 							// handle as ordinary data
-							while ((buffer < remaining) && (tempData[buffer] != '<'))
+							while ((buffer < remaining) && (tempData[buffer] != '<') && (templen < (sizeof(tempVarValue) - 1)))
 							{
 								// check if we have non-whitespace characters
 								if (tempData[buffer] > ' ')
@@ -3117,12 +3139,12 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 								if (tempData[buffer] <= ' ')
 								{
 									// terminate the variable name
-									tempEndVarName[k++] = 0;
+									if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = 0; }
 									buffer++;
 								}
 								else
 								{
-									tempEndVarName[k++] = tempData[buffer++];
+									if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = tempData[buffer]; } buffer++;
 								}
 							}
 
@@ -3447,7 +3469,7 @@ void DataFormatter::getParsedData(const int charFormat)
 					if (0 == endName)
 					{
 						//capture the variable name
-						tempVarName[j++] = tempData[buffer++];
+						if ((size_t)j < sizeof(tempVarName) - 1) { tempVarName[j++] = tempData[buffer]; } buffer++;
 					}
 					else
 					{
@@ -3455,7 +3477,7 @@ void DataFormatter::getParsedData(const int charFormat)
 						if ((attrLen > 0) || (tempData[buffer] > ' '))
 						{
 							// capture the attributes
-							tempVarAttr[attrLen++] = tempData[buffer++];
+							if ((size_t)attrLen < sizeof(tempVarAttr) - 1) { tempVarAttr[attrLen++] = tempData[buffer]; } buffer++;
 						}
 						else
 						{
@@ -3653,7 +3675,7 @@ void DataFormatter::getParsedData(const int charFormat)
 						else
 						{
 							// handle as ordinary data
-							while ((buffer < remaining) && (tempData[buffer] != '<'))
+							while ((buffer < remaining) && (tempData[buffer] != '<') && (templen < (sizeof(tempVarValue) - 1)))
 							{
 								// check if we have non-whitespace characters
 								if (tempData[buffer] > ' ')
@@ -3709,12 +3731,12 @@ void DataFormatter::getParsedData(const int charFormat)
 								if (tempData[buffer] <= ' ')
 								{
 									// terminate the variable name
-									tempEndVarName[k++] = 0;
+									if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = 0; }
 									buffer++;
 								}
 								else
 								{
-									tempEndVarName[k++] = tempData[buffer++];
+									if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = tempData[buffer]; } buffer++;
 								}
 							}
 
@@ -3960,7 +3982,7 @@ int DataFormatter::MQEBC2ASC(unsigned char *out, const unsigned char *in, int le
 		sprintf(fileName + strlen(fileName), RFH_DIR_SEP "%4.4X%4.4X.tbl", ccsidIn, ccsidOut);
 
 		// now try to open the table
-		tbl = conversionTableDir.empty() ? NULL : fopen(fileName, "rb");
+		tbl = tablesUsable() ? fopen(fileName, "rb") : NULL;
 		if (tbl != NULL)
 		{
 			// figure out how long the file is
@@ -4051,7 +4073,7 @@ int DataFormatter::MQEBC2UCS(RFH_UCS2 *out, const unsigned char *in, int len, in
 		sprintf(endInstallDir, RFH_DIR_SEP "%4.4X44B0.tbl", ccsidIn);
 
 		// now try to open the table
-		tbl = conversionTableDir.empty() ? NULL : fopen(fileName, "rb");
+		tbl = tablesUsable() ? fopen(fileName, "rb") : NULL;
 
 		// check if we found the translate table
 		if (NULL == tbl)
@@ -4060,7 +4082,7 @@ int DataFormatter::MQEBC2UCS(RFH_UCS2 *out, const unsigned char *in, int len, in
 			sprintf(endInstallDir, RFH_DIR_SEP "%4.4X34B0.tbl", ccsidIn);
 
 			// now try to open the table
-			tbl = conversionTableDir.empty() ? NULL : fopen(fileName, "rb");
+			tbl = tablesUsable() ? fopen(fileName, "rb") : NULL;
 		}
 
 		if (tbl != NULL)

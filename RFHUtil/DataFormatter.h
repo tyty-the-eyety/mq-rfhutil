@@ -15,6 +15,13 @@ http://www.apache.org/licenses/LICENSE-2.0
 // output is a NUL-terminated buffer in the display code page (app->ansi), owned by
 // the formatter and freed by its destructor. A formatter keeps its outputs, so a
 // second call for the same view and settings returns at once, as in DataArea.
+// A formatter shows one message: call setData once, before the first get...Data
+// call; later calls would show the outputs made for the first message.
+//
+// The padding that the formatters add to their buffers also hides a write that
+// overruns a buffer by up to kLookAheadPad bytes, so a guard-page allocator
+// finds only larger overruns of the work buffers (it finds any overrun of the
+// formatter's own members, and of the copy of the data).
 //
 // Deliberate differences from DataArea, all to stay within buffers:
 // - the data and every buffer the formatters allocate are followed by
@@ -25,6 +32,13 @@ http://www.apache.org/licenses/LICENSE-2.0
 // - the fixed view indexes its display table with an unsigned byte;
 // - the EDI option of the character view stops skipping blanks at the end of the
 //   data;
+// - the parsed and XML views stop copying a tag name, an attribute list, an end
+//   tag name or a value when its work area is full; a long name is cut short and
+//   parsing goes on, where DataArea overruns the work area;
+// - the table directory must leave room for a table file name (see tablesUsable);
+//   a longer one is treated as no tables, where DataArea overruns its file name;
+// - the UCS-2 fallback of the character view converts from the data itself;
+//   DataArea reads the units from a 4-unit local array;
 // - the display table is built when the formatter is made. DataArea fills it with
 //   '.' and builds it in the first character or both view, which Windows always
 //   shows first; the other views use it without building it.
@@ -38,6 +52,10 @@ http://www.apache.org/licenses/LICENSE-2.0
 
 // Zero bytes the formatters may read after their data and their work buffers.
 const unsigned int kLookAheadPad = 32;
+
+// Size of the file name buffers in the moved code that build a conversion table
+// path (fileName[512]).
+const int kTablePathMax = 512;
 
 // The Windows ANSI and OEM code pages the formatters display in. On Windows these
 // are GetACP() and GetOEMCP(), which CRfhutilApp holds as ansi and oem.
@@ -58,7 +76,7 @@ public:
 
 	// Copies the data to show, followed by kLookAheadPad zero bytes, and points
 	// fileData and fileSize at the copy.
-	void setData(const unsigned char * data, unsigned int size);
+	void setData(const unsigned char * bytes, unsigned int size);
 
 	// The data setData was given (not the copy), for callers that check it is
 	// still the data they show.
@@ -72,7 +90,15 @@ public:
 	int				m_char_format;		// CHAR_* of the data (DataArea::m_char_format)
 	DisplayCodepages display;			// default { rfh_get_acp(), 437 }
 	std::string		conversionTableDir;	// MQ's conversion tables (Windows: conv\table under the
-										// MQ install directory; Linux: /opt/mqm/lib/iconv); empty for none
+										// MQ install directory; Linux: /opt/mqm/lib/iconv); empty for none.
+										// A directory of kTablePathMax - 32 characters or more leaves no
+										// room for a table file name and is treated as none.
+
+	// TRUE when conversionTableDir is a usable table directory.
+	BOOL tablesUsable() const
+	{
+		return !conversionTableDir.empty() && conversionTableDir.size() < (size_t)(kTablePathMax - 32);
+	}
 
 	// Outputs.
 	unsigned char *	m_data_ascii;
