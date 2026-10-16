@@ -87,7 +87,9 @@ namespace rfh
 		// The float encoding is left unchanged, as on Windows. The document's display
 		// state (numeric, packed decimal and character format) is not set here; callers
 		// derive it from the MQMD. msgType and putApplType are read by their leading
-		// number. Returns false, leaving fields unchanged, for any other version.
+		// number. For a version 1 MQMD, GroupId is still copied from mqmd, as on Windows;
+		// pass the bytes that follow the 324-byte MQMD (or zeros) to get Windows' result.
+		// Returns false, leaving fields unchanged, for any other version.
 		bool fromMqmd(const MQMD2 & mqmd, MqmdFields & fields);
 
 		// Resets fields as MQMDPAGE::clearMQMD does; only the float encoding is left

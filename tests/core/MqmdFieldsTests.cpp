@@ -79,6 +79,14 @@ TEST(MqmdFields, DefaultLayoutMatchesMqmd2DefaultNumbers)
 	{
 		EXPECT_EQ(0, memcmp(&raw[offset], &d.data[offset], 4)) << "offset " << offset;
 	}
+
+	const struct { size_t offset, length; } bytes[] = { { 0, 4 }, { O::Format, 8 }, { O::MsgId, 24 },
+		{ O::CorrelId, 24 }, { O::AccountingToken, 32 }, { O::PutDate, 8 }, { O::PutTime, 8 },
+		{ O::GroupId, 24 } };
+	for (const auto & range : bytes)
+	{
+		EXPECT_EQ(0, memcmp(&raw[range.offset], &d.data[range.offset], range.length)) << "offset " << range.offset;
+	}
 }
 
 TEST(MqmdFields, ClearMatchesClearMQMD)
@@ -103,33 +111,40 @@ TEST(MqmdFields, ClearMatchesClearMQMD)
 
 	rfh::mqmd_fields::clear(f);
 
-	MqmdFields d;
-	d.floatEncoding = FLOAT_390;
+	// the literal values clearMQMD sets
+	EXPECT_EQ("0", f.backoutCount);
+	EXPECT_EQ("1", f.seqNo);
+	EXPECT_EQ("-1", f.originalLength);
+	for (const std::string * text : { &f.format, &f.ccsid, &f.msgType, &f.expiry, &f.feedback,
+		&f.priority, &f.replyToQ, &f.replyToQMgr, &f.userId, &f.accountingToken, &f.applIdentity,
+		&f.applOrigin, &f.putApplName, &f.putApplType, &f.dateTime, &f.offset })
+	{
+		EXPECT_EQ("", *text);
+	}
+	EXPECT_EQ(0, f.persistence);
+	EXPECT_EQ(0, f.encoding);
+	EXPECT_EQ(0, f.pdEncoding);
 	EXPECT_EQ(-1, f.reportException);
 	EXPECT_EQ(-1, f.reportExpiration);
 	EXPECT_EQ(-1, f.reportCoa);
 	EXPECT_EQ(-1, f.reportCod);
-	EXPECT_EQ(d.format, f.format); EXPECT_EQ(d.ccsid, f.ccsid); EXPECT_EQ(d.msgType, f.msgType);
-	EXPECT_EQ(d.expiry, f.expiry); EXPECT_EQ(d.feedback, f.feedback); EXPECT_EQ(d.priority, f.priority);
-	EXPECT_EQ(d.backoutCount, f.backoutCount); EXPECT_EQ(d.replyToQ, f.replyToQ);
-	EXPECT_EQ(d.replyToQMgr, f.replyToQMgr); EXPECT_EQ(d.userId, f.userId);
-	EXPECT_EQ(d.accountingToken, f.accountingToken); EXPECT_EQ(d.applIdentity, f.applIdentity);
-	EXPECT_EQ(d.applOrigin, f.applOrigin); EXPECT_EQ(d.putApplName, f.putApplName);
-	EXPECT_EQ(d.putApplType, f.putApplType); EXPECT_EQ(d.dateTime, f.dateTime);
-	EXPECT_EQ(d.seqNo, f.seqNo); EXPECT_EQ(d.offset, f.offset);
-	EXPECT_EQ(d.originalLength, f.originalLength);
-	EXPECT_EQ(d.persistence, f.persistence); EXPECT_EQ(d.encoding, f.encoding);
-	EXPECT_EQ(d.pdEncoding, f.pdEncoding); EXPECT_EQ(d.floatEncoding, f.floatEncoding);
-	EXPECT_EQ(d.reportPan, f.reportPan); EXPECT_EQ(d.reportNan, f.reportNan);
-	EXPECT_EQ(d.reportActivity, f.reportActivity); EXPECT_EQ(d.reportDiscard, f.reportDiscard);
-	EXPECT_EQ(d.reportPassMsgId, f.reportPassMsgId); EXPECT_EQ(d.reportPassCorrelId, f.reportPassCorrelId);
-	EXPECT_EQ(d.reportPassDiscardAndExpiry, f.reportPassDiscardAndExpiry);
-	EXPECT_EQ(d.groupYes, f.groupYes); EXPECT_EQ(d.groupLast, f.groupLast);
-	EXPECT_EQ(d.segmentYes, f.segmentYes); EXPECT_EQ(d.segmentLast, f.segmentLast);
-	EXPECT_EQ(d.segmentAllowed, f.segmentAllowed);
-	EXPECT_EQ(0, memcmp(d.msgId, f.msgId, 24));
-	EXPECT_EQ(0, memcmp(d.correlId, f.correlId, 24));
-	EXPECT_EQ(0, memcmp(d.groupId, f.groupId, 24));
+	EXPECT_FALSE(f.reportPan);
+	EXPECT_FALSE(f.reportNan);
+	EXPECT_FALSE(f.reportActivity);
+	EXPECT_FALSE(f.reportDiscard);
+	EXPECT_FALSE(f.reportPassMsgId);
+	EXPECT_FALSE(f.reportPassCorrelId);
+	EXPECT_FALSE(f.reportPassDiscardAndExpiry);
+	EXPECT_FALSE(f.groupYes);
+	EXPECT_FALSE(f.groupLast);
+	EXPECT_FALSE(f.segmentYes);
+	EXPECT_FALSE(f.segmentLast);
+	EXPECT_FALSE(f.segmentAllowed);
+	const unsigned char zeros[24] = { 0 };
+	EXPECT_EQ(0, memcmp(zeros, f.msgId, 24));
+	EXPECT_EQ(0, memcmp(zeros, f.correlId, 24));
+	EXPECT_EQ(0, memcmp(zeros, f.groupId, 24));
+	EXPECT_EQ(FLOAT_390, f.floatEncoding);
 }
 
 TEST(MqmdFields, DefaultFieldsGiveDocumentedDefaultsExceptTabValues)
