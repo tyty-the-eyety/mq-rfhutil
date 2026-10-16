@@ -73,6 +73,7 @@ namespace rfh
 		// message is re-read by matching its MsgId. If several messages share that MsgId
 		// (e.g. replayed with newMsgId=false), the re-read can return an earlier message
 		// with the same MsgId, and the browse does not advance past it.
+		// In that case the re-read is reported as success, and browse positions after it are unreliable.
 		bool convert = false;
 		MQLONG convertCcsid = MQCCSI_Q_MGR;		// target CCSID; MQCCSI_Q_MGR is the queue manager's
 		MQLONG convertEncoding = MQENC_NATIVE;	// target encoding
@@ -93,7 +94,8 @@ namespace rfh
 		MqSession() = default;
 
 		// For tests and embedding: use the given entry points instead of loading the
-		// IBM MQ library with MqLoader.
+		// IBM MQ library with MqLoader. Every entry point (connx, disc, open, close, put,
+		// get, inq) must be set; connect() fails otherwise.
 		explicit MqSession(const MqApi & injectedApi) : api(injectedApi), apiInjected(true) {}
 		~MqSession();
 

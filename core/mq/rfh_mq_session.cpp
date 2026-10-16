@@ -129,6 +129,12 @@ namespace rfh
 		// a stale queue handle from an earlier connection must never be reused
 		clearHandleState();
 
+		if (apiInjected && ((api.connx == nullptr) || (api.disc == nullptr) || (api.open == nullptr) ||
+		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr)))
+		{
+			return Result::failure("Injected MQ API is incomplete");
+		}
+
 		Result loaded = Result::success();
 		if (!apiInjected)
 		{
