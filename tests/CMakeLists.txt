@@ -47,7 +47,7 @@ if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")
 endif()
-target_link_libraries(rfhutil_core_tests PRIVATE rfhcore GTest::gtest_main)
+target_link_libraries(rfhutil_core_tests PRIVATE rfhcore GTest::gtest_main ${CMAKE_DL_LIBS})
 gtest_discover_tests(rfhutil_core_tests)
 
 add_executable(rfhutil_loader_tests core/MqLoaderTests.cpp)
@@ -71,8 +71,10 @@ add_library(rfh_guardmalloc SHARED tools/guardmalloc.cpp)
 # match filter under the guard allocator, with any extra environment given.
 function(rfh_add_memcheck_test name target filter)
     add_test(NAME ${name} COMMAND ${target} --gtest_filter=${filter})
+    set(env "LD_PRELOAD=$<TARGET_FILE:rfh_guardmalloc>")
+    list(APPEND env ${ARGN})
     set_tests_properties(${name} PROPERTIES
-        ENVIRONMENT "LD_PRELOAD=$<TARGET_FILE:rfh_guardmalloc>;${ARGN}"
+        ENVIRONMENT "${env}"
         LABELS memcheck
         TIMEOUT 300)
     add_dependencies(${target} rfh_guardmalloc)
