@@ -65,12 +65,12 @@ TEST(Mqsubs_Encoding, IntegerAndDecimalDecodeBack)
 
 TEST(Mqsubs_Encoding, FloatDecodeIsInvertedHistoric)
 {
-    // Upstream bugs, kept for compatibility; reported upstream. getFloatEncode tests
-    // single bits instead of comparing (encoding & MQENC_FLOAT_MASK):
+    // Upstream bugs in getFloatEncode, kept for compatibility; reported upstream:
     //  (a) the IEEE normal/reversed mapping is swapped relative to getEncodingValue:
     //      IEEE_NORMAL decodes as FLOAT_PC and IEEE_REVERSED as FLOAT_UNIX;
-    //  (b) S/390 (0x300) has both IEEE bits set, so it decodes as FLOAT_PC and
-    //      FLOAT_390 can never be returned.
+    //  (b) it tests single bits instead of comparing (encoding & MQENC_FLOAT_MASK),
+    //      so S/390 (0x300, both IEEE bits) decodes as FLOAT_PC and FLOAT_390 can
+    //      never be returned.
     EXPECT_EQ(FLOAT_UNIX, getFloatEncode(getEncodingValue(NUMERIC_PC, NUMERIC_PC, FLOAT_PC)));
     EXPECT_EQ(FLOAT_PC, getFloatEncode(getEncodingValue(NUMERIC_HOST, NUMERIC_HOST, FLOAT_UNIX)));
     EXPECT_EQ(FLOAT_PC, getFloatEncode(785));
