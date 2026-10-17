@@ -483,6 +483,75 @@ TEST_F(MqBindingsTest, QueueInfoOnARealQueueAfterAPut)
     EXPECT_EQ(MQRC_UNKNOWN_OBJECT_NAME, missing.rc);
 }
 
+TEST_F(MqBindingsTest, BrowsePositionFollowsTheRealCursor)
+{
+    for (const char * text : {"p1", "p2", "p3"})
+    {
+        Message out = textMessage(text);
+        ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+    }
+    EXPECT_EQ(0, session.browsePosition()) << "a put starts no browse";
+
+    GetOptions first;
+    first.mode = GetMode::BrowseFirst;
+    GetOptions next;
+    next.mode = GetMode::BrowseNext;
+    GetOptions prev;
+    prev.mode = GetMode::BrowsePrevious;
+    Message m;
+
+    ASSERT_TRUE(session.get(kQueue, m, first).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    ASSERT_TRUE(session.get(kQueue, m, next).ok());
+    ASSERT_TRUE(session.get(kQueue, m, next).ok());
+    EXPECT_EQ(3, session.browsePosition());
+    EXPECT_EQ("p3", bodyText(m));
+
+    Result end = session.get(kQueue, m, next);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, end.rc);
+    EXPECT_EQ(3, session.browsePosition()) << "the cursor stays on the last message";
+
+    ASSERT_TRUE(session.get(kQueue, m, prev).ok());
+    EXPECT_EQ(2, session.browsePosition());
+    EXPECT_EQ("p2", bodyText(m));
+    ASSERT_TRUE(session.get(kQueue, m, next).ok());
+    EXPECT_EQ(3, session.browsePosition());
+    EXPECT_EQ("p3", bodyText(m));
+
+    // a destructive get on the browse handle: the position is unknown
+    ASSERT_TRUE(session.get(kQueue, m, GetOptions()).ok());
+    EXPECT_EQ("p1", bodyText(m));
+    EXPECT_EQ(0, session.browsePosition());
+
+    // another application empties the queue; a restarted browse finds nothing
+    {
+        MqSession other;
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        options.qmName = bindingsQm();
+        ASSERT_TRUE(other.connect(options).ok());
+        MQLONG purged = 0;
+        ASSERT_TRUE(other.purge(kQueue, purged).ok());
+        EXPECT_EQ(2, purged);
+    }
+    ASSERT_FALSE(session.get(kQueue, m, first).ok());
+    EXPECT_EQ(0, session.browsePosition());
+
+    // a browse next after the failed browse first returns the first new message
+    Message again = textMessage("n1");
+    ASSERT_TRUE(session.put(kQueue, again, PutOptions()).ok());
+    ASSERT_TRUE(session.get(kQueue, m, next).ok());
+    EXPECT_EQ("n1", bodyText(m));
+    EXPECT_EQ(1, session.browsePosition());
+
+    // an empty queue gives no position
+    ASSERT_FALSE(session.get(kEmptyQueue, m, first).ok());
+    EXPECT_EQ(0, session.browsePosition());
+
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_EQ(0, session.browsePosition());
+}
+
 TEST_F(MqBindingsTest, GrowsBufferForLargeMessage)
 {
     std::string big(100 * 1024, 'x');

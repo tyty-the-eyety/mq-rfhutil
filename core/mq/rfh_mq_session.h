@@ -134,6 +134,17 @@ namespace rfh
 		// BrowseFirst.
 		Result get(const std::string & queue, Message & message, const GetOptions & options);
 
+		// The 1-based position of the message the browse cursor of the open queue handle
+		// last returned (Windows: DataArea::browseCount, shown as "msg k of depth"); 0 when
+		// there is none. 0 also stands for an unknown position: after a destructive get on
+		// the browse handle the cursor no longer maps to a position (BrowseNext goes on
+		// from it, BrowsePrevious is refused until BrowseFirst). Differences from Windows:
+		// a failed BrowseNext (end of queue) leaves the position on the last message, where
+		// Windows disconnects; a failed BrowseFirst on an emptied queue gives 0; a failed or
+		// cancelled BrowsePrevious walk leaves the cursor, and so the position, where the
+		// walk stopped.
+		long browsePosition() const { return (browseCursor > 0) ? browseCursor : 0; }
+
 		Result depth(const std::string & queue, MQLONG & count);
 
 		// Opens queue for inquiry on a handle of its own (a browse cursor is not
@@ -172,6 +183,6 @@ namespace rfh
 		std::string openName;
 		std::string openRemoteQm;
 		MQLONG openOptions = 0;
-		long browsePosition = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
+		long browseCursor = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
 	};
 }

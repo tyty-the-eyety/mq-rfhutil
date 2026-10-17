@@ -11,6 +11,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -55,6 +56,8 @@ namespace rfh_test
         MQLONG commandLevel = 940;
         std::map<MQLONG, MQLONG> inqRcBySelector;   // an inquiry that names one of these selectors fails with the given reason
         int unlimitedWaitMs = 1000;   // how long a get with MQWI_UNLIMITED waits in the fake
+        MQLONG getRc = MQRC_NONE;     // every get fails with this reason, before it looks at the queue
+        bool browseCursors = false;   // model one browse cursor per queue handle (off: a browse always returns the first message)
 
         // What it saw.
         int connxCalls = 0;
@@ -76,6 +79,8 @@ namespace rfh_test
         std::map<std::string, FakeQueue> queues;
         std::map<MQHOBJ, std::string> handleNames;   // object handle -> queue name
         std::map<MQHOBJ, bool> handleIsQmgr;
+        std::set<MQHOBJ> liveHandles;                // opened and not yet closed or dropped by a disconnect; empty when nothing leaks
+        std::map<MQHOBJ, int> cursors;               // browseCursors: index of the message under the cursor, -1 before the first
 
         void reset() { *this = FakeMq(); }
 
@@ -127,6 +132,8 @@ namespace rfh_test
         {
             FakeMq & fake = fakeMq();
             fake.discCalls++;
+            fake.liveHandles.clear();   // MQDISC releases every handle of the connection
+            fake.cursors.clear();
             report(fake.discRc, cc, rc);
         }
 
@@ -153,6 +160,10 @@ namespace rfh_test
                 memset(out->ResolvedQName, ' ', sizeof(out->ResolvedQName));
                 memcpy(out->ResolvedQName, name.data(), std::min(sizeof(out->ResolvedQName), name.size()));
             }
+            if (fake.openRc == MQRC_NONE)
+            {
+                fake.liveHandles.insert(*hObj);
+            }
             report(fake.openRc, cc, rc);
         }
 
@@ -162,6 +173,8 @@ namespace rfh_test
             fake.closeCalls++;
             if (fake.closeRc == MQRC_NONE)
             {
+                fake.liveHandles.erase(*hObj);
+                fake.cursors.erase(*hObj);
                 *hObj = MQHO_UNUSABLE_HOBJ;   // as real MQ does on success
             }
             report(fake.closeRc, cc, rc);
@@ -208,6 +221,12 @@ namespace rfh_test
                 fake.lastGmoMatchOptions = gmo->MatchOptions;
             }
 
+            if (fake.getRc != MQRC_NONE)
+            {
+                report(fake.getRc, cc, rc);
+                return;
+            }
+
             FakeQueue * q = queueOf(hObj);
             if (q == nullptr)
             {
@@ -215,8 +234,22 @@ namespace rfh_test
                 return;
             }
 
+            const bool browseFirst = (gmo != nullptr) && ((gmo->Options & MQGMO_BROWSE_FIRST) != 0);
+            const bool browseNext = (gmo != nullptr) && ((gmo->Options & MQGMO_BROWSE_NEXT) != 0);
+            size_t index = 0;
+            if (fake.browseCursors && (browseFirst || browseNext))
+            {
+                int & cursor = fake.cursors.emplace(hObj, -1).first->second;
+                if (browseFirst)
+                {
+                    cursor = -1;   // a browse first starts over, even when it then finds nothing
+                }
+                index = (size_t)(cursor + 1);
+            }
+            const bool available = index < q->messages.size();
+
             fake.lastWaitedMs = 0;
-            if ((q->messages.empty()) && (gmo != nullptr) && ((gmo->Options & MQGMO_WAIT) != 0))
+            if ((!available) && (gmo != nullptr) && ((gmo->Options & MQGMO_WAIT) != 0))
             {
                 // sleep in 50 ms slices up to the interval, as a waiting get would
                 int total = (gmo->WaitInterval == MQWI_UNLIMITED) ? fake.unlimitedWaitMs : (int)gmo->WaitInterval;
@@ -228,21 +261,23 @@ namespace rfh_test
                 }
             }
 
-            if (q->messages.empty())
+            if (!available)
             {
                 report(MQRC_NO_MSG_AVAILABLE, cc, rc);
                 *cc = MQCC_FAILED;
                 return;
             }
 
-            const FakeMessage & m = q->messages.front();
+            const FakeMessage & m = q->messages[index];
             *length = (MQLONG)m.data.size();
             if (md != nullptr)
             {
                 *static_cast<MQMD *>(md) = m.md;
             }
 
-            if (*length > bufferLength)
+            const bool accept = (gmo != nullptr) && ((gmo->Options & MQGMO_ACCEPT_TRUNCATED_MSG) != 0);
+            const bool truncated = *length > bufferLength;
+            if (truncated && !accept)
             {
                 if ((buffer != nullptr) && (bufferLength > 0))
                 {
@@ -252,14 +287,35 @@ namespace rfh_test
                 return;
             }
 
-            if (*length > 0)
+            const MQLONG copied = truncated ? bufferLength : *length;
+            if (copied > 0)
             {
-                memcpy(buffer, m.data.data(), (size_t)*length);
+                memcpy(buffer, m.data.data(), (size_t)copied);
             }
-            bool browse = (gmo != nullptr) && ((gmo->Options & (MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT)) != 0);
-            if (!browse)
+            const bool browse = browseFirst || browseNext;
+            if (browse)
+            {
+                if (fake.browseCursors)
+                {
+                    fake.cursors[hObj] = (int)index;
+                }
+            }
+            else
             {
                 q->messages.pop_front();
+                for (std::map<MQHOBJ, int>::iterator it = fake.cursors.begin(); it != fake.cursors.end(); ++it)
+                {
+                    if ((it->second >= 0) && (queueOf(it->first) == q))
+                    {
+                        it->second--;   // the messages after the removed one move up
+                    }
+                }
+            }
+            if (truncated)
+            {
+                *rc = MQRC_TRUNCATED_MSG_ACCEPTED;   // accepted truncation: the message is delivered with a warning
+                *cc = MQCC_WARNING;
+                return;
             }
             report(MQRC_NONE, cc, rc);
         }

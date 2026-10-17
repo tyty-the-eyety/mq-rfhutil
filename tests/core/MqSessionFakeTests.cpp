@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+
 #include "rfh_mq_session.h"
 
 using namespace rfh;
@@ -551,4 +553,340 @@ TEST_F(MqSessionFakeTest, QueueInfoDoesNotDisturbAnOpenBrowse)
     ASSERT_TRUE(session.get(kInfoQueue, m, next).ok());
     EXPECT_EQ(2, fake.openCalls) << "the browse handle is still the one in use";
     EXPECT_NE(0, fake.lastGmoOptions & MQGMO_BROWSE_NEXT);
+}
+
+// ---- browsePosition (Plan 3 Task 10) ----
+//
+// Windows counts the browsed messages in DataArea::browseCount: set to 1 by
+// readFirstMessage (:8283-8292), +1 by browseNext (:8670), and recomputed by
+// browsePrev from a fresh browse first (:8958, :9002). The core keeps the cursor
+// position of the open queue handle and browsePosition() reports it, 0 for none.
+
+namespace
+{
+    const char * kBrowseQueue = "RFHUTIL.TEST.BROWSE";
+    const char * kOtherQueue = "RFHUTIL.TEST.OTHER";
+
+    void addNamed(const char * queue, const std::string & text)
+    {
+        rfh_test::FakeMessage m;
+        m.data.assign(text.begin(), text.end());
+        fake.queue(queue).messages.push_back(m);
+    }
+
+    void addNamedMessages(const char * queue, int count)
+    {
+        for (int i = 1; i <= count; i++)
+        {
+            addNamed(queue, "m" + std::to_string(i));
+        }
+    }
+
+    std::string bodyOf(const Message & m)
+    {
+        return std::string(m.body.begin(), m.body.end());
+    }
+
+    GetOptions modeOptions(GetMode mode)
+    {
+        GetOptions options;
+        options.mode = mode;
+        return options;
+    }
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionCountsFirstNextAndPrevious)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    EXPECT_EQ("m1", bodyOf(m));
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(2, session.browsePosition());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(3, session.browsePosition());
+    EXPECT_EQ("m3", bodyOf(m));
+
+    // end of queue: Windows closes the queue and disconnects (DataArea.cpp:8645);
+    // the core keeps the cursor on the last message
+    Result end = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, end.rc);
+    EXPECT_EQ(3, session.browsePosition());
+    EXPECT_EQ("m3", bodyOf(m)) << "a failed browse leaves the caller's message alone";
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious)).ok());
+    EXPECT_EQ(2, session.browsePosition());
+    EXPECT_EQ("m2", bodyOf(m));
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious)).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    EXPECT_EQ("m1", bodyOf(m));
+
+    // already at the first message
+    Result first = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, first.rc);
+    EXPECT_EQ(1, session.browsePosition());
+    EXPECT_EQ("m1", bodyOf(m));
+
+    // next after previous continues from the browsed message
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(2, session.browsePosition());
+    EXPECT_EQ("m2", bodyOf(m));
+
+    EXPECT_EQ(1, fake.openCalls) << "one handle serves the whole browse";
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_EQ(fake.openCalls, fake.closeCalls);
+    EXPECT_TRUE(fake.liveHandles.empty());
+    EXPECT_EQ(0, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionIsZeroWithoutABrowse)
+{
+    fake.browseCursors = true;
+    EXPECT_EQ(0, session.browsePosition()) << "not connected";
+    connect();
+    EXPECT_EQ(0, session.browsePosition()) << "connected, nothing opened";
+    fake.queue(kBrowseQueue);   // declared and empty
+
+    // queue empty: the first browse finds nothing
+    Message m;
+    Result empty = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, empty.rc);
+    EXPECT_EQ(0, session.browsePosition());
+    empty = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, empty.rc);
+    EXPECT_EQ(0, session.browsePosition());
+
+    // browse previous with no browse: refused, still no position
+    Result prev = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, prev.rc);
+    EXPECT_EQ(0, session.browsePosition());
+
+    // a destructive get that is the first use of the handle starts no browse
+    addNamedMessages(kBrowseQueue, 1);
+    ASSERT_TRUE(session.get(kBrowseQueue, m, GetOptions()).ok());
+    EXPECT_EQ(0, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionResetsWhenTheQueueChanges)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    addNamedMessages(kOtherQueue, 2);
+    Message m;
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+
+    // browsing another queue closes the first handle and starts counting again
+    ASSERT_TRUE(session.get(kOtherQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    EXPECT_EQ(1u, fake.liveHandles.size());
+
+    // browse previous on a queue other than the one under the cursor is refused
+    Result wrong = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, wrong.rc);
+
+    ASSERT_TRUE(session.get(kOtherQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+
+    // a put reopens the handle for output
+    Message out;
+    out.body.assign({'x'});
+    ASSERT_TRUE(session.put(kOtherQueue, out, PutOptions()).ok());
+    EXPECT_EQ(0, session.browsePosition());
+    EXPECT_EQ(1u, fake.liveHandles.size());
+
+    // closing the queue
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_EQ(1, session.browsePosition());
+    ASSERT_TRUE(session.closeQueue().ok());
+    EXPECT_EQ(0, session.browsePosition());
+    EXPECT_TRUE(fake.liveHandles.empty());
+
+    // a browse next on a new handle returns the first message, which is position 1
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    EXPECT_EQ("m1", bodyOf(m));
+
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_EQ(fake.openCalls, fake.closeCalls);
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionAfterADestructiveGetIsZero)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 4);
+    Message m;
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::Destructive)).ok());
+    EXPECT_EQ("m1", bodyOf(m));
+    EXPECT_EQ(0, session.browsePosition()) << "the cursor no longer maps to a position";
+    EXPECT_EQ(1, fake.openCalls) << "the destructive get used the browse handle";
+
+    // browse next carries on from the cursor but cannot know where that is
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ("m3", bodyOf(m));
+    EXPECT_EQ(0, session.browsePosition());
+
+    // browse previous needs a known position
+    Result prev = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, prev.rc);
+    EXPECT_EQ("m3", bodyOf(m));
+    EXPECT_EQ(0, session.browsePosition());
+
+    // browse first makes it known again
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    EXPECT_EQ("m2", bodyOf(m));
+    EXPECT_EQ(1, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionIsZeroAfterAFailedBrowseFirst)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(3, session.browsePosition());
+
+    // somebody else empties the queue; the restarted browse finds nothing and the
+    // cursor is back before the first message, so a stale 3 would be wrong
+    fake.queue(kBrowseQueue).messages.clear();
+    Result r = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc);
+    EXPECT_EQ(0, session.browsePosition());
+
+    addNamedMessages(kBrowseQueue, 2);
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ("m1", bodyOf(m));
+    EXPECT_EQ(1, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionKeepsItsValueOnOtherFailures)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+
+    fake.getRc = MQRC_GET_INHIBITED;
+    Result r = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext));
+    EXPECT_EQ(MQRC_GET_INHIBITED, r.rc);
+    EXPECT_EQ(2, session.browsePosition()) << "the cursor did not move";
+    EXPECT_TRUE(session.isConnected());
+
+    fake.getRc = MQRC_NONE;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(3, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePositionIsZeroAfterTheConnectionIsLost)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+
+    fake.getRc = MQRC_CONNECTION_BROKEN;
+    Result r = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext));
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(0, session.browsePosition());
+    EXPECT_EQ(1, fake.discCalls) << "the broken connection is released";
+    EXPECT_TRUE(fake.liveHandles.empty()) << "the disconnect released the handle";
+
+    // browse previous on the dead session fails cleanly
+    Result prev = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_FALSE(prev.ok());
+    EXPECT_EQ(0, session.browsePosition());
+
+    // a new connection starts again at nothing
+    fake.getRc = MQRC_NONE;
+    connect();
+    EXPECT_EQ(0, session.browsePosition());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(1, session.browsePosition());
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, BrowsePreviousThatCannotReachItsTargetReportsTheCursor)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ("m3", bodyOf(m));
+
+    // two messages vanish while the user looks at the third: the walk to position 2 ends after 1
+    fake.queue(kBrowseQueue).messages.pop_front();
+    fake.queue(kBrowseQueue).messages.pop_front();
+    Result r = session.get(kBrowseQueue, m, modeOptions(GetMode::BrowsePrevious));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc);
+    EXPECT_EQ("m3", bodyOf(m)) << "the caller's message stays";
+    EXPECT_EQ(1, session.browsePosition()) << "the cursor is where the walk stopped";
+}
+
+TEST_F(MqSessionFakeTest, CancelledBrowsePreviousKeepsThePosition)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+
+    std::atomic<bool> cancel(true);
+    GetOptions prev = modeOptions(GetMode::BrowsePrevious);
+    prev.cancel = &cancel;
+    const int getsBefore = fake.getCalls;
+    Result r = session.get(kBrowseQueue, m, prev);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(getsBefore, fake.getCalls) << "cancelled before the first MQGET";
+    EXPECT_EQ(3, session.browsePosition());
+    EXPECT_EQ("m3", bodyOf(m));
+}
+
+TEST_F(MqSessionFakeTest, PurgeOfTheBrowsedQueueResetsThePosition)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kBrowseQueue, purged).ok());
+    EXPECT_EQ(3, purged);
+    EXPECT_EQ(0, session.browsePosition());
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_EQ(fake.openCalls, fake.closeCalls);
+    EXPECT_TRUE(fake.liveHandles.empty());
 }

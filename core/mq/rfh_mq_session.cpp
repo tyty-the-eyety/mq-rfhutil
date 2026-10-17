@@ -119,7 +119,7 @@ namespace rfh
 		openName.clear();
 		openRemoteQm.clear();
 		openOptions = 0;
-		browsePosition = 0;
+		browseCursor = 0;
 	}
 
 	Result MqSession::connect(const ConnectOptions & options)
@@ -368,7 +368,7 @@ namespace rfh
 	{
 		if (hObj == MQHO_UNUSABLE_HOBJ)
 		{
-			browsePosition = 0;
+			browseCursor = 0;
 			return Result::success();
 		}
 
@@ -383,7 +383,7 @@ namespace rfh
 			return Result::fromMq("MQCLOSE", cc, rc);
 		}
 
-		browsePosition = 0;
+		browseCursor = 0;
 		dropIfBroken(rc);
 
 		hObj = MQHO_UNUSABLE_HOBJ;
@@ -632,7 +632,7 @@ namespace rfh
 			{
 				return r;
 			}
-			if (browsePosition >= position)
+			if (browseCursor >= position)
 			{
 				message = std::move(walked);
 				return r;
@@ -656,21 +656,21 @@ namespace rfh
 
 		if (options.mode == GetMode::BrowsePrevious)
 		{
-			if ((browsePosition < 0) && (openName == queue))
+			if ((browseCursor < 0) && (openName == queue))
 			{
 				Result r = Result::fromMq("MQGET", MQCC_FAILED, MQRC_NO_MSG_AVAILABLE);
 				r.text += " - browse position unknown after a destructive get; browse first";
 				return r;
 			}
 
-			if ((browsePosition <= 1) || (openName != queue))
+			if ((browseCursor <= 1) || (openName != queue))
 			{
 				Result r = Result::fromMq("MQGET", MQCC_FAILED, MQRC_NO_MSG_AVAILABLE);
 				r.text += " - already at the first message";
 				return r;
 			}
 
-			return browseTo(queue, message, options, browsePosition - 1);
+			return browseTo(queue, message, options, browseCursor - 1);
 		}
 
 		Result opened = ensureOpen(queue, std::string(), MQOO_INPUT_AS_Q_DEF | MQOO_BROWSE);
@@ -693,11 +693,15 @@ namespace rfh
 		{
 			switch (options.mode)
 			{
-			case GetMode::BrowseFirst: browsePosition = 1; break;
-			case GetMode::BrowseNext: if (browsePosition >= 0) browsePosition++; break;
-			case GetMode::Destructive: if (browsePosition != 0) browsePosition = -1; break;	// the browse cursor no longer maps to a position
+			case GetMode::BrowseFirst: browseCursor = 1; break;
+			case GetMode::BrowseNext: if (browseCursor >= 0) browseCursor++; break;
+			case GetMode::Destructive: if (browseCursor != 0) browseCursor = -1; break;	// the browse cursor no longer maps to a position
 			case GetMode::BrowsePrevious: break;
 			}
+		}
+		else if ((options.mode == GetMode::BrowseFirst) && (r.rc == MQRC_NO_MSG_AVAILABLE) && isConnected())
+		{
+			browseCursor = 0;	// the restarted browse found nothing: the cursor is before the first message
 		}
 
 		return r;
@@ -852,7 +856,7 @@ namespace rfh
 
 		if (r.ok() && heldBySession)
 		{
-			browsePosition = 0;	// the session's own cursor now sits on an emptied queue
+			browseCursor = 0;	// the session's own cursor now sits on an emptied queue
 		}
 
 		return r;
