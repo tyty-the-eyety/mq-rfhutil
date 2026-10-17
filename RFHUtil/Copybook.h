@@ -158,7 +158,7 @@ typedef struct {
    int	VarName;
 } COPY_STRUCT;
 
-class CCopybook : public CObject  
+class CCopybook
 {
 public:
 	int getMaxLines();
@@ -234,7 +234,7 @@ private:
 					   const int ccsid, 
 					   const int indent,
 					   const int checkData);
-	int CCopybook::displayDat(char *printArea, 
+	int displayDat(char *printArea, 
 							  const int maxArea, 
 							  const int firstvar,
 							  const int lastvar,

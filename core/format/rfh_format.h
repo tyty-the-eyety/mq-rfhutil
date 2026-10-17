@@ -6,9 +6,9 @@
 // control; a UI decodes it from that code page.
 //
 // Differences from Windows RFHUtil:
-// - the COBOL view (Task 7; until then View::Cobol fails) reads the copy book
-//   named by options.copybookPath instead of asking for one, and fails when it
-//   cannot be read (Windows shows an empty view);
+// - the COBOL view reads the copy book named by options.copybookPath instead of
+//   asking for one, and fails when it cannot be read (Windows shows an empty
+//   view);
 // - see DataFormatter.h for the differences in the views themselves.
 #pragma once
 

@@ -23,8 +23,11 @@ Jim MacNair - Initial Contribution
 #include "Copybook.h"
 #include "comsubs.h"
 #include "mqsubs.h"
-#include "names.h"
+#include "Names.h"
 #include "rfhutil.h"
+#include "rfhconst.h"	// direct: rfhutil.h is blocked in the portable build
+#include "rfh_codepage.h"
+#include "rfh_trace.h"
 
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -1276,7 +1279,7 @@ int CCopybook::parseCopyBook(const char * fileName)
 	int			lastpeer;			// pointer to last peer of root element
 	int			RC=0;               // Return code from program
 	char		*envPtr;			// pointer to environment variable
-	CRfhutilApp	*app=(CRfhutilApp *)AfxGetApp();
+	RfhTrace	*app=rfhGetTrace();
 	char		traceInfo[512];		// work variable to build trace message
 
    // check if trace is enabled
@@ -1825,7 +1828,7 @@ int CCopybook::formatData(char *printArea,
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::formatData() dataIn=0x%x dataLen=%d", (unsigned int)dataIn, dataLen);
+		sprintf(traceInfo, "Entering CCopybook::formatData() dataIn=0x%x dataLen=%d", (unsigned int)(uintptr_t)dataIn, dataLen);
 
 		// trace entry to formatData
 		logTraceEntry(traceInfo);
@@ -1930,7 +1933,7 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::buildNextLine() line=0x%8.8x maxSize=%d inCounter=%d inFileCount=%d", (unsigned int)line, maxSize, (*inCounter), (*inFileCount));
+		sprintf(traceInfo, "Entering CCopybook::buildNextLine() line=0x%8.8x maxSize=%d inCounter=%d inFileCount=%d", (unsigned int)(uintptr_t)line, maxSize, (*inCounter), (*inFileCount));
 
 		// trace entry to buildNextLine
 		logTraceEntry(traceInfo);
@@ -3054,7 +3057,7 @@ void CCopybook::varReportLine(char *textArea,
 							j = 0;
 							while (j < len)
 							{
-								j += _mbclen(msgdata + j);
+								j += rfh_mbclen(msgdata + j);
 							}
 
 							len = j;
@@ -3834,7 +3837,7 @@ int CCopybook::getMaxChildren(int varnum)
 void CCopybook::logTraceEntry(const char *traceInfo)
 
 {
-	((CRfhutilApp *)AfxGetApp())->logTraceEntry(traceInfo);
+	rfhGetTrace()->logTraceEntry(traceInfo);
 }
 
 

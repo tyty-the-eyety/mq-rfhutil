@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "DataFormatter.h"
+#include "Copybook.h"
 #include "comsubs.h"
 #include "mqsubs.h"
 #include "rfh_header_chain.h"
@@ -15,6 +16,41 @@ namespace rfh
 {
 	namespace format
 	{
+		namespace
+		{
+			// DataArea::getCobolData, with the copy book named by the options
+			// instead of chosen in a file dialog
+			Result renderCobol(const DataFormatter & formatter, const RenderOptions & options, std::string & out)
+			{
+				if (options.copybookPath.empty())
+				{
+					return Result::failure("the COBOL view needs a copy book file");
+				}
+
+				CCopybook copybook;
+				copybook.resetCopybook();
+				int rc = copybook.parseCopyBook(options.copybookPath.c_str());
+				if (rc != 0)
+				{
+					char text[32];
+					snprintf(text, sizeof(text), " could not be read (%d)", rc);
+					return Result::failure("copy book file " + options.copybookPath + text);
+				}
+
+				if (formatter.fileSize > 0)
+				{
+					int maxSize = (copybook.getMaxLines() * 128) + 65536;
+					std::vector<char> textArea(maxSize + 8192, 0);
+					copybook.formatData(textArea.data(), maxSize, formatter.fileData, formatter.fileSize,
+						options.charFormat, options.numericFormat, options.pdNumericFormat,
+						formatter.fileCcsid, options.indent, options.checkData);
+					out = "Level  Ofs  Len Type  Occ Variable Name                  Value\r\n";
+					out += textArea.data();
+				}
+				return Result::success();
+			}
+		}
+
 		DataFormats defaultsFor(const Message & message, std::vector<std::string> & warnings)
 		{
 			DataFormats options;
@@ -109,7 +145,7 @@ namespace rfh
 				text = formatter.m_data_fix;
 				break;
 			case View::Cobol:
-				return Result::failure("the COBOL view is not supported yet");
+				return renderCobol(formatter, options, out);
 			}
 
 			Result result = Result::success();

@@ -178,12 +178,6 @@ TEST(Format_Options, ApplyReplacesOnlyTheFormats)
     EXPECT_EQ("book.cpy", o.copybookPath);
 }
 
-TEST(Format_Cobol, FailsUntilTheViewIsImplemented)
-{
-    std::string out;
-    EXPECT_FALSE(format::render(message("x"), View::Cobol, options(), out).ok());
-}
-
 // --- both view ----------------------------------------------------------------
 
 TEST(Format_Both, HexThenTextSixteenBytesALine)
@@ -391,4 +385,79 @@ TEST(Format_Fixed, EbcdicAccentedLettersAreShown)
     // signed char, which for this byte reads before the table
     std::string body = ebcdic("58=caf") + "\x51" + "\x01";
     EXPECT_EQ("58=caf\xe9\r\n", render(message(body, 500, 785), View::Fixed, options(500, CHAR_EBCDIC)));
+}
+
+// --- COBOL view ---------------------------------------------------------------
+
+namespace
+{
+    // a copy book with display, character, packed decimal and binary fields
+    std::string writeCopybook()
+    {
+        std::string path = testing::TempDir() + "rfhutil_customer.cpy";
+        FILE * f = fopen(path.c_str(), "w");
+        EXPECT_NE(nullptr, f);
+        fputs("       01  CUSTOMER-RECORD.\n"
+              "           05  CUST-ID          PIC 9(5).\n"
+              "           05  CUST-NAME        PIC X(10).\n"
+              "           05  BALANCE          PIC S9(5)V99 COMP-3.\n"
+              "           05  TXN-COUNT        PIC S9(4) COMP.\n", f);
+        fclose(f);
+        return path;
+    }
+
+    RenderOptions cobolOptions(int numericFormat)
+    {
+        RenderOptions o = options();
+        o.numericFormat = numericFormat;
+        o.pdNumericFormat = NUMERIC_HOST;
+        o.copybookPath = writeCopybook();
+        return o;
+    }
+
+    const std::string kCustomer = std::string("00042SMITH     ") + std::string("\x01\x23\x45\x6C", 4);
+}
+
+TEST(Format_Cobol, FieldsAreListedWithTheirOffsetsAndValues)
+{
+    EXPECT_EQ("Level  Ofs  Len Type  Occ Variable Name                  Value\r\n"
+              "01     0    21           CUSTOMER-RECORD\r\n"
+              "05     0     5 NUMB      CUST-ID                        00042\r\n"
+              "05     5    10 CHAR      CUST-NAME                      SMITH     \r\n"
+              "05    15     4 PD        BALANCE                        0123456\r\n"
+              "05    19     2 INT       TXN-COUNT                      0007\r\n"
+              "Copy book size 21, Data area size 21",
+              render(message(kCustomer + std::string("\x00\x07", 2)), View::Cobol, cobolOptions(NUMERIC_HOST)));
+}
+
+TEST(Format_Cobol, BinaryFieldsFollowTheIntegerEncoding)
+{
+    std::string out = render(message(kCustomer + std::string("\x07\x00", 2)), View::Cobol, cobolOptions(NUMERIC_PC));
+    EXPECT_NE(std::string::npos, out.find("TXN-COUNT                      0007\r\n"));
+}
+
+TEST(Format_Cobol, IndentShiftsTheLowerLevels)
+{
+    RenderOptions o = cobolOptions(NUMERIC_HOST);
+    o.indent = true;
+    std::string out = render(message(kCustomer + std::string("\x00\x07", 2)), View::Cobol, o);
+    EXPECT_NE(std::string::npos, out.find("\r\n01     0    21           CUSTOMER-RECORD\r\n 05     0     5 NUMB"));
+}
+
+TEST(Format_Cobol, WithoutACopybookTheViewFails)
+{
+    std::string out;
+    Result r = format::render(message(kCustomer), View::Cobol, options(), out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("the COBOL view needs a copy book file", r.text);
+}
+
+TEST(Format_Cobol, AnUnreadableCopybookFails)
+{
+    RenderOptions o = options();
+    o.copybookPath = testing::TempDir() + "rfhutil_no_such_copybook.cpy";
+    std::string out;
+    Result r = format::render(message(kCustomer), View::Cobol, o, out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0u, r.text.find("copy book file " + o.copybookPath + " could not be read"));
 }
