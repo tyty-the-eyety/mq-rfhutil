@@ -121,7 +121,7 @@ listing its differences from Windows.
 
 IBM's files are changed by scripts, not by hand, so the port can be re-applied after IBM changes a file and so reviewers can
 see exactly what changed. Each script asserts how many times every edit matched, checks every file before writing any, and
-refuses a second run (verified for all seven by running them against a copy of `HEAD`). Applied in this order:
+refuses a second run (verified for all seven by running them against a copy of `HEAD`). How each refuses: `port-parser-fixes.pl` checks an "already applied" marker string in each file (e.g. `workLen` in `xmlsubs.cpp`); the older scripts (`port-shared-sources.pl`, `port-windows-projects.pl`, `port-mqsubs.pl`) have no marker and fail because their edit patterns no longer match. Applied in this order:
 
 | Order | Script | Base | What it changes |
 |---|---|---|---|
@@ -279,6 +279,7 @@ Use `tools/index/q sym NAME` for the current range.
 | What the Qt app must offer | spec section 5; Plan 3 does not exist yet |
 | Release notes and what is unreleased | `CHANGELOG.md` `[Unreleased]` |
 | Upstream bugs found by the port | spec sections 9 and Plan 1/2A/2B "Background"; the draft issue is outside the repository |
+| What warns when put's headers and the MQMD format disagree? | `MqSession::put`, `core/mq/rfh_mq_session.cpp` (it walks the joined payload exactly as a get will; warning text `headers do not match the MQMD format chain; a get splits them differently`) |
 
 ## 10. Current status and what is next
 

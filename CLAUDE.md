@@ -4,12 +4,15 @@ Linux Qt6 port of IBM RFHUtil. This file is for agents working in this fork; lea
 
 ## Start here
 1. Read `docs/CODEMAP.md` first (layout, core API, scripts, build, policies, "where do I look for").
-2. Use `tools/index/q` before reading source. It refreshes itself and returns pointers, never whole files:
-   - `q where TOPIC`: which doc section or file covers a topic
-   - `q sym NAME`, `q outline PATH`: definitions and a file's table of contents, with line ranges
-   - `q search WORDS...`: ranked search (`getParsedData` is found by `parsed data`); `--in GLOB`, `--kind code|test|doc`
-   - `q refs NAME`: exact word uses (ripgrep, not semantic); `q tests-for NAME`: tests whose body mentions NAME
-   - `q read PATH START END`: exactly those lines (max 400 without `--force`)
+2. Use the right tool for the question. A trial on five unseen questions (59.6k tokens with the index, 56.6k with plain
+   grep, both fully correct) showed the index does not beat a targeted `rg` when you already know a word to search for.
+   - Exact names and strings (a constant, a message text, a function you can name): `rg -n`, as usual.
+   - Big or unfamiliar files (`RFHUtil/DataArea.cpp` is 25,800 lines): `tools/index/q outline PATH` for the table of
+     contents, then `q read PATH START END` for just the range you need.
+   - Definitions with ranges: `q sym NAME`; test coverage: `q tests-for NAME`; callers (exact word uses): `q refs NAME`.
+   - Concept questions: CODEMAP section 9 first. `q search WORDS...` and `q where TOPIC` are loose (the trial saw noise and
+     misses on multi-word concept queries); treat their results as hints, and fall back to `rg`.
+   - `q` refreshes itself and returns pointers, never whole files.
 3. Read only the returned ranges, not whole files. `RFHUtil/DataArea.cpp` is 25,800 lines: never open it whole.
 4. Before changing code, still read the exact lines you will change (`q read`). An index line is a pointer, not the code.
 5. If `q` prints `[index may be stale ...]`, run without `--no-refresh` or `q rebuild`.
