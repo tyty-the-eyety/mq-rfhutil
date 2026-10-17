@@ -228,10 +228,27 @@ namespace fileio {                        // core/fileio/rfh_message_file.h
   Result write(const std::string & path, const Message &, const WriteOptions &);
 }
 
-// Plan 2B (not yet implemented): format.
-namespace format {
-  Result render(const Message&, View, const RenderOptions&, std::string& out);  // View: Char|Hex|Both|Xml|Json|Parsed|Cobol|Fixed
+namespace format {                        // core/format/rfh_format.h
+  enum class View { Character, Hex, Both, Xml, Parsed, Cobol, Json, Fixed };   // DATA_CHARACTER ... DATA_FIX
+  struct DataFormats {                    // the formats that come from the message
+    int ccsid = 0, intFormat = NUMERIC_PC, charFormat = CHAR_ASCII,
+        numericFormat = NUMERIC_PC, pdNumericFormat = NUMERIC_PC;
+  };
+  struct RenderOptions {                  // DataFormats' five fields, then the user's choices
+    int ccsid, intFormat, charFormat, numericFormat, pdNumericFormat;
+    bool crlf, edi, bom, indent, checkData;
+    DisplayCodepages display = { rfh_get_acp(), 437 };   // core/platform/rfh_codepage.h
+    std::string conversionTableDir;       // MQ's conversion tables; empty for none
+    std::string copybookPath;             // COBOL view
+    void apply(const DataFormats &);      // replaces the five formats, keeps the choices
+  };
+  DataFormats defaultsFor(const Message &, std::vector<std::string> & warnings);   // after a get
+  DataFormats defaultsFor(const fileio::ReadResult &);                              // after a file read
+  Result render(const Message &, View, const RenderOptions &, std::string & out);
 }
+// render shows message.body (the headers are not shown) in the code page options.display.ansi,
+// with DataFormatter (RFHUtil/DataFormatter.{h,cpp}), the code the Windows Data tab uses.
+// DataFormatter is the shared implementation: Windows and the core compile the same file.
 
 // core/platform/rfh_trace.h: replaces logTraceEntry. 28 shared-source call sites already
 // use this shape, so the MFC application object implements it directly: CRfhutilApp
@@ -403,3 +420,44 @@ void rfhSetTrace(RfhTrace *);
   - a header type that appears twice is summed in the read status text
   - an MQMDE shorter than 72 bytes ends the chain
   - a failed repeat of a header type uses the cleared state (Windows reuses the earlier parse and can loop)
+- **Data tab views** (`format::render`; the lists in `core/format/rfh_format.h` and
+  `RFHUtil/DataFormatter.h` are authoritative):
+  - the COBOL view reads the copy book named by `RenderOptions::copybookPath`
+    (Windows asks for one) and fails when it cannot be opened, when IBM's parser
+    reports an error in it (Windows shows the partly parsed copy book) and when it
+    needs a buffer over 256 MB;
+  - the COBOL view does not list a group occurrence that starts past the end of the
+    data (Windows lists it with empty values), and an OCCURS DEPENDING ON without a
+    maximum lists only the occurrences that fit in the data;
+  - `DataFormatter` copies the data and every buffer it allocates followed by 32
+    zero bytes, because `xmlsubs.cpp` looks up to 18 bytes ahead (DataArea has 2);
+  - the both view allocates 65 bytes per 16 bytes of data (DataArea allocates 4 per
+    byte plus 65, which overflows above 1040 bytes);
+  - the fixed view indexes its display table with an unsigned byte (DataArea uses a
+    signed `char`, which reads before the table for bytes of 0x80 and above);
+  - the display table is built when the formatter is made; DataArea builds it in
+    the character or both view, so its fixed view relies on one having been shown;
+  - the EDI option of the character view stops skipping blanks at the end of the data;
+  - the parsed and XML views stop copying a tag name, an attribute list, an end tag
+    name or a value when its work area is full; a long name is cut short and
+    parsing goes on (DataArea overruns the work area);
+  - the UCS-2 fallback of the character view converts from the data (DataArea reads
+    a 4-unit array); a conversion table directory that leaves no room for a table
+    file name is treated as no tables (DataArea would overrun its 512-byte path
+    buffer);
+  - `JsonParse.cpp` and `xmlsubs.cpp` stay within their buffers on malformed data
+    (`tools/port/port-parser-fixes.pl`): the parse tree grows, `parse()` twice starts
+    from an empty tree, a pass that consumes nothing (`{]`) is an error, and
+    `processAttributes` takes the size of its output, and the parsed view's output
+    stays inside its buffer. Nesting deeper than 256 levels is rejected, so valid
+    JSON nested that deeply, which crashed IBM's parser by exhausting the stack,
+    now reports "Error parsing user data";
+  - IBM's copy book parser is hardened the same way (`tools/port/harden-copybook.pl`):
+    output that was in bounds is unchanged; malformed copy books and short data no
+    longer overrun buffers, divide by zero or loop for ever;
+  - the character view keeps IBM's disabled Unicode branch (`if (0)`), so UTF-16 and
+    UTF-8 bodies are shown byte by byte, as on Windows.
+- **Text conversions:** on Linux `rfh_WideCharToMultiByte` turns a character the code
+  page cannot represent into the caller's default character ('?' when none is
+  given), where Windows may choose a best-fit character; see
+  `core/platform/rfh_codepage.h`.

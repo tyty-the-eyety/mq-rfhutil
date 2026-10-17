@@ -17,6 +17,27 @@ Newest updates are at the top of this file
   finds DLQ, CICS, IMS, RFH1, RFH2 and MQMDE headers. `MqSession` carries MQ
   headers separately from the body: `put` warns when the headers do not match the
   MQMD format chain, and `get` returns the header warnings.
+- Data tab views: `format::render` shows a message body as the Windows Data tab
+  does (character, hex, both, XML, parsed, COBOL, JSON and fixed views), with the
+  Windows formatters, now shared as `RFHUtil/DataFormatter.cpp`. The COBOL view
+  uses IBM's copy book parser (`RFHUtil/Copybook.cpp`, now a shared source) and a
+  copy book path from the options. `format::defaultsFor` gives the settings
+  Windows starts with after a get or a file read, and `RenderOptions::apply`
+  replaces them after each one. The differences are listed in `core/format/rfh_format.h`
+  and `RFHUtil/DataFormatter.h`.
+- Win32 text conversions for the formatters (`rfh_WideCharToMultiByte`,
+  `rfh_MultiByteToWideChar`, `rfh_mbclen`, `_snprintf_s`) in `core/platform`.
+- `ctest -L memcheck` runs the parsing and formatting tests under a guard-page
+  allocator (`tests/tools/guardmalloc.cpp`, loaded with `LD_PRELOAD`), so a buffer
+  overrun faults at once.
+- A seeded fuzz test runs every view over pseudo-random messages (500 normally,
+  3000 under memcheck).
+- Edit scripts in `tools/port/` (`port-parser-fixes.pl`, `port-formatters.pl`,
+  `port-copybook.pl`, `harden-copybook.pl`) make the changes to IBM's files; each
+  checks every edit before writing and refuses a second run.
+- Pending, not in this release yet: making `DataArea` show its views through
+  `DataFormatter` and deleting its own copies. This changes Windows-only files and
+  waits for a Windows build of the portable core.
 
 ### Changed
 - comsubs, xmlsubs, JsonParse, XMLParse and Names use `core/platform` instead of
@@ -29,6 +50,20 @@ Newest updates are at the top of this file
 - The display and encoding constants moved from `rfhutil.h` to `rfhconst.h`;
   `mqsubs.cpp` is shared with the portable core and its unused
   `findMQInstallDirectory` was removed.
+
+### Fixed
+- The JSON and XML helpers (`JsonParse.cpp`, `xmlsubs.cpp`) no longer overrun
+  memory, recurse without limit or loop for ever on malformed data. The JSON
+  parsed view no longer overruns its buffer on valid JSON with long, deeply nested
+  keys. JSON nested deeper than 256 levels, which could exhaust the stack, now
+  reports "Error parsing user data".
+- The both view no longer writes past its buffer for messages over 1040 bytes.
+- Out-of-bounds reads in the fixed view (EBCDIC letters above 0x7f), the EDI option
+  of the character view and the UCS-2 fallback of the character view.
+- The parsed and XML views no longer overrun their work areas for long tag names,
+  attribute lists and values.
+- IBM's COBOL copy book parser no longer overruns buffers, divides by zero or loops
+  for ever on malformed copy books or short data.
 
 ## Build 240 (V10.0.0.0 build 240) July 2026
 * Merge the large PR from Matthias

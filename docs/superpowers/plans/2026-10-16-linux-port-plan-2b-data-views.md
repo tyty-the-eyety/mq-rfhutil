@@ -22,7 +22,9 @@
 - Memory-safety bugs in IBM's shared JSON and XML helpers are fixed and reported upstream (the owner's choice for this plan: "Fix them, report upstream"). They crash, hang or overrun memory on malformed messages, on Windows too, so a test cannot pin them.
 - Windows changes that cannot be compiled here wait for the owner's Windows build (Task 9).
 
-**Verified before writing:** every code block, script, edit and expected count in Tasks 1–9 was applied in order to a fresh export of the branch at `0e065a2` on Fedora 44 and built and tested after each task (`ctest`: 469, 478, 486, 490, 507, 518, 523, 525 and 525 tests, all passing, with the MQ client test skipped). Each failing-test step was checked to fail as described, and each memory fix was checked by putting IBM's original code back and seeing the memcheck test fault. Task 9 edits Windows files only: its script was run, the projects it edits pass `xmllint`, and `DataArea.cpp` keeps balanced braces and no references to what it removes; it has not been compiled.
+**Verified before writing:** every code block, script, edit and expected count in Tasks 1–9 was applied in order to a fresh export of the branch at `0e065a2` on Fedora 44 and built and tested after each task (`ctest`: 469, 478, 486, 490, 507, 518, 523, 525 and 525 tests, all passing, with the MQ client test skipped; these are the first-pass counts, and review changed them, see the Execution notes). Each failing-test step was checked to fail as described, and each memory fix was checked by putting IBM's original code back and seeing the memcheck test fault. Task 9 edits Windows files only: its script was run, the projects it edits pass `xmllint`, and `DataArea.cpp` keeps balanced braces and no references to what it removes; it has not been compiled.
+
+**Code blocks are the first-pass versions.** Review then changed much of the work (the Execution notes list the commits). Where a block disagrees with the repository, the commits are authoritative; the "Superseded by review" paragraphs under Tasks 5, 7 and 8 name the differences that a reader would trip over. The API as built: `format::{View, DataFormats, RenderOptions (with apply(const DataFormats &)), defaultsFor, render}`, where both `defaultsFor` overloads return `DataFormats`, `DisplayCodepages` lives in `core/platform/rfh_codepage.h`, and `render` keeps its `DataFormatter` on the heap.
 
 ---
 
@@ -37,11 +39,11 @@
 - **IBM disabled the Unicode character view.** `getCharacterData` has `if (0)` where it would convert UCS-2, and the call to `getCharDataUcs` is commented out, so Windows shows UTF-16 and UTF-8 bodies byte by byte. That is kept (and `getCharDataUcs`, which is dead, is not moved).
 - **MQ's conversion tables.** For EBCDIC code pages that Windows cannot convert, `DataArea` reads MQ's 512-byte tables (`<MQ install>\conv\table\XXXX34B0.tbl`, EBCDIC to UCS-2). Linux MQ ships the same tables in `/opt/mqm/lib/iconv`. `DataFormatter::conversionTableDir` names the directory; empty means no tables.
 - **Upstream bugs found while porting.** All are reported in the upstream issue (Task 10).
-  - Behaviour, pinned by tests:
+  - Behaviour, kept (the first four are reported upstream):
     - `MQEBC2ASC` never uses its table: it sets `MQCcsidOut = 0` before comparing it with the requested code page.
     - `xlateEbcdicChar`'s MQ fallback converts the character back to the source EBCDIC code page instead of the target.
     - `CJsonParse` keeps only the last element of an array and attaches the following text to the next name.
-    - The fixed view never builds its display table, so it relies on the character view having been shown first.
+    - `DataArea`'s fixed view never builds its display table, so it relies on the character or both view having been shown first. This is a documented difference, not a pinned bug: `DataFormatter` builds the table in its constructor, so the fixed view works on its own (`DataFormatter.FixedViewHasADisplayTableWithoutACharacterViewFirst`).
   - Memory, fixed:
     - The both view allocates 4 bytes per data byte plus 65, but needs 65 per 16. For messages over 1040 bytes it writes past its buffer.
     - The fixed view indexes its display table with a signed `char`, so translated bytes of 0x80 and above read before the table.
@@ -1703,6 +1705,8 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 `render` takes the code page and integer encoding from its options, not from `message.mqmd`: for a file without an MQMD they come from the file code page setting or EBCDIC detection, which `fileio::ReadResult` already reports. So each source has one owner of its defaults: `defaultsFor(message, warnings)` after a get (`processMessage` and `parseMsgHeaders`), `defaultsFor(readResult)` after a read. The COBOL view comes in Task 7.
 
+**Superseded by review.** `defaultsFor` returns `DataFormats` (the five formats), not `RenderOptions`, and `RenderOptions::apply(const DataFormats &)` copies them over the user's choices, so the tests assign `DataFormats f = defaultsFor(...)` and `o.apply(f)` where the blocks below write `RenderOptions o = defaultsFor(...)`. `charFormat` is taken from the repaired code page. `DisplayCodepages` moved to `core/platform/rfh_codepage.h`, and `rfh_format.h` has a `static_assert` that `View` follows `DATA_*`. `render` allocates its `DataFormatter` on the heap (`DataFormatter formatter;` below is the first-pass form). Commits `650b2eb` and `7d2c91d` are authoritative.
+
 - [ ] **Step 1: Write the failing tests**
 
 Create `tests/core/FormatTests.cpp`:
@@ -2346,6 +2350,8 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 Windows asks for a copy book file the first time the COBOL view is shown (`DataArea::readCopybookFile`, a file dialog) and formats the data with IBM's `CCopybook`. The core takes the path from `RenderOptions::copybookPath`. `getCobolData` and `readCopybookFile` stay in `DataArea`, because they are UI.
 
+**Superseded by review.** The COBOL view fails when the copy book cannot be opened or when IBM's parser reports an error in it, and when it needs more than `kMaxCobolBuffer` (256 MB); each failure has its own message. The copy book comes from `RenderOptions::copybookPath`. The test copy books are files with unique names. `tools/port/harden-copybook.pl` hardens IBM's parser (22 tests), and a group occurrence past the end of the data is not listed, which is documented in `rfh_format.h`. `defaultsFor` here returns `DataFormats`, as under Task 5. Commits `71e52de`, `8798ba8`, `3d403e4` and `6f0bf6d` are authoritative.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `tests/core/FormatTests.cpp`:
@@ -2609,6 +2615,8 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 - Test: `tests/core/FormatFuzzTests.cpp`
 
 A seeded fuzz test found the memory bugs that Tasks 3 and 4 fix; it stays as a regression net. Run normally (500 messages) it checks that no view fails or hangs. The memcheck run (3000 messages, about 6 seconds) checks that none leaves its buffers. While this plan was written, 2,000 messages were enough to catch IBM's original `xmlsubs.cpp`; 1,000 were not.
+
+**Superseded by review.** `defaultsFor` returns `DataFormats`, so the test applies the result with `RenderOptions::apply` instead of assigning it to a `RenderOptions` (see Task 5). The memcheck run uses 3000 messages (`FORMAT_FUZZ_ITERATIONS=3000`) and the plain run 500.
 
 - [ ] **Step 1: Add the test**
 
@@ -3110,4 +3118,31 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 ## Execution notes
 
-(Filled in during execution.)
+Executed on `features/linux-qt-port` from `c8c4ea7` (this plan) with review after each task. The code blocks in Tasks 1-8 are the verified first-pass versions; where review changed them the commits below are authoritative.
+
+Test counts (`ctest --preset linux-debug`; the baseline before this plan was 465, and the first-pass counts the plan quoted were 469, 478, 486, 490, 507, 518, 523 and 525):
+
+| After | Tests |
+|---|---|
+| Task 1 | 469, then 479 after the hardening commit |
+| Task 2 | 488, then 496 (`c5b9eb0` kept 496) |
+| Task 3 | 504, 509, 511, then 512 (`18c5ff3`) |
+| Task 4 | 516, 525, then 526 (`f320ff4`) |
+| Task 5 | 543, then 552 |
+| Task 6 | 563 |
+| Task 7 | 567, 593, then 595 |
+| Task 8 | 597 |
+
+The final run is 597 tests, all passing; 8 are skipped (the guard allocator's tests and `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under `ctest -L memcheck`, and the MQ client test). `ctest --preset linux-debug -L memcheck` runs 5 tests (`GuardMalloc`, `DataFormatter`, `Parsers`, `Format`, `FormatFuzz`), all passing.
+
+Commits, oldest first:
+- Task 1: `76ba44b` guard-page allocator; `3fe9671` hardening after review (huge sizes return NULL, mprotect failure, `pvalloc` and `free_sized`, a magic word aborts on foreign pointers, stronger death tests).
+- Task 2: `daef2f9` Win32 text conversions; `7da70d3` (flush iconv, CP932 not IBM932, surrogate pairs, `usedDefaultChar`, the five undefined bytes of 1252, `MB_PRECOMPOSED`, `_snprintf_s`); `c5b9eb0` (an unmappable pair gives two default characters; `rfh_convert_char` reimplemented on the two new functions).
+- Task 3: `0839066` JSON and XML fixes; `b02463f` (reads at `endPtr`, out of memory, `parse()` twice, `processAttributes` takes an output size and the four `DataArea.cpp` call sites pass it); `86bdb72` (`buildParsedArea` output overrun on valid JSON); `18c5ff3` (output that fits is identical to IBM's).
+- Task 4: `8842a0f` DataFormatter; `160e20a` (bounded copies in the parsed view, the table directory length, an exact `setData` allocation, the UCS-2 fallback loop); `f320ff4` (the end tag work area has room for '/').
+- Task 5: `650b2eb` render and `defaultsFor`; `7d2c91d` (`charFormat` from the repaired code page, `DataFormats` and `RenderOptions::apply`, `DisplayCodepages` moved to `rfh_codepage.h`, the `View` `static_assert`).
+- Task 6: `73bad07` pinning tests.
+- Task 7: `71e52de` COBOL view; `8798ba8` (`tools/port/harden-copybook.pl` on IBM's copy book parser, 22 tests); `3d403e4` (`renderCobol` buffer limit and distinct failure messages, unique test copy book files); `6f0bf6d` (`displayDat` hang fix and the documented occurrence difference).
+- Task 8: `ad1895f` seeded fuzz test, plus `memcheck.FormatFuzz` (3000 messages).
+- Task 9: pending, waiting for the owner's Windows build of Plan 1 (as 2A's Task 6 waits). Its script was dry-run on `ad1895f` in a scratch copy: `DataArea.cpp` 24 edits, `DataArea.h` 31, the two `.vcxproj` and two `.vcxproj.filters` files 2 each; `DataArea.cpp` goes from 25,801 to 21,574 lines; the four project files pass `xmllint`, braces balance and a second run refuses. Nothing of Task 9 is in the repository, and nothing was compiled.
+- Task 10: documentation (this commit). The upstream issue draft (entries 11 onwards) is kept outside the repository.
