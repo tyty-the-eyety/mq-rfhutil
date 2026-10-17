@@ -17,6 +17,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(RFHUTIL_BUILD_TESTS "Build the core tests" ON)
 option(RFHUTIL_FETCH_GTEST "Download GoogleTest when no installed package is found" OFF)
+option(RFHUTIL_BUILD_QT "Build the Qt6 application when Qt6 Widgets is installed" ON)
 
 set(RFHUTIL_DEFAULT_MQ_HOME "/opt/mqm")
 set(MQ_HOME "${RFHUTIL_DEFAULT_MQ_HOME}" CACHE PATH "IBM MQ installation directory (headers only; the library is loaded at run time)")
@@ -26,4 +27,8 @@ add_subdirectory(core)
 if(RFHUTIL_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(RFHUTIL_BUILD_QT)
+    add_subdirectory(qt)
 endif()
