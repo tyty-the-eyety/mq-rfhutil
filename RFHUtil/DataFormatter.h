@@ -44,7 +44,8 @@ http://www.apache.org/licenses/LICENSE-2.0
 // - the parsed view does not look for a trailing '/' or '\\' in an empty tag name
 //   ("< />"); DataArea reads, and may clear, the byte before the name;
 // - the table directory must leave room for a table file name (see tablesUsable);
-//   a longer one is treated as no tables, where DataArea overruns its file name;
+//   a longer one is treated as no tables (DataArea's directory comes from the
+//   registry, so this only arises for a directory a caller supplies);
 // - the UCS-2 fallback of the character view converts from the data itself;
 //   DataArea reads the units from a 4-unit local array;
 // - the display table is built when the formatter is made, and again by

@@ -4,7 +4,7 @@
 # the upstream report). Well-formed data gives exactly the same results as before.
 #   RFHUtil/JsonParse.{h,cpp}: grow the parse tree instead of overrunning it, stop
 #     at JPARSE_MAX_DEPTH levels of nesting, and stop when a pass of the parser
-#     consumes nothing (for example "{]", which loops forever).
+#     consumes nothing (for example "{]", where every pass inserts another entry until the tree overruns).
 #     Out of memory while growing the tree stops the parse with JPARSE_MALLOC_FAIL,
 #     a second parse() starts from an empty tree, and the two array reads of a
 #     comma no longer go past the end of the data. buildParsedArea (with
