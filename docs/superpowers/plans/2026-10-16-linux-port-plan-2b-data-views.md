@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Produce the Windows Data tab's eight views of a message body (character, hex, both, XML, parsed, COBOL, JSON and fixed) in the portable core, with the same text Windows shows, from one implementation that the Windows application shares.
+**Goal:** Produce the Windows Data tab's eight views of a message body (character, hex, both, XML, parsed, COBOL, JSON and fixed) in the portable core, with the same text Windows shows. Seven of the views are one implementation, `DataFormatter`, that the Windows application shares once Task 9 runs. The COBOL view shares IBM's copy book parser, but `DataArea::getCobolData`'s buffer and size logic stays on Windows and `render`'s `renderCobol` duplicates it.
 
 **Architecture:**
 
@@ -10,7 +10,7 @@
 - `core/format/rfh_format.{h,cpp}` wraps it: `format::render(message, view, options, out)` gives a view's text, and `format::defaultsFor(...)` gives the Data tab settings Windows starts with after a get or a file read.
 - IBM's COBOL copy book parser (`RFHUtil/Copybook.cpp`) becomes a shared source for the COBOL view.
 - A guard-page allocator makes buffer overruns fault in tests, and a seeded fuzz test runs every view under it. It found memory bugs in the formatters and in IBM's shared JSON and XML helpers; Tasks 3 and 4 fix them.
-- Task 9 (Windows, waiting for the owner's build) makes `DataArea` show its views through `DataFormatter` and removes its own copies, so there is one implementation.
+- Task 9 (Windows, waiting for the owner's build) makes `DataArea` show its views through `DataFormatter` and removes its own copies, so the seven `DataFormatter` views are one implementation. The COBOL view shares only the copy book parser: `getCobolData` stays in `DataArea`, and `renderCobol` repeats its buffer and size logic.
 
 **Tech Stack:** C++17, CMake, GoogleTest 1.17, iconv, Perl 5 (one-off edit scripts), IBM MQ conversion tables (optional).
 
@@ -24,7 +24,7 @@
 
 **Verified before writing:** every code block, script, edit and expected count in Tasks 1–9 was applied in order to a fresh export of the branch at `0e065a2` on Fedora 44 and built and tested after each task (`ctest`: 469, 478, 486, 490, 507, 518, 523, 525 and 525 tests, all passing, with the MQ client test skipped; these are the first-pass counts, and review changed them, see the Execution notes). Each failing-test step was checked to fail as described, and each memory fix was checked by putting IBM's original code back and seeing the memcheck test fault. Task 9 edits Windows files only: its script was run, the projects it edits pass `xmllint`, and `DataArea.cpp` keeps balanced braces and no references to what it removes; it has not been compiled.
 
-**Code blocks are the first-pass versions.** Review then changed much of the work (the Execution notes list the commits). Where a block disagrees with the repository, the commits are authoritative; the "Superseded by review" paragraphs under Tasks 5, 7 and 8 name the differences that a reader would trip over. The API as built: `format::{View, DataFormats, RenderOptions (with apply(const DataFormats &)), defaultsFor, render}`, where both `defaultsFor` overloads return `DataFormats`, `DisplayCodepages` lives in `core/platform/rfh_codepage.h`, and `render` keeps its `DataFormatter` on the heap.
+**Code blocks are the first-pass versions.** Review then changed much of the work (the Execution notes list the commits). Where a block disagrees with the repository, the commits are authoritative; the "Superseded by review" paragraphs under Tasks 5, 7 and 8 name the differences that a reader would trip over. The API as built: `format::{View, DataFormats, RenderOptions, defaultsFor, render, kMaxRenderBody}`, where `RenderOptions : DataFormats` (the five formats come from the base, `apply(const DataFormats &)` replaces them, and the user's choices are the members of `RenderOptions`), both `defaultsFor` overloads return `DataFormats`, `DisplayCodepages` and `RfhAcpScope` live in `core/platform/rfh_codepage.h`, and `render` keeps its `DataFormatter` on the heap. In `DataFormatter`, `display` is private: `setDisplay(const DisplayCodepages &)` sets it and `displayCodepages()` reads it; `m_data_ascii_UCS` is gone. The "Superseded by review" paragraphs under Tasks 3 to 9 name the later review changes (the commits after `3200502` are listed in the Execution notes under "Post-review fixes").
 
 ---
 
@@ -35,22 +35,25 @@
   - `fileCcsid` is the MQMD's code page, even when an RFH2 names another one for the body. `m_char_format` (ASCII, EBCDIC, Japanese, ...) and the integer encoding come from the last header. This is Windows' behaviour and is kept.
   - The user's choices (CR LF, EDI, byte order mark, indent, and the character format radio buttons) are parameters of the get methods.
   - Each view is cached until the message changes (`resetDisplayData`).
-- **The output is in the Windows ANSI code page**, not UTF-8: the formatters translate EBCDIC and DBCS data to `app->ansi` (Windows `GetACP()`). On Linux the core uses `rfh_get_acp()` from Plan 1: 1252 unless `RFHUTIL_ACP` says otherwise. A UI decodes the text from that code page.
+- **The output is in the Windows ANSI code page**, not UTF-8: the formatters translate EBCDIC and DBCS data to `app->ansi` (Windows `GetACP()`). On Linux the core uses `rfh_get_acp()` from Plan 1: 1252 unless `RFHUTIL_ACP` says otherwise. A UI decodes the text from that code page. The code pages come from `RenderOptions::display` (default `{ rfh_get_acp(), 437 }`). `DataFormatter::display` is private: `setDisplay(const DisplayCodepages &)` sets it and rebuilds the invalid-character table inside an `RfhAcpScope`, so the table follows `options.display.ansi` and not the process code page. `RfhAcpScope` (new in `rfh_codepage.h`) is a thread-local, nested override of `rfh_get_acp()`; Windows' `_mbclen` does not honour it, and the COBOL view's `rfh_mbclen` still uses the process ANSI code page.
 - **IBM disabled the Unicode character view.** `getCharacterData` has `if (0)` where it would convert UCS-2, and the call to `getCharDataUcs` is commented out, so Windows shows UTF-16 and UTF-8 bodies byte by byte. That is kept (and `getCharDataUcs`, which is dead, is not moved).
 - **MQ's conversion tables.** For EBCDIC code pages that Windows cannot convert, `DataArea` reads MQ's 512-byte tables (`<MQ install>\conv\table\XXXX34B0.tbl`, EBCDIC to UCS-2). Linux MQ ships the same tables in `/opt/mqm/lib/iconv`. `DataFormatter::conversionTableDir` names the directory; empty means no tables.
 - **Upstream bugs found while porting.** All are reported in the upstream issue (Task 10).
-  - Behaviour, kept (the first four are reported upstream):
+  - Behaviour, kept (all are reported upstream; the fourth is informational, and the fifth is pinned by two tests):
     - `MQEBC2ASC` never uses its table: it sets `MQCcsidOut = 0` before comparing it with the requested code page.
     - `xlateEbcdicChar`'s MQ fallback converts the character back to the source EBCDIC code page instead of the target.
     - `CJsonParse` keeps only the last element of an array and attaches the following text to the next name.
-    - `DataArea`'s fixed view never builds its display table, so it relies on the character or both view having been shown first. This is a documented difference, not a pinned bug: `DataFormatter` builds the table in its constructor, so the fixed view works on its own (`DataFormatter.FixedViewHasADisplayTableWithoutACharacterViewFirst`).
+    - `DataArea`'s fixed view never builds its display table (`invalidCharTable`), so it relies on the character or both view having been shown first. The Data tab starts in the character view, so the table is built before any other view is shown, and the entry is informational. It is a documented difference, not a pinned bug: `DataFormatter` builds the table when it is made, so the fixed view works on its own (`DataFormatter.FixedViewHasADisplayTableWithoutACharacterViewFirst`).
+    - `setEscChar`'s '#' branch is dead: it tests `bufferin[0]`, which is always '&' at its callers, so numeric character references (`&#65;`, `&#x41;`) are never decoded. Pinned by `XmlsubsSetEsc.NumericReferencesAreNotDecoded` and `Format_Xml.NumericCharacterReferencesAreShownAsTheyAre`.
+    - Exception to the owner's rule that behaviour bugs are pinned by tests: the first two (`MQEBC2ASC` and `xlateEbcdicChar`'s fallback) are not pinned by any test, because they are unreachable on Linux. `matchEbcdicToAscii` only returns code pages that iconv installs (37, 500, 1047, 1140, 1146, 1148, 20285, 20924, 1026, 1141, 20273, 1142, 20277, 1143, 20278), so the MQ table fallback never runs. The code is moved unchanged.
   - Memory, fixed:
     - The both view allocates 4 bytes per data byte plus 65, but needs 65 per 16. For messages over 1040 bytes it writes past its buffer.
     - The fixed view indexes its display table with a signed `char`, so translated bytes of 0x80 and above read before the table.
     - The EDI option of the character view skips blanks without checking for the end of the data.
-    - `xmlsubs.cpp` compares up to 18 bytes ahead without checking the remaining length (about 30 places).
+    - `xmlsubs.cpp` compared up to 18 bytes ahead without checking the remaining length: 25 `memcmp` calls between lines 42 and 429 of IBM's file, 3 peeks, 6 `skipBlanks` and 3 `skipQuotedString` uses (now `startsWith`, `skipBlanksTo` and `skipQuotedTo`), `setEscChar`'s 5-byte `memcpy`, and `processTag`, `findXmlValue` and `removeVarName` (see Task 3). They are really bounded since `0b1249e`; before that only `DataFormatter`'s pad hid them.
+    - The parsed view reads, and may clear, the byte before an empty tag name (`< />`); `port-formatters.pl` guards both uses.
     - `extractAttribute` copies an attribute value until its closing quote, with no check for the end of the text, into 8 KB buffers that a 16 KB attribute list can overflow.
-    - `CJsonParse` sizes its tree from a count of braces, colons and commas that malformed data can exceed. It loops forever when a pass consumes nothing (`{]` is enough) and recurses once per level of nesting.
+    - `CJsonParse` sizes its tree from a count of braces, colons and commas that malformed data can exceed. On `{]` a pass consumes nothing, but each iteration of the loop inserts another entry, so the tree overruns its allocation and the process crashes. It also recurses once per level of nesting.
 - **Shared sources.** Files under `RFHUtil/` that the core compiles are listed in `core/CMakeLists.txt` (`RFHUTIL_SHARED_SOURCES`). On Linux they get `core/compat/stdafx.h`, a prelude that blocks `rfhutil.h`, and `-fsigned-char` (MSVC's `char` is signed). They keep their historic warnings. Windows compiles the same files in `RFHUtil.vcxproj` and `Client/Client.vcxproj`. Windows-only calls are replaced with `rfh_*` functions from `core/platform`, which call the Win32 API on Windows and iconv or POSIX on Linux.
 - **Edit scripts.** The changes to IBM's files are made by one-off Perl scripts in `tools/port/`, like Plan 1's and 2A's. Every edit asserts how many times it matched, every file is checked before any is written, and a second run fails without changing anything.
 - **Memory checking.** `libasan` is not installed and the build does not need it. Task 1 adds a small guard-page allocator, loaded with `LD_PRELOAD`: each block ends at a page boundary followed by an inaccessible page, so any overrun faults at once. `ctest -L memcheck` runs the parsing suites under it.
@@ -65,7 +68,7 @@
 | Path | Status | Responsibility |
 |---|---|---|
 | `tests/tools/guardmalloc.cpp`, `tests/core/GuardMallocTests.cpp` | new | Guard-page allocator for the memcheck tests, and its self-test |
-| `core/platform/rfh_platform.{h,cpp}`, `rfh_codepage.{h,cpp}` | modified | `UINT`, `_snprintf_s`, `RFH_DIR_SEP`, `rfh_WideCharToMultiByte`, `rfh_MultiByteToWideChar`, `rfh_mbclen` |
+| `core/platform/rfh_platform.{h,cpp}`, `rfh_codepage.{h,cpp}` | modified | `UINT`, `_snprintf_s`, `RFH_DIR_SEP`, `rfh_WideCharToMultiByte`, `rfh_MultiByteToWideChar`, `rfh_mbclen`, `RfhAcpScope` (added by review: a thread-local override of `rfh_get_acp`) |
 | `RFHUtil/JsonParse.{h,cpp}`, `RFHUtil/xmlsubs.cpp` | modified (by script) | Stay within their buffers on malformed data |
 | `RFHUtil/DataFormatter.h`, `RFHUtil/DataFormatter.cpp` | new (prelude by hand, methods by script) | The formatters, shared by Windows and the core |
 | `RFHUtil/Copybook.{h,cpp}` | modified (by script) | IBM's copy book parser becomes a shared source |
@@ -73,6 +76,7 @@
 | `RFHUtil/DataArea.{h,cpp}`, the two `.vcxproj` and `.vcxproj.filters` | modified (by script, Task 9) | `DataArea` shows its views through `DataFormatter` |
 | `tools/port/port-parser-fixes.pl`, `port-formatters.pl`, `port-copybook.pl`, `port-dataarea-formatters.pl` | new | One-off scripted edits |
 | `tests/core/DataFormatterTests.cpp`, `FormatTests.cpp`, `FormatFuzzTests.cpp` | new | Tests of the views |
+| `tests/core/copybook_file.h` | new (review) | The shared test helper `CopybookFile`: a copy book file with a unique name, removed when the object goes. It replaces the two helpers the blocks below show (`writeCopybook` in Tasks 7 and 8) |
 | `tests/core/PlatformTests.cpp`, `tests/UnitTests/JsonParseTests.cpp`, `XmlsubsTests.cpp` | modified | New tests; the Windows UnitTests project runs these three files too |
 | `core/CMakeLists.txt`, `tests/CMakeLists.txt` | modified | New sources, tests and memcheck tests |
 
@@ -832,6 +836,14 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 These are IBM's shared sources, also used by the Windows build. The fixes change nothing for well-formed data. For malformed data, a JSON parse that would hang or overrun returns `JPARSE_MALFORMED` or `JPARSE_TOO_DEEP`, and the JSON view then shows Windows' usual "Error parsing user data". An unterminated XML attribute value ends at the end of the text.
 
+**Superseded by review (`0b1249e`).** The `xmlsubs.cpp` look-ahead over-reads are now really bounded; before, only `DataFormatter`'s pad hid them. `tools/port/port-parser-fixes.pl` makes 42 more count-checked edits (its `xmlsubs.cpp` total is 48; run on IBM's files from `0e065a2` it prints `JsonParse.h 2`, `JsonParse.cpp 17`, `xmlsubs.cpp 48`, `xmlsubs.h 1` and `DataArea.cpp 4 change(s)`):
+- 25 `memcmp` calls between lines 42 and 429 of IBM's file, 3 peeks, 6 `skipBlanks` and 3 `skipQuotedString` uses check the remaining length, through the new static helpers `startsWith`, `skipBlanksTo` and `skipQuotedTo`;
+- `setEscChar`'s 5-byte `memcpy` stops at the terminator;
+- `processTag`'s value loop stops at the NUL and at `maxLen - 1` (IBM's wrote `dataArea[maxLen]` and ran on past a NUL);
+- `findXmlValue` no longer skips the terminator when there is no '>';
+- `removeVarName` returns rc = 1 for an end tag longer than the name (IBM's compared from before the buffer).
+No signature changed. `findDelim` and `findDelimW` still read `datain[i - 1]` when `i == 0`; that is practically unreachable and left, because bounding it would change valid output (recorded here and in the Execution notes' open points; the code does not mention it). Reviewers compared IBM's original, `3200502` and HEAD over about 64,000 texts and found differences only where the original read or wrote out of bounds, plus two deliberate changes: `processTag` and `findXmlValue` now also stop at an embedded NUL (malformed data only). `PubSub.cpp:2007` passes `sizeof(tempCommand)` (32) for the 64-byte `tempQMgrName`; with `processTag`'s bound a queue manager name of 32 or more characters is now cut to 31 (it was 32). That is a deliberate change that the owner may reverse by changing the caller to `sizeof(tempQMgrName)` (which stops truncating at 31 as well) or `sizeof(tempCommand) + 1` (byte-identical). The tests are `XmlsubsLookAhead.*` (and `XmlsubsSetEsc.NumericReferencesAreNotDecoded`, which pins IBM's dead '#' branch) in `tests/UnitTests/XmlsubsTests.cpp`; all but `RemoveVarNameOfALongerEndTagDoesNotReadBeforeTheName` (ASan only) fault on the earlier code under the guard allocator with exact-size buffers, and `memcheck.Parsers` runs them.
+
 - [ ] **Step 1: Write the XML tests and the memcheck test**
 
 In `tests/UnitTests/XmlsubsTests.cpp`, replace:
@@ -1142,7 +1154,7 @@ git commit -s -m "fix(shared): keep the JSON and XML helpers within their buffer
 
 CJsonParse grows its tree instead of writing past it, stops at
 JPARSE_MAX_DEPTH (256) levels of nesting instead of exhausting the stack,
-and stops when a pass consumes nothing ("{]" looped forever). In xmlsubs,
+and stops when a pass consumes nothing ("{]" inserted entries until the tree overran its allocation). In xmlsubs,
 an attribute value without its closing quote ends at the end of the text,
 and attribute work areas are sized from the text. Well-formed data parses
 as before. These crash or corrupt memory on Windows too; reported upstream.
@@ -1161,6 +1173,12 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 - Test: `tests/core/DataFormatterTests.cpp`
 
 The script copies 15 methods from `DataArea.cpp` (the seven views and the helpers only they call) and leaves `DataArea.cpp` unchanged; Task 9 removes `DataArea`'s copies. The rewrites are mechanical (Win32 calls, 16-bit `wchar_t`, the MFC application object, the MQ table path) apart from three memory fixes that `DataFormatter.h` lists. `DataFormatter` copies its input, padded with zero bytes, so no caller can get the padding wrong.
+
+**Superseded by review.** Commits `0b1249e`, `98269d3`, `5474e88` and `4c13e56` changed this task:
+- The pad (`kLookAheadPad`, 32) is no longer needed for `xmlsubs.cpp`. It still covers the moved methods (`findcrlf`, the EDI segment tags and UNA delimiters, the CDATA comparisons in the XML and parsed views) and `CJsonParse`'s backslash peek, and it hides write overruns of up to 32 bytes in the work buffers. The header block below says "because xmlsubs.cpp compares up to 18 bytes ahead" in its first-pass form; `DataFormatter.h` has the corrected text.
+- `display` is private. `setDisplay(const DisplayCodepages &)` sets it and `displayCodepages()` reads it, so the tests and `render` call `setDisplay` where the blocks below assign `formatter.display`. `setDisplay` rebuilds the invalid-character table inside an `RfhAcpScope` (a thread-local, nested override of `rfh_get_acp()` in `rfh_codepage.h`, not honoured by Windows' `_mbclen`), so the table follows `options.display.ansi`; the COBOL view's `rfh_mbclen` still uses the process ANSI code page. IBM's `comsubs.cpp` is unchanged.
+- `m_data_ascii_UCS` is removed (`port-formatters.pl` drops the one moved line that set it, count-checked). The script's output is in the block below, now with the rewrites for the Unicode view, the tag, attribute, end tag and value copies, the UCS-2 loop and the empty tag name (`4c13e56`: `getNameValueData` no longer reads or clears the byte before an empty tag name such as `< />`; IBM's `DataArea.cpp` 5218 and 5266). Re-running the script on the prelude reproduces `DataFormatter.cpp`.
+- The table directory limit: `DataArea`'s directory comes from the registry, so a directory too long for the 512-byte path buffer applies to a caller-supplied directory (`DataFormatter::conversionTableDir`), not to `DataArea`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1185,7 +1203,7 @@ namespace
     {
         formatter.setData((const unsigned char *)text, (unsigned int)strlen(text));
         formatter.fileCcsid = 819;
-        formatter.display = kDisplay;
+        formatter.setDisplay(kDisplay);
     }
 }
 
@@ -1268,24 +1286,28 @@ http://www.apache.org/licenses/LICENSE-2.0
 // the Windows application and the portable core share one implementation. The
 // members keep DataArea's names, so the method bodies are DataArea's own.
 //
-// Give it the data with setData and set the other inputs, call one get...Data
-// method, then read its output member. Each
+// Give it the data with setData and the display code pages with setDisplay, set
+// the other inputs, call one get...Data method, then read its output member. Each
 // output is a NUL-terminated buffer in the display code page (app->ansi), owned by
 // the formatter and freed by its destructor. A formatter keeps its outputs, so a
 // second call for the same view and settings returns at once, as in DataArea.
 //
 // Deliberate differences from DataArea, all to stay within buffers:
 // - the data and every buffer the formatters allocate are followed by
-//   kLookAheadPad zero bytes, because xmlsubs.cpp compares up to 18 bytes ahead
-//   without checking the remaining length (DataArea's data has 2 zero bytes);
+//   kLookAheadPad zero bytes, because the moved methods read a few bytes past the
+//   end of their data without checking the remaining length (DataArea's data has
+//   2 zero bytes), and CJsonParse reads the byte after a backslash. xmlsubs.cpp
+//   no longer needs it. The pad also hides a write that overruns a work buffer by
+//   up to kLookAheadPad bytes;
 // - the both view allocates 65 bytes per 16 bytes of data; DataArea allocates
 //   4 per byte plus 65, and writes past the end for messages over 1040 bytes;
 // - the fixed view indexes its display table with an unsigned byte;
 // - the EDI option of the character view stops skipping blanks at the end of the
 //   data;
-// - the display table is built when the formatter is made. DataArea fills it with
-//   '.' and builds it in the first character or both view, which Windows always
-//   shows first; the other views use it without building it.
+// - the display table is built when the formatter is made, and again by
+//   setDisplay for the display code page. DataArea fills it with '.' and builds it
+//   in the first character or both view, which Windows always shows first; the
+//   other views use it without building it.
 
 #pragma once
 
@@ -1636,7 +1658,7 @@ printf "%d methods copied to RFHUtil/DataFormatter.cpp\n", scalar @found;
 ```
 
 Run: `perl tools/port/port-formatters.pl`
-Expected:
+Expected (the output at the end of the review; the first pass had fifteen lines of rewrites, without the Unicode view, the tag, attribute, end tag and value copies, the UCS-2 loop and the empty tag name):
 ```
 pointers traced as %8.8X                 10
 application object declarations           2
@@ -1645,13 +1667,21 @@ wchar_t is 32 bits on Linux               9
 LPCWSTR casts                             4
 WideCharToMultiByte                       7
 MultiByteToWideChar                       2
+no Unicode character view output (IBM disabled the view)  1
 CP_ACP is the display ANSI code page      1
 CP_OEMCP is the display OEM code page     1
 C-locale wcstombs                         2
 MQ table directory separator              3
-no table directory, no tables             3
+no usable table directory, no tables      3
 both view buffer                          1
 fixed view table index                    1
+tag name copy stops at the work area      2
+attribute copy stops at the work area     2
+end tag name terminator stops at the work area  2
+end tag name copy stops at the work area  2
+value copy stops at the work area         2
+UCS-2 fallback loop stays within the data  1
+empty tag name is not read before the name  2
 EDI blank skip                            1
 15 methods copied to RFHUtil/DataFormatter.cpp
 ```
@@ -1706,6 +1736,8 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 `render` takes the code page and integer encoding from its options, not from `message.mqmd`: for a file without an MQMD they come from the file code page setting or EBCDIC detection, which `fileio::ReadResult` already reports. So each source has one owner of its defaults: `defaultsFor(message, warnings)` after a get (`processMessage` and `parseMsgHeaders`), `defaultsFor(readResult)` after a read. The COBOL view comes in Task 7.
 
 **Superseded by review.** `defaultsFor` returns `DataFormats` (the five formats), not `RenderOptions`, and `RenderOptions::apply(const DataFormats &)` copies them over the user's choices, so the tests assign `DataFormats f = defaultsFor(...)` and `o.apply(f)` where the blocks below write `RenderOptions o = defaultsFor(...)`. `charFormat` is taken from the repaired code page. `DisplayCodepages` moved to `core/platform/rfh_codepage.h`, and `rfh_format.h` has a `static_assert` that `View` follows `DATA_*`. `render` allocates its `DataFormatter` on the heap (`DataFormatter formatter;` below is the first-pass form). Commits `650b2eb` and `7d2c91d` are authoritative.
+
+**Also superseded (`5474e88`, `587d0fa`, `98269d3`).** `RenderOptions` derives from `DataFormats` and no longer repeats its five fields (the struct listing below shows the first-pass form; `apply` stays), and `render` calls `setDisplay`. `render` fails, before copying anything, for a body larger than `kMaxRenderBody` (100 MB, 104,857,600 bytes, MQ's maximum message length), because the formatters size their buffers in `int` arithmetic. At the limit the largest size expressions of the moved code stay below 2^31, as read from the arithmetic (not by running a 100 MB render): the character view's `12N + 45` is 1,258,291,245 and the JSON view's `16N + 8192` is 1,677,729,792. The limit bounds the `int` arithmetic, not memory: a 100 MB body of commas can make `CJsonParse` ask for gigabytes.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2084,7 +2116,7 @@ namespace rfh
 			formatter.fileCcsid = options.ccsid;
 			formatter.fileIntFormat = options.intFormat;
 			formatter.m_char_format = options.charFormat;
-			formatter.display = options.display;
+			formatter.setDisplay(options.display);
 			formatter.conversionTableDir = options.conversionTableDir;
 
 			const unsigned char * text = NULL;
@@ -2350,7 +2382,7 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 Windows asks for a copy book file the first time the COBOL view is shown (`DataArea::readCopybookFile`, a file dialog) and formats the data with IBM's `CCopybook`. The core takes the path from `RenderOptions::copybookPath`. `getCobolData` and `readCopybookFile` stay in `DataArea`, because they are UI.
 
-**Superseded by review.** The COBOL view fails when the copy book cannot be opened or when IBM's parser reports an error in it, and when it needs more than `kMaxCobolBuffer` (256 MB); each failure has its own message. The copy book comes from `RenderOptions::copybookPath`. The test copy books are files with unique names. `tools/port/harden-copybook.pl` hardens IBM's parser (22 tests), and a group occurrence past the end of the data is not listed, which is documented in `rfh_format.h`. `defaultsFor` here returns `DataFormats`, as under Task 5. Commits `71e52de`, `8798ba8`, `3d403e4` and `6f0bf6d` are authoritative.
+**Superseded by review.** The COBOL view fails when the copy book cannot be opened or when IBM's parser reports an error in it, and when it needs more than `kMaxCobolBuffer` (256 MB); each failure has its own message. The copy book comes from `RenderOptions::copybookPath`. The test copy books are files with unique names, made by `tests/core/copybook_file.h` (`CopybookFile`), which replaces the `writeCopybook` helper in the blocks below. `tools/port/harden-copybook.pl` hardens IBM's parser (`8798ba8` added 22 tests, 15 `Format_CobolMalformed` and 7 `Format_CobolIbm`; `6f0bf6d` added 2 more; at HEAD the COBOL view has 33 tests: `Format_Cobol` 9, `Format_CobolIbm` 7 and `Format_CobolMalformed` 17), and a group occurrence past the end of the data is not listed, which is documented in `rfh_format.h`. `defaultsFor` here returns `DataFormats`, as under Task 5. Commits `71e52de`, `8798ba8`, `3d403e4` and `6f0bf6d` are authoritative.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2616,7 +2648,7 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 A seeded fuzz test found the memory bugs that Tasks 3 and 4 fix; it stays as a regression net. Run normally (500 messages) it checks that no view fails or hangs. The memcheck run (3000 messages, about 6 seconds) checks that none leaves its buffers. While this plan was written, 2,000 messages were enough to catch IBM's original `xmlsubs.cpp`; 1,000 were not.
 
-**Superseded by review.** `defaultsFor` returns `DataFormats`, so the test applies the result with `RenderOptions::apply` instead of assigning it to a `RenderOptions` (see Task 5). The memcheck run uses 3000 messages (`FORMAT_FUZZ_ITERATIONS=3000`) and the plain run 500.
+**Superseded by review.** `defaultsFor` returns `DataFormats`, so the test applies the result with `RenderOptions::apply` instead of assigning it to a `RenderOptions` (see Task 5). The fuzz test also uses `CopybookFile` instead of its own `writeCopybook`. The memcheck run uses 3000 messages (`FORMAT_FUZZ_ITERATIONS=3000`) and the plain run 500.
 
 - [ ] **Step 1: Add the test**
 
@@ -2797,6 +2829,8 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 - `DataArea`'s copies of the moved methods are removed, with the dead `getCharDataUcs` and the members and work areas only they used. About 4,300 lines go.
 - `DataFormatter.{h,cpp}` join both projects. `getCobolData` and `readCopybookFile` stay.
 
+**Changed by review.** `DataFormatter::display` is private, so the generated `formatter()` calls `setDisplay` (`DisplayCodepages codepages = { app->ansi, app->oem }; m_formatter->setDisplay(codepages);`) where the first pass assigned `display.ansi` and `display.oem`. The script below has that fix, and a dry run on a scratch copy of `8cc384f` gave the figures in Step 1. The generated `formatter()` uses only members that `DataFormatter.h` declares: `setData`, `source()`, `setDisplay`, `conversionTableDir`, `fileCcsid`, `fileIntFormat`, `m_char_format`, `m_error_msg` and `fileSize`. `getCobolData` keeps its own buffer and size logic, which `render`'s `renderCobol` duplicates.
+
 - [ ] **Step 1: Add and run the script**
 
 Create `tools/port/port-dataarea-formatters.pl`:
@@ -2909,8 +2943,8 @@ DataFormatter * DataArea::formatter()
 
 		m_formatter = new DataFormatter();
 		m_formatter->setData(fileData, fileSize);
-		m_formatter->display.ansi = app->ansi;
-		m_formatter->display.oem = app->oem;
+		DisplayCodepages codepages = { app->ansi, app->oem };
+		m_formatter->setDisplay(codepages);
 
 		// MQ's conversion tables, which DataArea looked for under the install directory
 		findMQInstallDirectory((unsigned char *)installDir, sizeof(installDir));
@@ -3025,7 +3059,7 @@ Client/Client.vcxproj.filters   2 edit(s)
 ```
 Then check:
 - `for f in RFHUtil/RFHUtil.vcxproj RFHUtil/RFHUtil.vcxproj.filters Client/Client.vcxproj Client/Client.vcxproj.filters; do xmllint --noout "$f" && echo "$f ok"; done` prints four `ok` lines.
-- `git diff --stat` shows about 136 insertions and 4,369 deletions.
+- `git diff --stat` shows 136 insertions and 4,369 deletions (`DataArea.cpp` 114 and 4,341, `DataArea.h` 6 and 28, the four project files 16 insertions); `DataArea.cpp` goes from 25,801 to 21,574 lines.
 - A second run fails with `RFHUtil/DataArea.cpp: XML work areas: matched 0 time(s), expected 1`.
 
 - [ ] **Step 2: Confirm Linux is unaffected**
@@ -3041,7 +3075,7 @@ git commit -s -m "refactor(mfc): show the Data tab views through DataFormatter
 
 DataArea's view methods forward to a DataFormatter made for the current
 message and deleted by resetDisplayData, so Windows and the portable core
-share one implementation. DataArea's copies of the formatters, the dead
+share the seven view formatters. DataArea's copies of the formatters, the dead
 getCharDataUcs and the state only they used are removed; DataFormatter
 joins the RFHUtil and Client projects. Not compiled here: the owner
 builds and checks it on Windows.
@@ -3058,7 +3092,7 @@ Ask the owner to build `RFHUtil.sln` (RFHUtil, rfhutilc and UnitTests) and check
 3. The views refresh after reading another file, after getting another message, and after an edit is written back (Allow Edit).
 4. Find works in the XML, parsed, JSON and fixed views. It reads the view buffers, which now belong to the formatter.
 5. The COBOL view still asks for a copy book and shows it.
-6. The JSON view of `{]` shows "Error parsing user data" instead of hanging.
+6. The JSON view of `{]` shows "Error parsing user data" instead of crashing.
 
 ---
 
@@ -3120,7 +3154,7 @@ Claude-Session: https://claude.ai/code/session_01JfjP6hazi7FDx4h8gULaS5"
 
 Executed on `features/linux-qt-port` from `c8c4ea7` (this plan) with review after each task. The code blocks in Tasks 1-8 are the verified first-pass versions; where review changed them the commits below are authoritative.
 
-Test counts (`ctest --preset linux-debug`; the baseline before this plan was 465, and the first-pass counts the plan quoted were 469, 478, 486, 490, 507, 518, 523 and 525):
+Test counts (`ctest --preset linux-debug`; the baseline before this plan was 465, and the first-pass counts the plan quoted were 469, 478, 486, 490, 507, 518, 523 and 525; the table runs through the post-review commits to 614):
 
 | After | Tests |
 |---|---|
@@ -3132,8 +3166,11 @@ Test counts (`ctest --preset linux-debug`; the baseline before this plan was 465
 | Task 6 | 563 |
 | Task 7 | 567, 593, then 595 |
 | Task 8 | 597 |
+| Post-review fixes | 607 (`0b1249e`), 608 (`587d0fa`), 610 (`98269d3`), 611 (`5474e88`), 612 (`4c13e56`), 614 (`c3e26ad`), 614 (`8cc384f`) |
 
-The final run is 597 tests, all passing; 8 are skipped (the guard allocator's tests and `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under `ctest -L memcheck`, and the MQ client test). `ctest --preset linux-debug -L memcheck` runs 5 tests (`GuardMalloc`, `DataFormatter`, `Parsers`, `Format`, `FormatFuzz`), all passing.
+The counts for the post-review commits are derived: the number of `TEST` macros in `tests/` at each commit, plus the one test that `ctest` counts beyond them (the same offset at `3200502`, 596 against 597, and at HEAD, 613 against 614). Only the 614 at HEAD was run for this pass.
+
+The final run is 614 tests, all passing; 8 are skipped (the guard allocator's tests and `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under `ctest -L memcheck`, and the MQ client test). `ctest --preset linux-debug -L memcheck` runs 5 tests (`GuardMalloc`, `DataFormatter`, `Parsers`, `Format`, `FormatFuzz`), all passing.
 
 Commits, oldest first:
 - Task 1: `76ba44b` guard-page allocator; `3fe9671` hardening after review (huge sizes return NULL, mprotect failure, `pvalloc` and `free_sized`, a magic word aborts on foreign pointers, stronger death tests).
@@ -3142,7 +3179,28 @@ Commits, oldest first:
 - Task 4: `8842a0f` DataFormatter; `160e20a` (bounded copies in the parsed view, the table directory length, an exact `setData` allocation, the UCS-2 fallback loop); `f320ff4` (the end tag work area has room for '/').
 - Task 5: `650b2eb` render and `defaultsFor`; `7d2c91d` (`charFormat` from the repaired code page, `DataFormats` and `RenderOptions::apply`, `DisplayCodepages` moved to `rfh_codepage.h`, the `View` `static_assert`).
 - Task 6: `73bad07` pinning tests.
-- Task 7: `71e52de` COBOL view; `8798ba8` (`tools/port/harden-copybook.pl` on IBM's copy book parser, 22 tests); `3d403e4` (`renderCobol` buffer limit and distinct failure messages, unique test copy book files); `6f0bf6d` (`displayDat` hang fix and the documented occurrence difference).
+- Task 7: `71e52de` COBOL view; `8798ba8` (`tools/port/harden-copybook.pl` on IBM's copy book parser, 22 tests: 15 `Format_CobolMalformed` and 7 `Format_CobolIbm`; at HEAD the COBOL view has 33 tests, `Format_Cobol` 9, `Format_CobolIbm` 7 and `Format_CobolMalformed` 17); `3d403e4` (`renderCobol` buffer limit and distinct failure messages, unique test copy book files); `6f0bf6d` (`displayDat` hang fix and the documented occurrence difference).
 - Task 8: `ad1895f` seeded fuzz test, plus `memcheck.FormatFuzz` (3000 messages).
-- Task 9: pending, waiting for the owner's Windows build of Plan 1 (as 2A's Task 6 waits). Its script was dry-run on `ad1895f` in a scratch copy: `DataArea.cpp` 24 edits, `DataArea.h` 31, the two `.vcxproj` and two `.vcxproj.filters` files 2 each; `DataArea.cpp` goes from 25,801 to 21,574 lines; the four project files pass `xmllint`, braces balance and a second run refuses. Nothing of Task 9 is in the repository, and nothing was compiled.
-- Task 10: documentation (this commit). The upstream issue draft (entries 11 onwards) is kept outside the repository.
+- Task 9: pending, waiting for the owner's Windows build of Plan 1 (as 2A's Task 6 waits). Its script was dry-run on `8cc384f` (after review changed `DataFormatter::display` to a private member) in a scratch copy: `DataArea.cpp` 24 edits, `DataArea.h` 31, the two `.vcxproj` and two `.vcxproj.filters` files 2 each; `DataArea.cpp` goes from 25,801 to 21,574 lines; the diff is 136 insertions and 4,369 deletions; the four project files pass `xmllint`, `DataArea.cpp` keeps the brace balance it had, the generated `formatter()` uses only members that `DataFormatter.h` declares, and a second run refuses (`RFHUtil/DataArea.cpp: XML work areas: matched 0 time(s), expected 1`). The corrected script is not in the repository until Task 9 runs; the owner keeps a copy in `~/projects/mq-rfhutil-notes/port-dataarea-formatters.pl`. Nothing of Task 9 is in the repository, and nothing was compiled.
+- Post-review fixes (all after `3200502`):
+  - `0b1249e` (Task 3): `fix(shared)` bounds the `xmlsubs.cpp` look-aheads (42 more count-checked edits in `port-parser-fixes.pl`, 10 more tests).
+  - `587d0fa` (Task 5): `fix(core)` `kMaxRenderBody`, 100 MB; `render` fails for a larger body before copying anything.
+  - `98269d3` (Tasks 2 and 4): `fix(core)` the display table follows `display.ansi`: `RfhAcpScope`, `DataFormatter::setDisplay`, `display` private.
+  - `5474e88` (Tasks 4, 5 and 8): `refactor(core)` `RenderOptions : DataFormats`, `m_data_ascii_UCS` removed, `tests/core/copybook_file.h` replaces the two `CopybookFile` helpers, the EDI blank-skip test, and the shim differences stated in `rfh_codepage.h`.
+  - `4c13e56` (Task 4): `fix(shared)` the parsed view no longer reads or clears the byte before an empty tag name (`port-formatters.pl` gains the rewrite 'empty tag name is not read before the name', count 2).
+  - `c3e26ad` (Task 3): `test(shared)` pins `setEscChar`'s dead '#' branch.
+  - `8cc384f` (Task 2): `test` the `RfhAcpScope` test runs on every platform.
+- Task 10: documentation, `3200502` and the final pass that adds these notes. The upstream issue draft (entries 11 onwards) is kept outside the repository.
+
+### Open points for the owner
+
+Facts only; none is decided here.
+- Task 9 and the owner's Windows build are pending. Adding `Copybook.cpp` and a `CopybookTests.cpp` to `tests/UnitTests/UnitTests.vcxproj` is also open: the Copybook hardening tests live in `FormatTests.cpp`, which needs `rfh_format`, so Windows CI would not run them.
+- Splitting an upstream PR: the memory fixes with their UnitTests first, then `DataFormatter`, then the core. `tools/port/*.pl` and `docs/superpowers` could stay out or go in their own PR.
+- Licence headers: `DataFormatter.{h,cpp}` carry "Copyright (c) IBM Corporation 2000, 2026" with a short custom paragraph, while `DataArea.cpp` and `Copybook.cpp` use "2000, 2018" with the full Apache boilerplate. The core, the tests and the scripts carry no header.
+- The commit trailers (`Co-Authored-By` and `Claude-Session`) and the DCO sign-off name (`tyty-the-eyety`).
+- `git diff --check` flags trailing whitespace at `RFHUtil/Copybook.h:244`, which is IBM's own line re-emitted by `port-copybook.pl`.
+- `PubSub.cpp:2007` passes `sizeof(tempCommand)` (32) for the 64-byte `tempQMgrName`. With `processTag`'s bound a queue manager name of 32 or more characters is now cut to 31 (it was 32). Changing the caller to `sizeof(tempQMgrName)` stops truncating at 31 as well; `sizeof(tempCommand) + 1` is byte-identical to the old behaviour.
+- Remaining UBSan findings in IBM's code, not fixed: `RFHUtil/Names.cpp:154` (a misaligned `int` load), `RFHUtil/Copybook.cpp:443` (signed overflow in `(*newOfs) = startOfs + length`, which wraps as on Windows), `findDelim`'s `data[-1]` (and `findDelimW`'s: `datain[i - 1]` when `i == 0`) and `removeVarName` reading `VarName + 1` for an empty name.
+- `atoi` overflow differs between glibc and MSVC for absurd PIC lengths.
+- The limit `kMaxRenderBody` bounds the `int` arithmetic, not memory; a 100 MB body of commas can make `CJsonParse` ask for gigabytes.

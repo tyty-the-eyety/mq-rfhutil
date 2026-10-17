@@ -234,8 +234,7 @@ namespace format {                        // core/format/rfh_format.h
     int ccsid = 0, intFormat = NUMERIC_PC, charFormat = CHAR_ASCII,
         numericFormat = NUMERIC_PC, pdNumericFormat = NUMERIC_PC;
   };
-  struct RenderOptions {                  // DataFormats' five fields, then the user's choices
-    int ccsid, intFormat, charFormat, numericFormat, pdNumericFormat;
+  struct RenderOptions : DataFormats {    // the five formats from the base, then the user's choices
     bool crlf, edi, bom, indent, checkData;
     DisplayCodepages display = { rfh_get_acp(), 437 };   // core/platform/rfh_codepage.h
     std::string conversionTableDir;       // MQ's conversion tables; empty for none
@@ -244,11 +243,16 @@ namespace format {                        // core/format/rfh_format.h
   };
   DataFormats defaultsFor(const Message &, std::vector<std::string> & warnings);   // after a get
   DataFormats defaultsFor(const fileio::ReadResult &);                              // after a file read
+  const size_t kMaxRenderBody = 100 * 1024 * 1024;   // MQ's maximum message length; render fails above it
   Result render(const Message &, View, const RenderOptions &, std::string & out);
 }
 // render shows message.body (the headers are not shown) in the code page options.display.ansi,
 // with DataFormatter (RFHUtil/DataFormatter.{h,cpp}), the code the Windows Data tab uses.
-// DataFormatter is the shared implementation: Windows and the core compile the same file.
+// DataFormatter is the shared implementation of the seven views other than COBOL: Windows and the
+// core compile the same file. Its display code pages are private, set by setDisplay (which also
+// rebuilds the invalid-character table for display.ansi inside an RfhAcpScope, rfh_codepage.h).
+// The COBOL view shares only IBM's copy book parser: DataArea::getCobolData keeps its own
+// buffer and size logic, and render's renderCobol repeats it.
 
 // core/platform/rfh_trace.h: replaces logTraceEntry. 28 shared-source call sites already
 // use this shape, so the MFC application object implements it directly: CRfhutilApp
@@ -429,35 +433,86 @@ void rfhSetTrace(RfhTrace *);
   - the COBOL view does not list a group occurrence that starts past the end of the
     data (Windows lists it with empty values), and an OCCURS DEPENDING ON without a
     maximum lists only the occurrences that fit in the data;
+  - `render` fails for a body larger than `kMaxRenderBody`, 100 MB (104,857,600
+    bytes, MQ's maximum message length), before copying anything. The formatters
+    size their buffers in `int` arithmetic, which wraps for the character view above
+    about 178 MB and the JSON view above about 134 MB. At the limit the largest
+    size expressions of the moved code stay below 2^31 (read from the arithmetic,
+    not by running a 100 MB render): the character view's 12N + 45 is
+    1,258,291,245 and the JSON view's 16N + 8192 is 1,677,729,792. The limit bounds
+    the `int` arithmetic, not memory: a 100 MB body of commas can make `CJsonParse`
+    ask for gigabytes;
   - `DataFormatter` copies the data and every buffer it allocates followed by 32
-    zero bytes, because `xmlsubs.cpp` looks up to 18 bytes ahead (DataArea has 2);
+    zero bytes (`kLookAheadPad`), because the moved methods read a few bytes past the
+    end of their data (`findcrlf`, the EDI segment tags and UNA delimiters, the CDATA
+    comparisons in the XML and parsed views; DataArea's data has 2 zero bytes) and
+    `CJsonParse` reads the byte after a backslash. `xmlsubs.cpp` no longer needs it:
+    its look-aheads check the remaining length. The pad also hides write overruns of
+    up to 32 bytes in the work buffers, which the guard allocator therefore does not
+    find;
   - the both view allocates 65 bytes per 16 bytes of data (DataArea allocates 4 per
     byte plus 65, which overflows above 1040 bytes);
   - the fixed view indexes its display table with an unsigned byte (DataArea uses a
     signed `char`, which reads before the table for bytes of 0x80 and above);
-  - the display table is built when the formatter is made; DataArea builds it in
-    the character or both view, so its fixed view relies on one having been shown;
+  - the display table is built when the formatter is made, and again by
+    `setDisplay` for `options.display.ansi` (inside an `RfhAcpScope`, a thread-local
+    override of `rfh_get_acp()` that Windows' `_mbclen` does not honour, so the COBOL
+    view's `rfh_mbclen` still uses the process ANSI code page); DataArea builds it
+    in the character or both view, so its fixed view relies on one having been shown,
+    which the Data tab (it starts in the character view) always does;
   - the EDI option of the character view stops skipping blanks at the end of the data;
   - the parsed and XML views stop copying a tag name, an attribute list, an end tag
     name or a value when its work area is full; a long name is cut short and
     parsing goes on (DataArea overruns the work area);
+  - the parsed view does not read, or clear, the byte before an empty tag name
+    (`< />`; `getNameValueData`, `DataArea.cpp` 5218 and 5266);
   - the UCS-2 fallback of the character view converts from the data (DataArea reads
     a 4-unit array); a conversion table directory that leaves no room for a table
-    file name is treated as no tables (DataArea would overrun its 512-byte path
-    buffer);
+    file name is treated as no tables (a caller-supplied directory could overrun the
+    512-byte path buffer; DataArea's directory comes from the registry, so this
+    applies to `DataFormatter`, not to `DataArea`);
   - `JsonParse.cpp` and `xmlsubs.cpp` stay within their buffers on malformed data
     (`tools/port/port-parser-fixes.pl`): the parse tree grows, `parse()` twice starts
-    from an empty tree, a pass that consumes nothing (`{]`) is an error, and
+    from an empty tree, a pass that consumes nothing (`{]`; IBM's loop inserted another
+    entry on each pass until the tree overran its allocation) is an error, and
     `processAttributes` takes the size of its output, and the parsed view's output
-    stays inside its buffer. Nesting deeper than 256 levels is rejected, so valid
+    stays inside its buffer. In `xmlsubs.cpp` every comparison and peek ahead
+    (25 `memcmp` calls between lines 42 and 429, 3 peeks, 6 `skipBlanks` and 3
+    `skipQuotedString` uses, `setEscChar`'s 5-byte `memcpy`) checks the remaining
+    length, `processTag`'s value loop stops at the NUL and at `maxLen - 1`,
+    `findXmlValue` no longer skips the terminator and `removeVarName` returns rc = 1
+    for an end tag longer than the name; no signature changed. `processTag` and
+    `findXmlValue` now also stop at an embedded NUL (malformed data only).
+    `findDelim` and `findDelimW` still read `datain[i - 1]` when `i == 0`
+    (practically unreachable, and bounding it would change valid output). With
+    `processTag`'s bound a queue manager name of 32 or more characters is cut to 31
+    in `PubSub.cpp:2007`, which passes `sizeof(tempCommand)` (32) for the 64-byte
+    `tempQMgrName` (it was cut to 32; the owner may change the caller to
+    `sizeof(tempQMgrName)`, which stops truncating at 31 as well, or to
+    `sizeof(tempCommand) + 1`, which is byte-identical). Nesting deeper than 256 levels is rejected, so valid
     JSON nested that deeply, which crashed IBM's parser by exhausting the stack,
     now reports "Error parsing user data";
   - IBM's copy book parser is hardened the same way (`tools/port/harden-copybook.pl`):
     output that was in bounds is unchanged; malformed copy books and short data no
     longer overrun buffers, divide by zero or loop for ever;
   - the character view keeps IBM's disabled Unicode branch (`if (0)`), so UTF-16 and
-    UTF-8 bodies are shown byte by byte, as on Windows.
+    UTF-8 bodies are shown byte by byte, as on Windows;
+  - IBM's `setEscChar` never decodes numeric character references: its '#' branch
+    tests `bufferin[0]`, which is always '&' at its callers, so `&#65;` and `&#x41;`
+    are shown as they are, while `&lt;` becomes '<' (pinned by
+    `XmlsubsSetEsc.NumericReferencesAreNotDecoded` and
+    `Format_Xml.NumericCharacterReferencesAreShownAsTheyAre`; reported upstream);
+  - the MQ table fallbacks (`MQEBC2ASC`, which never uses the table it loads, and
+    `xlateEbcdicChar`'s conversion back to the source code page) are moved unchanged
+    and are unreachable on Linux, because `matchEbcdicToAscii` only returns code
+    pages that iconv installs; no test pins them.
 - **Text conversions:** on Linux `rfh_WideCharToMultiByte` turns a character the code
   page cannot represent into the caller's default character ('?' when none is
   given), where Windows may choose a best-fit character; see
-  `core/platform/rfh_codepage.h`.
+  `core/platform/rfh_codepage.h`. Three more differences are stated there:
+  `rfh_MultiByteToWideChar` ends the conversion at an invalid byte or an incomplete
+  sequence on Linux, where Windows uses a default character and carries on;
+  `rfh_mbclen` returns 2 for a lead byte just before the terminator (Windows may
+  return 1); and `rfh_convert_char` and `rfh_WideCharToMultiByte` accept a default
+  character for 1208 and 65001 on Linux, where Windows rejects `lpDefaultChar` for
+  `CP_UTF8`.

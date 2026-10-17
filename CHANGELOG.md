@@ -25,6 +25,13 @@ Newest updates are at the top of this file
   Windows starts with after a get or a file read, and `RenderOptions::apply`
   replaces them after each one. The differences are listed in `core/format/rfh_format.h`
   and `RFHUtil/DataFormatter.h`.
+- `format::render` refuses a body larger than `kMaxRenderBody`, 100 MB (104,857,600
+  bytes, MQ's maximum message length), before copying anything: the formatters size
+  their buffers in `int` arithmetic, which wraps above about 178 MB. The limit
+  bounds that arithmetic, not memory.
+- The Data tab's display table follows the display code page (`options.display.ansi`),
+  not the process's: `DataFormatter::setDisplay` rebuilds it inside an `RfhAcpScope`
+  (`core/platform/rfh_codepage.h`, a thread-local override of `rfh_get_acp()`).
 - Win32 text conversions for the formatters (`rfh_WideCharToMultiByte`,
   `rfh_MultiByteToWideChar`, `rfh_mbclen`, `_snprintf_s`) in `core/platform`.
 - `ctest -L memcheck` runs the parsing and formatting tests under a guard-page
@@ -53,10 +60,20 @@ Newest updates are at the top of this file
 
 ### Fixed
 - The JSON and XML helpers (`JsonParse.cpp`, `xmlsubs.cpp`) no longer overrun
-  memory, recurse without limit or loop for ever on malformed data. The JSON
-  parsed view no longer overruns its buffer on valid JSON with long, deeply nested
-  keys. JSON nested deeper than 256 levels, which could exhaust the stack, now
-  reports "Error parsing user data".
+  memory, recurse without limit or crash on malformed data (for example `{]`, where
+  each pass of IBM's loop inserted another entry until the tree overran its
+  allocation). The JSON parsed view no longer overruns its buffer on valid JSON with
+  long, deeply nested keys. JSON nested deeper than 256 levels, which could exhaust
+  the stack, now reports "Error parsing user data".
+- The look-aheads in `xmlsubs.cpp` (37 comparisons, peeks and skips, `setEscChar`'s
+  5-byte copy, `processTag`, `findXmlValue` and `removeVarName`) stop at the end of
+  the data; before, they read past it and only the Data tab's padding hid it.
+  `processTag` and `findXmlValue` now also stop at an embedded NUL. A queue manager
+  name of 32 or more characters read through `processTag` in `PubSub.cpp` is now cut
+  to 31 characters (it was 32), because that caller passes `sizeof(tempCommand)` for
+  a 64-byte buffer.
+- The parsed view no longer reads, or clears, the byte before an empty tag name
+  (`< />`).
 - The both view no longer writes past its buffer for messages over 1040 bytes.
 - Out-of-bounds reads in the fixed view (EBCDIC letters above 0x7f), the EDI option
   of the character view and the UCS-2 fallback of the character view.
@@ -64,6 +81,8 @@ Newest updates are at the top of this file
   attribute lists and values.
 - IBM's COBOL copy book parser no longer overruns buffers, divides by zero or loops
   for ever on malformed copy books or short data.
+- Not changed, and pinned by tests: `setEscChar` never decodes numeric character
+  references (`&#65;` is shown as it is), which is IBM's behaviour.
 
 ## Build 240 (V10.0.0.0 build 240) July 2026
 * Merge the large PR from Matthias
