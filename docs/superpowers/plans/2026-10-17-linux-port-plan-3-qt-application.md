@@ -10,7 +10,7 @@
 - The gap tasks come first (Tasks 4–19). Each adds one function or option to `core/` with GoogleTest tests, before any widget uses it. The core stays free of UI: Task 3 adds a test that fails if `core/` mentions a dialog, an exit call or a UI toolkit.
 - One worker `QThread` owns the `MqSession` (Task 20). The UI submits jobs and receives results as signals; a Get with a wait interval is cancellable.
 - `Operations` (Task 23) reproduces the button flows of `General.cpp` and `DataArea` on top of the controller and the document model; the three tab classes only translate between widgets and plain structs.
-- Task 29 (Windows, gated) makes `MQMDPAGE`'s put, get and ID-display paths delegate to the core, so one implementation remains (design section 8, criterion 5).
+- Task 30 (Windows, gated) makes `MQMDPAGE`'s put, get and ID-display paths delegate to the core, so one implementation remains (design section 8, criterion 5).
 
 **Tech Stack:** C++17, Qt 6.11 (Widgets, Test), CMake 3.21+ with AUTOMOC and AUTOUIC, GoogleTest 1.17 for the core, IBM MQ 9.4 (bindings and client, loaded at run time), Perl 5 for the one gated edit script.
 
@@ -19,10 +19,11 @@
 **Owner decisions this plan follows:**
 - This is a fork tested in the wild; nothing here is written for an upstream PR.
 - Memory-safety bugs in IBM's shared sources are fixed with a test through a `tools/port/*.pl` script; IBM behaviour bugs are pinned by tests; output for valid input stays byte-identical to IBM's (CLAUDE.md, CODEMAP section 7).
-- Windows changes that cannot be compiled here wait for the owner's Windows build (Task 29), as 2A Task 6 and 2B Task 9 do.
+- Windows changes that cannot be compiled here wait for the owner's Windows build (Task 30), as 2A Task 6 and 2B Task 9 do.
 - The Windows status wording is kept (design section 5: "matching the Windows wording").
+- Decided by the owner on 2026-10-17: the four Windows defects are fixed on purpose (the Cluster Open `Group` radio, the purge error text order, Find at the end of the data, Find Hex without EBCDIC translation); the local queue managers are listed from `mqs.ini`; passwords are kept in memory only, for now; and a golden message file set is created (Task 29).
 
-**Verified before writing:** Task 1's code was built and run in a scratch copy of the branch at `8a6a114` on Fedora 44 with Qt 6.11.2: the app target, the headless Qt test and the full suite (615 tests) passed, the app starts under `QT_QPA_PLATFORM=offscreen`, and the project still configures with `-DRFHUTIL_BUILD_QT=OFF`. **Tasks 2–30 are not compiled.** They give exact interfaces (the contract between tasks), the Windows source to port with file and line, the test names with what each asserts, and the commands; the implementer writes and compiles the code under test and review. An implementer may add members to an interface but must report before renaming or removing one.
+**Verified before writing:** Task 1's code was built and run in a scratch copy of the branch at `8a6a114` on Fedora 44 with Qt 6.11.2: the app target, the headless Qt test and the full suite (615 tests) passed, the app starts under `QT_QPA_PLATFORM=offscreen`, and the project still configures with `-DRFHUTIL_BUILD_QT=OFF`. **Tasks 2–31 are not compiled.** They give exact interfaces (the contract between tasks), the Windows source to port with file and line, the test names with what each asserts, and the commands; the implementer writes and compiles the code under test and review. An implementer may add members to an interface but must report before renaming or removing one.
 
 ---
 
@@ -45,7 +46,7 @@
 | G13 | OS user name | 5 |
 | G14 | Offset to text position; the byte search | 18 (locate), 26 (search) |
 | G15 | Purge as Windows does it | 19 |
-| G16 | File options | 23 (mapping tests); Save Headers is an open point |
+| G16 | File options | 23 (mapping tests), 29 (golden round trips); Save Headers is an open point |
 | G17 | Settings, trace, audit records | 21 (settings, trace); audit records are an open point |
 | G18 | Flow rules in `DataArea` | 22 (enable rules), 23 (flows) |
 
@@ -55,7 +56,7 @@
 |---|---|
 | 1. The `rfhutil-qt` RPM builds and installs | None: packaging is Plan 4. Tasks 1 and 27 make the executable that Plan 4 packages. |
 | 2. Connect in both modes, Write Q from a file, Read Q, Browse first/next/prev; Data and MQMD tabs show the message; Save File writes it | 1, 4–7, 9, 10, 13–16, 20, 22–28 |
-| 3. Golden files round-trip; Linux files match Windows | 23 (Save File and Open File use `fileio`), 28 (`saveFileRoundTrips`). The Windows-written golden files do not exist in the repository: open point. |
+| 3. Golden files round-trip; Linux files match Windows | 29 (the golden set, its round-trip tests and the Windows comparison procedure), 23 (Save File and Open File use `fileio`), 28 (`saveFileRoundTrips`). The set is built from the MQ structure layouts, not by Windows: it is confirmed against Windows only when the owner runs the procedure of Task 29. |
 | 4. Core unit, golden, integration and GUI smoke tests pass locally; Windows CI builds the MFC app | 2, 3 and every core task (GoogleTest), 20–27 (Qt Test), 28 (GUI smoke against `TEST_QM`). Windows CI is the owner's. |
 | 5. Every moved `DataArea` function is deleted from `DataArea`, not duplicated | 29 (the `MQMDPAGE` put, get and ID-display paths), with 2A Task 6 and 2B Task 9. Until those run, `MQMDPAGE.cpp` still holds its own copies. |
 
@@ -65,8 +66,9 @@
 |---|---|---|
 | 5 | `rfh_current_user()` in `core/platform/rfh_platform.{h,cpp}`, with a Windows branch (`GetUserNameEx`) | `rfh_platform.cpp` is compiled by `RFHUtil.vcxproj`, `Client.vcxproj` and `UnitTests.vcxproj` |
 | 5 | `PlatformTests.cpp` gains a test | `UnitTests.vcxproj` builds that file |
-| 6, 7, 8 | New functions in `core/message/rfh_mqmd_fields.{h,cpp}` and new `core/message/rfh_id_display.{h,cpp}` | `rfh_mqmd_fields.cpp` is compiled by both Windows projects only once 2A Task 6 has run (its script adds it); `rfh_id_display.cpp` is added to the projects only by Task 29, so until then it is Linux only |
+| 6, 7, 8 | New functions in `core/message/rfh_mqmd_fields.{h,cpp}` and new `core/message/rfh_id_display.{h,cpp}` | `rfh_mqmd_fields.cpp` is compiled by both Windows projects only once 2A Task 6 has run (its script adds it); `rfh_id_display.cpp` is added to the projects only by Task 30, so until then it is Linux only |
 | 29 | `tools/port/port-mqmdpage-putget.pl` edits `RFHUtil/MQMDPAGE.{h,cpp}` and both `.vcxproj`/`.filters` files | These are MFC files; the script is the only place Plan 3 edits IBM's files |
+| 29 | Golden files, their generator, tests and a comparison script | None in the sources; confirming them needs a Windows run of the procedure in `tests/core/golden/MANIFEST.md` |
 | 4, 9–19, 20–28 | `core/mq/*`, `core/format/*`, `qt/*` | Not compiled by any Windows project; Linux only |
 
 The rest of Plan 3 does not touch Windows-compiled sources. No task edits an `RFHUtil/*` file by hand.
@@ -105,8 +107,9 @@ The rest of Plan 3 does not touch Windows-compiled sources. No task edits an `RF
 | `core/format/rfh_format.*` | modified | `locate` |
 | `tests/core/fake_mq.h`, `tests/core/CoreHasNoUiTests.cmake`, `tests/core/*Tests.cpp` | new/modified | Core tests |
 | `qt/tests/*Tests.cpp` | new | Qt tests |
-| `tools/port/port-mqmdpage-putget.pl` | new (Task 29) | Gated MFC edit |
-| `docs/CODEMAP.md`, `CHANGELOG.md`, spec | modified | Task 30 |
+| `tests/core/golden/*`, `tests/core/GoldenFileTests.cpp`, `tools/golden/*` | new (Task 29) | Golden message files, their generator and tests, the Windows comparison script |
+| `tools/port/port-mqmdpage-putget.pl` | new (Task 30) | Gated MFC edit |
+| `docs/CODEMAP.md`, `CHANGELOG.md`, spec | modified | Task 31 |
 
 ---
 
@@ -503,7 +506,7 @@ std::string rfh_current_user();
 
 ### Task 6: `toPutMqmd` and `applyAfterPut`, the MQMD a put sends (G11, put half)
 
-**Maps to:** criterion 2 (Write Q). **Windows-visible:** functions only; adopted by `MQMDPAGE` in Task 29. **Files:**
+**Maps to:** criterion 2 (Write Q). **Windows-visible:** functions only; adopted by `MQMDPAGE` in Task 30. **Files:**
 - Modify: `core/message/rfh_mqmd_fields.{h,cpp}`, `tests/core/MqmdFieldsTests.cpp`
 
 Every Windows put builds its MQMD with `MQMDPAGE::setMessageMQMD` (`MQMDPAGE.cpp:2408-2692`), whose rules differ from `buildMQMD` (which `toMqmd` ports for the file-write path): ids are copied only when non-zero; the report, flag, offset and group rules differ; user id, accounting token, Appl fields and Put Date/Time are taken only with Set Iden or Set All; a blank user id becomes the OS user (first 12 characters); a blank date becomes now; reply fields are blank padded, not truncated (inv 3.3, G11). After a put only MsgId, Seq No, Offset and GroupId go back to the page (`updateMQMDafterPut`, `MQMDPAGE.cpp:2694`).
@@ -552,7 +555,7 @@ void fromGetMqmd(const MQMD2 & received, MqmdFields & fields);
 
 ### Task 8: ID display and edit rules (G11, ID display)
 
-**Maps to:** criterion 2 (MQMD tab). **Windows-visible:** no, until Task 29 adds the file to the projects. **Files:**
+**Maps to:** criterion 2 (MQMD tab). **Windows-visible:** no, until Task 30 adds the file to the projects. **Files:**
 - Create: `core/message/rfh_id_display.{h,cpp}`, `tests/core/IdDisplayTests.cpp`
 - Modify: `core/CMakeLists.txt`, `tests/CMakeLists.txt`
 
@@ -1041,7 +1044,7 @@ Flow rules, each its own test: connect on demand and reconnect when the queue ma
 - Create: `qt/src/MainTab.{h,cpp}`, `qt/ui/MainTab.ui`, `qt/tests/MainTabTests.cpp`
 - Modify: `qt/CMakeLists.txt`, `qt/src/MainWindow.cpp`
 
-Build `MainTab.ui` from inv 2.1: every control with its caption (verbatim, with the `&` mnemonic), group boxes, tab order, defaults and read-only flags, in Qt layouts so the window resizes and works on HiDPI. Controls whose function is in the core after Tasks 12–17 are enabled: Alternate User Id, Logical Order, Complete Msg, All Avail, Selector, Load Names, the User Props radios (As Queue, None, RFH2, Compat), and Set Conn Id (the full dialog of inv 3.5, user id and password held in memory only). `Yes` of User Props, Save Q, Load Q, Move Q and Display Q are disabled with the tooltip "Not yet ported". New: a Connection box (Bindings or Client; channel and connection name or a CCDT path; `MQSERVER` and `MQCHLLIB` are honoured by MQ when none is given), a Wait (seconds) field defaulting to 0 and a Cancel button enabled while a Get waits (G10). The QM combo is filled from `listLocalQueueManagers` plus the history; the queue combo from the history and Load Names (hiding `SYSTEM.` names unless View > System Queues); all four Cluster Open radios (including Group) select their `BindOption`. The control texts and the status line follow Windows; the Windows defects fixed on purpose are listed in "Owner decisions" of Task 30.
+Build `MainTab.ui` from inv 2.1: every control with its caption (verbatim, with the `&` mnemonic), group boxes, tab order, defaults and read-only flags, in Qt layouts so the window resizes and works on HiDPI. Controls whose function is in the core after Tasks 12–17 are enabled: Alternate User Id, Logical Order, Complete Msg, All Avail, Selector, Load Names, the User Props radios (As Queue, None, RFH2, Compat), and Set Conn Id (the full dialog of inv 3.5, user id and password held in memory only). `Yes` of User Props, Save Q, Load Q, Move Q and Display Q are disabled with the tooltip "Not yet ported". New: a Connection box (Bindings or Client; channel and connection name or a CCDT path; `MQSERVER` and `MQCHLLIB` are honoured by MQ when none is given), a Wait (seconds) field defaulting to 0 and a Cancel button enabled while a Get waits (G10). The QM combo is filled from `listLocalQueueManagers` plus the history; the queue combo from the history and Load Names (hiding `SYSTEM.` names unless View > System Queues); all four Cluster Open radios (including Group) select their `BindOption`. The control texts and the status line follow Windows; the Windows defects fixed on purpose are listed in "Owner decisions" of Task 31.
 
 `MainTab` reads the widgets into `MainOptions`, calls `Operations`, and reflects `AppDocument` (file name, data size, queue depth, queue type, status log) and `enablesFor` after each change.
 
@@ -1119,7 +1122,40 @@ The spec's GUI smoke test (design section 6, item 4). It uses the real `MqSessio
 
 ---
 
-### Task 29: The MFC MQMD tab delegates its put, get and ID paths to the core (Windows; needs the owner's Windows build)
+### Task 29: The golden message files and the Windows comparison
+
+**Maps to:** criteria 3 and 4. **Windows-visible:** no source changes. **Independent of Qt: it may run at any time**, and the owner asked for it first. **Files:**
+- Create: `tools/golden/make_goldens.cpp`, `tools/golden/compare-windows-output.sh`, `tools/golden/compare-windows-output.ps1`, `tests/core/golden/*.bin|*.txt`, `tests/core/golden/MANIFEST.md`, `tests/core/GoldenFileTests.cpp`
+- Modify: `tests/CMakeLists.txt`
+
+The spec (design section 6, item 2) wants message files "saved by Windows RFHUtil" and tests that read them, write them back byte for byte, and check the views. Files written by Windows can only come from a Windows run, so this task builds the set the other way, as the owner chose in Plan 2A ("from the MQ spec plus your files"): `make_goldens.cpp` writes each file byte by byte from the documented MQ structure layouts, using only `tests/core/mq_layout.h` (never the core's `fileio`), so the files do not depend on the code they test. The set is then **confirmed against Windows** by the procedure in `MANIFEST.md`; until the owner has run it, the files are reference files, not Windows output. Files supplied by the owner are committed only with explicit approval.
+
+The set (each file is deterministic; the generator takes the output directory as its argument):
+
+| File | Content | Why |
+|---|---|---|
+| `plain-crlf.txt` | ASCII text, CR LF line ends, no MQMD | Plain text read and write |
+| `plain-lf.txt` | The same text with LF line ends | The Unix line end option |
+| `binary-all-bytes.bin` | Bytes 0x00–0xFF twice, no MQMD | Binary data survives |
+| `ebcdic-500.bin` | EBCDIC text (CCSID 500), no MQMD | EBCDIC detection |
+| `mqmd-v2-text.bin` | 364-byte MQMD v2 (little endian, CCSID 1208, Format MQSTR) + text | The MQMD path |
+| `mqmd-ebcdic-host.bin` | MQMD (encoding 785, CCSID 500) + EBCDIC text | Host-endian data with an MQMD |
+| `mqmd-rfh2-text.bin` | MQMD + RFH2 (with name/value data) + text | The header chain |
+| `rfh2-only.bin` | RFH2 + text, no MQMD | A leading header without an MQMD |
+| `mqmd-dlh-rfh2-text.bin` | MQMD + DLH naming RFH2 + RFH2 + text | A two-header chain |
+| `mqmd-bigendian.bin` | Big-endian MQMD (encoding 273) + text | Known difference: Windows reverses the ids (the core keeps them) |
+| `mqmd-mqmde-text.bin` | MQMD + MQMDE + text | Known difference: Windows reads the MQMDE at the wrong offset |
+
+- [ ] **Step 1: Write the failing tests** (`GoldenFileTests.cpp`; the table of expectations is written by hand from the layouts, not copied from a read): for every file, `Golden.<name>ReadsAsExpected` (`hadMqmd`, the header types in order, the body bytes, `fileCcsid`, `charFormat`, `fileIntFormat`), `Golden.<name>RoundTripsByteForByte` (read with the default options, write with `includeMqmd = hadMqmd`, compare the bytes; for the two known-difference files the test asserts the core's documented behaviour instead and says so in a comment), `Golden.<name>MatchesItsManifestHash` (the SHA-256 in `MANIFEST.md`, so a changed file is noticed), and for the plain text files the Character, Hex and Both views as text the implementer derives by hand from the layout rules (32 characters or 16 bytes a line, 8-digit decimal offsets, CR LF line ends; see `Format_*` tests), asserted exactly. Add `GoldenGenerator.RegeneratesIdenticalFiles`, a CTest that runs the built `rfh_make_goldens` into a temporary directory and compares it with `tests/core/golden/`.
+- [ ] **Step 2: Run them:** the build fails (`rfh_make_goldens` and the files do not exist).
+- [ ] **Step 3: Write the generator, run it into `tests/core/golden/`,** record the SHA-256 of each file in `MANIFEST.md` together with a one-line description of what each byte range is (so a human can check the layout), and add the targets to `tests/CMakeLists.txt`.
+- [ ] **Step 4: Write the comparison tools and the procedure.** `MANIFEST.md` has, per file, the exact steps to produce the Windows counterpart in RFHUtil on Windows (Read menu options, Write menu options, `Include MQMD` on or off, `Save File`), because Windows' defaults decide whether the output has an MQMD. `compare-windows-output.sh DIR` (and the `.ps1` twin using `fc /b` or `Compare-Object` on bytes) compares each file of `DIR` with the golden of the same name, prints `same`, `DIFFERENT (expected: <reason>)` for the two known-difference files, or `DIFFERENT` for any other, and exits non-zero on an unexpected difference. A test (`Golden.CompareScriptReportsDifferences`, run through `bash`) checks the script on a temporary directory with one identical, one modified and one known-difference file.
+- [ ] **Step 5: Run all tests;** report the count. Confirm `git diff --check` is clean and that no file under `tests/core/golden/` is larger than 4 KB.
+- [ ] **Step 6: Commit:** `test(core): add the golden message files, their generator and the Windows comparison`. The commit message says the files are not yet confirmed by Windows.
+
+---
+
+### Task 30: The MFC MQMD tab delegates its put, get and ID paths to the core (Windows; needs the owner's Windows build)
 
 **Maps to:** criterion 5. **Windows-visible:** yes, entirely. **Files:**
 - Create: `tools/port/port-mqmdpage-putget.pl`
@@ -1139,7 +1175,7 @@ The spec's GUI smoke test (design section 6, item 4). It uses the real `MqSessio
 
 ---
 
-### Task 30: Documentation
+### Task 31: Documentation
 
 **Maps to:** all criteria (records them). **Files:**
 - Modify: `docs/CODEMAP.md`, `CHANGELOG.md`, `docs/superpowers/specs/2026-10-15-linux-qt-port-design.md`, this plan's Execution notes, `CLAUDE.md` if the commands change; mark `2026-10-17-linux-port-plan-3a-qt-app.md` as superseded by this plan
@@ -1166,12 +1202,11 @@ The spec's GUI smoke test (design section 6, item 4). It uses the real `MqSessio
 
 ### Open points for the owner
 
-Facts only; none is decided here.
-- Task 29, and with it criterion 5, waits for the owner's Windows build; it must run after 2A Task 6, and preferably after 2B Task 9. All of Task 5's Windows branch and Task 29 are uncompiled until then.
-- The Windows-written golden files for criterion 3 do not exist in the repository. The spec's plan is a Windows harness on the pre-refactor `WriteDataFile` path; files supplied by the owner are committed only with explicit approval.
-- Windows defects this plan fixes on purpose, each listed as a difference: the Cluster Open `Group` radio (it has no click handler on Windows), the purge error text with `cc` and `rc` swapped, Find missing a match that ends exactly at the end of the data, Find Hex translating hex input to EBCDIC. Dropped as dead: `Ignore MQMD`. Not ported although Windows has them: `SAFE_MODE` read-only mode, `Save Headers` (the core does not support it), audit records (`createAuditRecord`) and the trace menu.
-- Features beyond Windows that the plan adds and the owner may decline: the local queue manager list from `mqs.ini` (default `/var/mqm`; MQ may be installed with another data path), the Connection box, the Wait field with Cancel, the display code page setting.
-- Passwords: Windows stores the Set Conn Id password in the registry when "Save password" is on (`initSavePassword`, UNVERIFIED). This plan keeps it in memory only.
+Facts only. Decided on 2026-10-17 and no longer open: the four Windows defects are fixed on purpose (the Cluster Open `Group` radio, which has no click handler on Windows; the purge error text with `cc` and `rc` swapped; Find missing a match that ends exactly at the end of the data; Find Hex translating hex input to EBCDIC), with `Ignore MQMD` dropped as dead; the local queue managers are listed from `mqs.ini`; passwords are kept in memory only, for now (Windows stores the Set Conn Id password in the registry when "Save password" is on, `initSavePassword`, UNVERIFIED); and the golden set is created (Task 29).
+- The golden files are built from the MQ structure layouts, not written by Windows. They become Windows-confirmed only when the owner runs the procedure in `tests/core/golden/MANIFEST.md` on a Windows build and the comparison script reports no unexpected difference. Files the owner supplies are committed only with explicit approval.
+- Not ported although Windows has them: `SAFE_MODE` read-only mode, `Save Headers` (the core does not support it), audit records (`createAuditRecord`) and the trace menu.
+- Task 30, and with it criterion 5, waits for the owner's Windows build; it must run after 2A Task 6, and preferably after 2B Task 9. All of Task 5's Windows branch and Task 30 are uncompiled until then.
+- Features beyond Windows that the plan adds: the local queue manager list from `mqs.ini` (decided; default `/var/mqm`, and MQ may be installed with another data path), and, not yet decided, the Connection box, the Wait field with Cancel and the display code page setting.
 - Shortcuts: the spec lists Alt+Q-style keys, the Windows accelerator table is Ctrl+letters that change meaning per tab; the plan follows the table and keeps the Alt mnemonics.
 - User properties: the `Yes` mode needs a property list in `Message` and the Usr Prop tab; the other three modes are core flags only. On Windows the None, RFH2 and Compat radios do nothing on a Get.
 - Load Names needs permission to create a dynamic reply queue from `SYSTEM.DEFAULT.MODEL.QUEUE` and to put to the command queue; on a queue manager that refuses, Load Names fails with the Windows text for the reason code. PCF is not available on z/OS before V6.
