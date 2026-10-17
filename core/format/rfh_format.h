@@ -14,6 +14,11 @@
 //   define), where Windows ignores the error and shows the partly parsed copy book,
 //   and when the copy book needs a buffer larger than kMaxCobolBuffer (Windows
 //   tries to allocate any size, up to the 2 GB at which getMaxLines saturates);
+// - the COBOL view does not list a group occurrence that starts past the end of
+//   the data (when the data is shorter than the copy book, or a REDEFINES is
+//   larger than what it redefines), and an OCCURS DEPENDING ON without a maximum
+//   lists only the occurrences that fit in the data; Windows lists them with
+//   empty values (tools/port/harden-copybook.pl);
 // - see DataFormatter.h for the differences in the views themselves.
 //
 // The COBOL view finds whole multibyte characters with rfh_mbclen, which uses the

@@ -1459,6 +1459,7 @@ int CCopybook::displayDat(char *printArea,
 	int			newCount;
 	int			dataOffset;
 	int			parent;
+	int			levelBreaks=0;	// times the walk broke out of this level
 	char		*printLoc;
 	char		*redefname;
 	char		traceInfo[512];		// work variable to build trace message
@@ -1717,7 +1718,13 @@ int CCopybook::displayDat(char *printArea,
 				strcat(printLoc, "***** RFHUtil formating error - Copy book offset exceeds data area\r\n");
 			}
 
-			// break out of this level
+			// break out of this level. lastvar's VarNext need not end the chain;
+			// breaking out again would walk the same chain again, for ever.
+			if (++levelBreaks > 1)
+			{
+				break;
+			}
+
 			i = lastvar;
 		}
 

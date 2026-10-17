@@ -791,6 +791,53 @@ TEST(Format_CobolMalformed, AGroupOccursStopsAfterTheEndOfTheData)
     EXPECT_LT(out.size(), 16384u);
 }
 
+TEST(Format_CobolMalformed, AFieldPastTheEndOfTheDataEndsTheWalkOfItsLevel)
+{
+    // IBM's walk looped for ever: it went back to lastvar's VarNext, and the chain
+    // 4 -> 6 -> 9 led into the level again. GoogleTest has no timeout; ctest's
+    // TIMEOUT catches a regression.
+    std::string out = cobol("       01 F0 SIGN TRAILING N(-1) VALUE 5.\n"
+                            "       03 F1 POINTER OCCURS 0 TO 5 TIMES DEPENDING ON F100 COMP-1.\n"
+                            "       03 F2 .\n"
+                            "       03 F3 G(17).\n"
+                            "       10 F4 COMP USAGE SIGN LEADING SEPARATE.\n"
+                            "       02 F5 PIC OCCURS 9 TO 5 TIMES DEPENDING ON F3 9(1).\n"
+                            "       10 F6 BINARY.\n"
+                            "       49 F7 .\n"
+                            "       02 F8 OCCURS 100 TO 2 TIMES DEPENDING ON F2 INDEX VALUE 5.\n", std::string("\xF1\x30\x00", 3));
+    EXPECT_EQ(kHeading +
+              "***** RFHUtil format error - Occurs value below minimum - value=0 minimum=9\r\n"
+              "***** RFHUtil format error - Occurs value below minimum - value=0 minimum=100\r\n"
+              "01     0   798           F0\r\n"
+              "03     0     4           F1\r\n"
+              "***** RFHUtil formating error - Copy book offset exceeds data area\r\n"
+              "Copy book size 798, Data area size 3" + kMismatch,
+              out);
+}
+
+TEST(Format_CobolMalformed, AnOccurrenceOfALargerRedefinitionPastTheDataIsNotListed)
+{
+    // Windows also lists G(4), at offset 6, with an empty value
+    EXPECT_EQ(kHeading +
+              "01     0     4           R\r\n"
+              "05     0     4 CHAR      A                              1234\r\n"
+              "05     0     8           B                                                               A\r\n"
+              "***** Redefine larger than original definition\r\n"
+              "10     0     2         1 G\r\n"
+              "15     0     2 CHAR    1 V                              12\r\n"
+              "10     2     2         2 G\r\n"
+              "15     2     2 CHAR    2 V                              34\r\n"
+              "10     4     2         3 G\r\n"
+              "15     4     2 CHAR    3 V\r\n"
+              "***** RFHUtil formating error - Copy book offset exceeds data area\r\n"
+              "Copy book size 4, Data area size 4",
+              cobol("       01 R.\n"
+                    "         05 A PIC X(4).\n"
+                    "         05 B REDEFINES A.\n"
+                    "           10 G OCCURS 4 TIMES.\n"
+                    "             15 V PIC X(2).\n", "1234"));
+}
+
 // --- COBOL view: IBM's behaviour, pinned ---------------------------------------
 
 TEST(Format_CobolIbm, AnOccursOfAFixedCountListsEachOccurrence)

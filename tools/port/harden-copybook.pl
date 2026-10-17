@@ -22,8 +22,12 @@
 #     - an OCCURS DEPENDING ON without a maximum shows no more occurrences than the
 #       data holds;
 #     - a group OCCURS stops before an occurrence that starts past the end of the
-#       data (data that covers the copy book is unaffected), and the nested call no
-#       longer measures the whole output for each occurrence;
+#       data (when the data is shorter than the copy book, or a REDEFINES is larger
+#       than what it redefines), where Windows lists it with empty values, and the
+#       nested call no longer measures the whole output for each occurrence;
+#     - a field past the end of the data breaks out of its level only once: the
+#       walk sets i = lastvar and goes on to its VarNext, which is not always 0, so
+#       a second break walked the same chain again, for ever;
 #     - updateLength's messages stop where displayDat's lines would;
 #     - getVarValue and varReportLine read only the data being formatted, within
 #       their work areas: a negative or huge length, a field outside the data and
@@ -280,6 +284,13 @@ edit('RFHUtil/Copybook.cpp', 'MAX_COBOL_LINES',
 	['nested offset wraps', "\t\t\t\t\t\t\t\t\toccurOfs + dataOffset,\n", "\t\t\t\t\t\t\t\t\twrapAdd(occurOfs, dataOffset),\n"],
 	['data offsets wrap', "\t\t\t\tdataOffset += fvar[i].VarLen + fvar[i].VarEndSlack;\n",
 		"\t\t\t\tdataOffset = wrapAdd(dataOffset, wrapAdd(fvar[i].VarLen, fvar[i].VarEndSlack));\n", 2],
+	['walk break counter', "\tint\t\t\tparent;\n\tchar\t\t*printLoc;\n",
+		"\tint\t\t\tparent;\n\tint\t\t\tlevelBreaks=0;\t// times the walk broke out of this level\n\tchar\t\t*printLoc;\n"],
+	['walk ends at the end of the data', "\t\t\t// break out of this level\n\t\t\ti = lastvar;\n\t\t}\n",
+		"\t\t\t// break out of this level. lastvar's VarNext need not end the chain;\n"
+		. "\t\t\t// breaking out again would walk the same chain again, for ever.\n"
+		. "\t\t\tif (++levelBreaks > 1)\n\t\t\t{\n\t\t\t\tbreak;\n\t\t\t}\n\n"
+		. "\t\t\ti = lastvar;\n\t\t}\n"],
 	['group data offset wraps', "\t\t\tdataOffset += fvar[i].VarLen;\n", "\t\t\tdataOffset = wrapAdd(dataOffset, fvar[i].VarLen);\n"],
 
 	# updateLength and formatData
