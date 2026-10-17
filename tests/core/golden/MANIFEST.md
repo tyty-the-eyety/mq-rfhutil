@@ -24,9 +24,9 @@ them), and regenerate the set with `rfh_make_goldens` and compare. No file is la
 | `ebcdic-500.bin` | 137 | EBCDIC text (CCSID 500), no MQMD |
 | `mqmd-v2-text.bin` | 399 | MQMD v2 (little endian, CCSID 1208, MQSTR) and text |
 | `mqmd-ebcdic-host.bin` | 399 | MQMD (Encoding 785, CCSID 500) and EBCDIC text |
-| `mqmd-rfh2-text.bin` | 465 | MQMD, RFH2 with two folders, text |
-| `rfh2-only.bin` | 127 | RFH2 and text, no MQMD |
-| `mqmd-dlh-rfh2-text.bin` | 645 | MQMD, DLH naming RFH2, RFH2, text |
+| `mqmd-rfh2-text.bin` | 465 | MQMD, RFH2 with two folders, text; identical on Windows only if Windows regenerates the headers byte for byte: UNVERIFIED |
+| `rfh2-only.bin` | 127 | RFH2 and text, no MQMD; identical on Windows only if Windows regenerates the headers byte for byte: UNVERIFIED |
+| `mqmd-dlh-rfh2-text.bin` | 645 | MQMD, DLH naming RFH2, RFH2, text; identical on Windows only if Windows regenerates the headers byte for byte: UNVERIFIED |
 | `mqmd-bigendian.bin` | 385 | Big-endian MQMD (Encoding 273) and text. Known difference from Windows |
 | `mqmd-mqmde-text.bin` | 456 | MQMD, MQMDE, text. Known difference from Windows |
 
@@ -62,14 +62,25 @@ When all files are done, run one of these (the scripts print one line per file a
 if there is no unexpected difference, 1 if there is one, 2 on a usage error):
 
 ```
-bash tools/golden/compare-windows-output.sh C:/golden/out            # Linux, or Git Bash on Windows
-powershell -File tools\golden\compare-windows-output.ps1 C:\golden\out
+bash tools/golden/compare-windows-output.sh [--all] C:/golden/out    # Linux, or Git Bash on Windows
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools\golden\compare-windows-output.ps1 -Dir C:\golden\out [-All]
 ```
 
-Both take the golden directory as an optional second argument (default `tests/core/golden`). A line says
-`same`, `DIFFERENT (expected: <reason>)` for the known differences below, or `DIFFERENT`. For a plain
-`DIFFERENT`, find the first differing byte with `cmp -l golden out | head` (or `fc.exe /b`) and look it up
-in the entry's byte ranges; please report the file, the offset and both values.
+Why the PowerShell flags: `-ExecutionPolicy Bypass` because a default Windows policy refuses to run an unsigned
+script from a file (and `-File` is needed so the exit status reaches the caller); `-NoProfile` so a user profile
+cannot change the output; `-NonInteractive` so a missing argument fails with exit 2 instead of waiting for input.
+(The script was written on Linux and has not been run: UNVERIFIED. If it fails to start, use the shell version
+from Git Bash or WSL on the same files.)
+
+Both take the golden directory as an optional second argument (`-GoldenDir` in PowerShell; default
+`tests/core/golden`). `--all` (`-All`) also exits 1 when any of the 11 golden files is missing from the
+directory; without it a partial run exits 0, and the summary line says how many golden files were not present
+(`N golden files not in the directory`), so read it. A line says
+`same`, `DIFFERENT (expected: <reason>); <n> bytes differ, length <l> (golden <g>), first offsets: ...` for the
+known differences below, or `DIFFERENT; ...` for anything else (offsets are 0-based). A known-difference file
+counts as expected only if it has exactly the form derived below; any other difference in it prints a plain
+`DIFFERENT` and exits 1. For a plain `DIFFERENT`, look the offsets up in the entry's byte ranges (`cmp -l golden out`
+or `fc.exe /b` lists every differing byte, 1-based); please report the file, the offset and both values.
 
 `Get-FileHash -Algorithm SHA256 FILE` (PowerShell) or `certutil -hashfile FILE SHA256` (cmd) checks that a
 copied file arrived intact against the hash in its entry.
@@ -180,10 +191,10 @@ MQMDE (72 bytes): 0 StrucId `MDE `, 4 Version 2, 8 StrucLength 72, 12 Encoding, 
   364-398 the text `HELLO FROM A HOST MQMD, 0123456789.` (35 bytes) in EBCDIC 500 (`H` is 0xC8).
 - Read menu: all off. Write menu: **`Include MQMD` on**. After Open the MQMD tab shows Code Page 500 and Int Fmt Host.
 - Open message: `35 bytes read from file <path>`. Save message: `399 bytes (data 35 mqmd 364) written to file <path>`.
-- Expected: `DIFFERENT (expected: ...)`, in exactly one byte: file offset 25 (0-based, the second byte of Encoding)
+- Expected: `DIFFERENT (expected: ...)`, in exactly one byte (the scripts check this): file offset 25 (0-based, the second byte of Encoding)
   is 0x03 in the golden and 0x02 in Windows' file, because Encoding 785 (0x311) comes back as 529 (0x211): reading an
   MQMD does not set the float format, so the MQMD tab writes IEEE-reversed floats. This is from reading the Windows
-  source (`MQMDPAGE::processMQMD`, `DataArea::ReadFileData`) and is UNVERIFIED on Windows. Any other difference is a finding.
+  source (`MQMDPAGE::processMQMD`, `DataArea::ReadFileData`) and is UNVERIFIED on Windows. Any other difference, or another value at offset 25, is a finding (plain `DIFFERENT`, exit 1).
 
 ### `mqmd-rfh2-text.bin`
 - SHA-256: `95e21d32aa797b9f799a1f238f862a7205580fb5af120e38570a8ce92be66c84`
@@ -224,12 +235,22 @@ MQMDE (72 bytes): 0 StrucId `MDE `, 4 Version 2, 8 StrucLength 72, 12 Encoding, 
   364-384 the text `Big-endian MQMD body.` (21 bytes).
 - Read menu: all off. Write menu: **`Include MQMD` on**.
 - Open message: `21 bytes read from file <path>`. Save message: `385 bytes (data 21 mqmd 364) written to file <path>`.
-- Expected: `DIFFERENT (expected: ...)`, because the written MQMD is little endian (Windows always writes the MQMD in the
-  byte order of the machine) and Encoding is rebuilt (273 becomes 529, as for `mqmd-ebcdic-host.bin`). The reported
-  Windows defect is in the ids: Windows byte-reverses MsgId, CorrelId, GroupId and AccountingToken of a big-endian MQMD
-  (`processMQMD`), so by eye its MsgId at offset 48 reads 0x18 down to 0x01, where the core (and the golden) keep
-  0x01 up to 0x18; likewise CorrelId (72), GroupId (324) and AccountingToken (208). The core keeps them by the owner's
-  decision (docs/CODEMAP.md section 7). Record what Windows wrote; do not treat the difference as a failure.
+- Expected: `DIFFERENT (expected: ...)`. By the Windows source (UNVERIFIED on Windows) the file Windows writes is the
+  golden with these changes, and the scripts accept exactly this (385 bytes) and nothing else:
+  1. The MQMD is written little endian (Windows writes the MQMD in the byte order of the machine): every number is the
+     golden's with its four bytes reversed (offsets 4, 8, 12, 16, 20, 28, 40, 44, 96, 272, 348, 352, 356, 360); and Encoding
+     (offset 24) is 529 (0x211), bytes `11 02 00 00`, as for `mqmd-ebcdic-host.bin`.
+  2. The ids. `processMQMD` calls `reverseBytes24` on MsgId, CorrelId and GroupId and `reverseBytes32` on AccountingToken
+     (`RFHUtil/MQMDPAGE.cpp` 1187-1195, `RFHUtil/comsubs.cpp` 478-507). Despite the names these reverse the bytes inside
+     each 4-byte word (`reverseBytes4` on each word), not the whole field, and `buildMQMD` copies the ids back as they
+     are, so Windows writes, for the golden's ids:
+     - MsgId (48): `04 03 02 01 08 07 06 05 0C 0B 0A 09 10 0F 0E 0D 14 13 12 11 18 17 16 15` (golden: `01 02 03 ... 18`)
+     - CorrelId (72): `24 23 22 21 28 27 26 25 2C 2B 2A 29 30 2F 2E 2D 34 33 32 31 38 37 36 35` (golden: `21 22 ... 38`)
+     - AccountingToken (208): `64 63 62 61 68 67 66 65 6C 6B 6A 69 70 6F 6E 6D 74 73 72 71 78 77 76 75 7C 7B 7A 79 80 7F 7E 7D` (golden: `61 ... 80`)
+     - GroupId (324): `44 43 42 41 48 47 46 45 4C 4B 4A 49 50 4F 4E 4D 54 53 52 51 58 57 56 55` (golden: `41 ... 58`)
+  3. Everything else, the text included, is the golden's.
+  The core keeps the ids exactly as in the golden by the owner's decision (docs/CODEMAP.md section 7). A different
+  pattern (for example a reversal of the whole field, or an unchanged id) is a finding: plain `DIFFERENT`, exit 1.
 
 ### `mqmd-mqmde-text.bin`
 - SHA-256: `83a44912d3a598ccf5f50f23aef5f69eed23abecaf78121059b6a17a8d1ffe83`
@@ -248,7 +269,15 @@ MQMDE (72 bytes): 0 StrucId `MDE `, 4 Version 2, 8 StrucLength 72, 12 Encoding, 
      the MQMDE integers although the file is little endian. The MQMD tab then shows byte-reversed values
      (Seq No 33554432 in place of 2) and the code page and encoding for the body come from the swapped fields.
   2. A comment in `parseMsgHeaders` says RFHUtil never produces an MQMDE, and no tab builds one: Windows does not write the
-     MQMDE back, so its file would be 384 bytes (MQMD and text) where the golden and the core's file are 456.
+     MQMDE back.
+  The file Windows writes is therefore 384 bytes: the golden's MQMD with the group fields replaced, then the text, and
+  the scripts accept exactly this and nothing else. In the MQMD: GroupId (324-347) is the MQMDE's group id as it is
+  (`0x81` to `0x98`, copied without a swap), MsgSeqNumber (348) is 2 swapped = `00 00 00 02` (the number 0x02000000),
+  Offset (352) is `00 00 00 0A`, OriginalLength (360) is `00 00 00 2A`, and MsgFlags (356) is 0 because the swapped
+  flags 8 = 0x08000000 have none of the five flag bits (`processFlags`); every other MQMD byte is the golden's. The 72
+  MQMDE bytes (364-435) are absent and the text (golden 436-455) follows at 364-383. The only part I could not justify
+  from the source alone is that nothing else on the tabs changes between Open and Save; if Windows differs from this
+  in any way the result is a plain `DIFFERENT` (exit 1) and the offsets and lengths are the finding.
   The core reads the MQMDE at its real offset (Windows uses an offset scaled by the structure size, which only matters when
   another header precedes it, as here it does not), swaps only host data, and writes it back unchanged.
   Record what Windows shows and writes.
@@ -257,7 +286,7 @@ MQMDE (72 bytes): 0 StrucId `MDE `, 4 Version 2, 8 StrucLength 72, 12 Encoding, 
 
 | File | Windows | Core (and so the golden) |
 |---|---|---|
-| `mqmd-bigendian.bin` | Reverses MsgId, CorrelId, GroupId and AccountingToken of a big-endian MQMD | Keeps them (owner's decision, CODEMAP section 7) |
+| `mqmd-bigendian.bin` | Swaps the bytes inside each 4-byte word of MsgId, CorrelId, GroupId and AccountingToken of a big-endian MQMD (01 02 03 04 becomes 04 03 02 01) | Keeps them (owner's decision, CODEMAP section 7) |
 | `mqmd-mqmde-text.bin` | Swaps the MQMDE integers whatever the encoding; reads it at an offset scaled by its size after another header; does not write it back | Reads it at its real offset, swaps only host data, writes it back unchanged (`rfh_header_chain.h`) |
 | `mqmd-ebcdic-host.bin` | Writes Encoding 529 for a read 785 (float format not read from the MQMD) | The same; the golden holds the z/OS value 785 |
 

@@ -2,3 +2,7 @@
 # (plain-crlf.txt ends its lines with CR LF on purpose).
 tests/core/golden/*.bin binary
 tests/core/golden/*.txt -text -whitespace
+# The manifest is parsed by GoldenFileTests.cpp and the shell script is run by bash:
+# both need LF line ends on every checkout.
+tests/core/golden/MANIFEST.md text eol=lf
+tools/golden/*.sh text eol=lf

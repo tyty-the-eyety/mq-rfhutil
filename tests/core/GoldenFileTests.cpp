@@ -7,8 +7,9 @@
 // regenerates them. Everything expected below is written by hand from the layouts
 // and from DataArea::ReadFileData; none of it is copied from a read.
 //
-// Two files differ from Windows on purpose: mqmd-bigendian.bin (Windows reverses
-// the ids of a big-endian MQMD, the core keeps them) and mqmd-mqmde-text.bin
+// Two files differ from Windows on purpose: mqmd-bigendian.bin (Windows swaps the
+// bytes inside each 4-byte word of the ids of a big-endian MQMD, the core keeps them)
+// and mqmd-mqmde-text.bin
 // (Windows swaps the MQMDE integers whatever the encoding). A third, mqmd-ebcdic-host.bin,
 // does not round-trip because reading an MQMD does not set the float format on Windows
 // either, so the Encoding is rebuilt without the S/390 float bits. For those three the
@@ -247,6 +248,13 @@ namespace
         int fileCcsid;
         int charFormat;
         int fileIntFormat;
+        // What the Data tab uses for the body, from the end of DataArea::parseMsgHeaders:
+        // m_numeric_format is the encoding of the data after the last header; when it is
+        // PC, packed decimal is PC and floats are FLOAT_PC, otherwise both are host and
+        // floats are FLOAT_390 (also after DataArea::checkForEBCDIC).
+        int numericFormat;
+        int pdFormat;
+        int floatFormat;
     };
 
     Bytes allBytesTwice()
@@ -276,36 +284,42 @@ namespace
         static const std::map<std::string, Expect> table = [] {
             std::map<std::string, Expect> t;
             auto add = [&t](Expect e) { t[e.file] = e; };
-            const int kPc = NUMERIC_PC, kHost = NUMERIC_HOST;
+            const int kPc = NUMERIC_PC, kHost = NUMERIC_HOST, kF390 = FLOAT_390;
 
+            // The numeric, packed decimal and float formats follow parseMsgHeaders, written by
+            // hand from the Windows source. The core agrees for every file except
+            // mqmd-mqmde-text.bin: Windows takes the encoding after an MQMDE from the swapped,
+            // raw MQENC field (a number that is not NUMERIC_PC), so its formats there are
+            // not PC; the row is the core's documented behaviour (PC).
+            //
             // no MQMD: the code page is the File Code Page setting (437), the encoding PC
             add({ "plain-crlf.txt", 437, false, {}, L::text("Golden message file.\r\nThe quick brown fox jumps.\r\nEnd.\r\n"),
-                  437, CHAR_ASCII, kPc });
+                  437, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             add({ "plain-lf.txt", 437, false, {}, L::text("Golden message file.\nThe quick brown fox jumps.\nEnd.\n"),
-                  437, CHAR_ASCII, kPc });
-            add({ "binary-all-bytes.bin", 437, false, {}, allBytesTwice(), 437, CHAR_ASCII, kPc });
+                  437, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
+            add({ "binary-all-bytes.bin", 437, false, {}, allBytesTwice(), 437, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
 
             // a blank File Code Page lets RFHUtil guess EBCDIC from the data; the file code
             // page then stays the system default (1252 here), as in DataArea::checkForEBCDIC
-            add({ "ebcdic-500.bin", 0, false, {}, L::ebcdic(kEbcdicText), 1252, CHAR_EBCDIC, kPc });
+            add({ "ebcdic-500.bin", 0, false, {}, L::ebcdic(kEbcdicText), 1252, CHAR_EBCDIC, kPc, kHost, kHost, kF390 });
 
             // an MQMD gives the file code page, encoding and character set
             add({ "mqmd-v2-text.bin", 437, true, {}, L::text("Text after a version 2 MQMD, caf\xc3\xa9."),
-                  1208, CHAR_ASCII, kPc });
+                  1208, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             add({ "mqmd-ebcdic-host.bin", 437, true, {}, L::ebcdic("HELLO FROM A HOST MQMD, 0123456789."),
-                  500, CHAR_EBCDIC, kHost });
+                  500, CHAR_EBCDIC, kHost, kHost, kHost, kF390 });
             add({ "mqmd-rfh2-text.bin", 437, true, { { HeaderType::Rfh2, kRfh2Length } }, L::text("<a>hi</a>"),
-                  1208, CHAR_ASCII, kPc });
+                  1208, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             // no MQMD: the leading RFH2 is found, but the file code page stays the setting
             add({ "rfh2-only.bin", 437, false, { { HeaderType::Rfh2, kRfh2Length } }, L::text("Body after a leading RFH2, no MQMD."),
-                  437, CHAR_ASCII, kPc });
+                  437, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             add({ "mqmd-dlh-rfh2-text.bin", 437, true,
                   { { HeaderType::DeadLetter, 172 }, { HeaderType::Rfh2, kRfh2Length } }, L::text("Dead letter body."),
-                  1208, CHAR_ASCII, kPc });
+                  1208, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             // encoding 273 has the integer-normal bit: host (big-endian) integers
-            add({ "mqmd-bigendian.bin", 437, true, {}, L::text("Big-endian MQMD body."), 819, CHAR_ASCII, kHost });
+            add({ "mqmd-bigendian.bin", 437, true, {}, L::text("Big-endian MQMD body."), 819, CHAR_ASCII, kHost, kHost, kHost, kF390 });
             add({ "mqmd-mqmde-text.bin", 437, true, { { HeaderType::MdExtension, 72 } }, L::text("Body after an MQMDE."),
-                  1208, CHAR_ASCII, kPc });
+                  1208, CHAR_ASCII, kPc, kPc, kPc, FLOAT_PC });
             return t;
         }();
         return table;
@@ -351,6 +365,9 @@ namespace
         EXPECT_EQ(e.fileCcsid, r.result.fileCcsid);
         EXPECT_EQ(e.charFormat, r.result.charFormat);
         EXPECT_EQ(e.fileIntFormat, r.result.fileIntFormat);
+        EXPECT_EQ(e.numericFormat, r.result.numericFormat);
+        EXPECT_EQ(e.pdFormat, r.result.pdFormat);
+        EXPECT_EQ(e.floatFormat, r.result.floatFormat);
     }
 
     // Reads the golden, writes it with includeMqmd = hadMqmd, returns the bytes written.
@@ -420,6 +437,10 @@ GOLDEN_ALL(BinaryAllBytes, "binary-all-bytes.bin")
 GOLDEN_ALL(Ebcdic500, "ebcdic-500.bin")
 GOLDEN_ALL(MqmdV2Text, "mqmd-v2-text.bin")
 GOLDEN_COMMON(MqmdEbcdicHost, "mqmd-ebcdic-host.bin")
+// The core writes headers back exactly as read, so these three round-trip byte for byte
+// here. Windows rebuilds RFH2 and DLH headers from its header tabs when it saves, so the
+// same files are identical on Windows only if it regenerates the headers byte for byte:
+// UNVERIFIED (MANIFEST.md).
 GOLDEN_ALL(MqmdRfh2Text, "mqmd-rfh2-text.bin")
 GOLDEN_ALL(Rfh2Only, "rfh2-only.bin")
 GOLDEN_ALL(MqmdDlhRfh2Text, "mqmd-dlh-rfh2-text.bin")
@@ -453,6 +474,98 @@ TEST(Golden, PlainLfWithUnixTextIsThePlainCrlfText)
     fileio::ReadResult r;
     ASSERT_TRUE(fileio::read(kGoldenDir + "/plain-lf.txt", o, fields, r).ok());
     EXPECT_EQ(expectations().at("plain-crlf.txt").body, r.message.body);
+}
+
+// --- the MQMD tab and MQMD read from the MQMD files, by hand from the layouts ------------
+
+namespace
+{
+    Bytes counting(unsigned char start, size_t n)
+    {
+        Bytes b;
+        for (size_t i = 0; i < n; i++)
+        {
+            b.push_back((unsigned char)(start + i));
+        }
+        return b;
+    }
+
+    Bytes bytesOf(const unsigned char * p, size_t n)
+    {
+        return Bytes(p, p + n);
+    }
+}
+
+TEST(Golden, MqmdV2TextFillsTheMqmdTab)
+{
+    ReadBack r;
+    ASSERT_TRUE(readGolden(expectations().at("mqmd-v2-text.bin"), r));
+    const MqmdFields & f = r.fields;
+    EXPECT_EQ("1 Request", f.msgType);
+    EXPECT_EQ("6000", f.expiry);
+    EXPECT_EQ("5", f.priority);
+    EXPECT_EQ(1, f.persistence);
+    EXPECT_EQ("MQSTR", f.format);
+    EXPECT_EQ("1208", f.ccsid);
+    EXPECT_EQ(NUMERIC_PC, f.encoding);
+    EXPECT_EQ("tyron", f.userId);
+    EXPECT_EQ("REPLY.QUEUE", f.replyToQ);
+    EXPECT_EQ("QM1", f.replyToQMgr);
+    EXPECT_EQ("golden", f.applIdentity);
+    EXPECT_EQ("rfhgolden", f.putApplName);
+    EXPECT_EQ("2026/10/17 09:30:15.00", f.dateTime);
+    EXPECT_EQ(counting(0x01, 24), bytesOf(f.msgId, 24)) << "MsgId bytes 01..18, not reversed";
+    EXPECT_EQ(counting(0x21, 24), bytesOf(f.correlId, 24));
+
+    const MQMD2 & m = r.result.message.mqmd;
+    EXPECT_EQ(MQMT_REQUEST, m.MsgType);
+    EXPECT_EQ(6000, m.Expiry);
+    EXPECT_EQ(5, m.Priority);
+    EXPECT_EQ(MQPER_PERSISTENT, m.Persistence);
+    EXPECT_EQ(1208, m.CodedCharSetId);
+    EXPECT_EQ(546, m.Encoding);
+    EXPECT_EQ(0, memcmp("MQSTR   ", m.Format, 8));
+    EXPECT_EQ(counting(0x01, 24), bytesOf(m.MsgId, 24));
+    EXPECT_EQ(counting(0x21, 24), bytesOf(m.CorrelId, 24));
+}
+
+TEST(Golden, MqmdBigendianFillsTheMqmdTabWithTheIdsKept)
+{
+    ReadBack r;
+    ASSERT_TRUE(readGolden(expectations().at("mqmd-bigendian.bin"), r));
+    const MqmdFields & f = r.fields;
+    EXPECT_EQ("8 Datagram", f.msgType);
+    EXPECT_EQ("3000", f.expiry);
+    EXPECT_EQ("4", f.priority);
+    EXPECT_EQ(1, f.persistence);
+    EXPECT_EQ("MQSTR", f.format);
+    EXPECT_EQ("819", f.ccsid);
+    EXPECT_EQ(NUMERIC_HOST, f.encoding);
+    // the ids as in the file; Windows would show each 4-byte word swapped (04 03 02 01 ...)
+    EXPECT_EQ(counting(0x01, 24), bytesOf(f.msgId, 24));
+    EXPECT_EQ(counting(0x21, 24), bytesOf(f.correlId, 24));
+    EXPECT_EQ(counting(0x41, 24), bytesOf(f.groupId, 24));
+    std::string token;
+    for (unsigned char c : counting(0x61, 32))
+    {
+        char hex[3];
+        snprintf(hex, sizeof(hex), "%02X", c);
+        token += hex;
+    }
+    EXPECT_EQ(token, f.accountingToken);
+
+    const MQMD2 & m = r.result.message.mqmd;
+    EXPECT_EQ(MQMT_DATAGRAM, m.MsgType);
+    EXPECT_EQ(3000, m.Expiry);
+    EXPECT_EQ(4, m.Priority);
+    EXPECT_EQ(MQPER_PERSISTENT, m.Persistence);
+    EXPECT_EQ(819, m.CodedCharSetId);
+    EXPECT_EQ(0x211, m.Encoding) << "rebuilt from the tab: integers and decimal normal, floats IEEE reversed";
+    EXPECT_EQ(0, memcmp("MQSTR   ", m.Format, 8));
+    EXPECT_EQ(counting(0x01, 24), bytesOf(m.MsgId, 24));
+    EXPECT_EQ(counting(0x21, 24), bytesOf(m.CorrelId, 24));
+    EXPECT_EQ(counting(0x41, 24), bytesOf(m.GroupId, 24));
+    EXPECT_EQ(counting(0x61, 32), bytesOf(m.AccountingToken, 32));
 }
 
 // --- the Data tab views of the plain text files, derived by hand --------------------
@@ -514,23 +627,22 @@ TEST(Golden, PlainLfBothView)
 
 // --- the two files that differ from Windows ------------------------------------------
 
-TEST(Golden, MqmdBigendianRoundTripFollowsTheCoreNotWindows)
+// What the core writes for mqmd-bigendian.bin, written by hand from the layout: the same
+// MQMD in little-endian form with the ids as in the golden. The numeric fields are the
+// golden's, byte-reversed to little endian. The Encoding is the one the MQMD tab rebuilds:
+// integers and decimal normal (0x01 | 0x10) and, because reading an MQMD does not set the
+// float format, IEEE reversed floats (0x200).
+static Bytes coreBigendianOutput()
 {
-    // Windows byte-reverses MsgId, CorrelId, GroupId and AccountingToken of a big-endian
-    // MQMD (processMQMD); the core keeps them (CODEMAP section 7, owner's decision), so
-    // the written file is the same MQMD in little-endian form with the ids as in the
-    // golden. The numeric fields are the golden's, little-endian. The Encoding is the
-    // one the MQMD tab rebuilds: integers and decimal normal (0x01 | 0x10) and, because
-    // reading an MQMD does not set the float format, IEEE reversed floats (0x200).
     Bytes original = golden("mqmd-bigendian.bin");
-    ASSERT_GE(original.size(), 364u);
+    EXPECT_GE(original.size(), 364u);
     // the golden MQMD is big-endian: read each number by hand
     auto be = [&](size_t offset) {
         return (int32_t)(((uint32_t)original[offset] << 24) | ((uint32_t)original[offset + 1] << 16) |
                          ((uint32_t)original[offset + 2] << 8) | original[offset + 3]);
     };
-    ASSERT_EQ(2, be(4));
-    ASSERT_EQ(273, be(O::Encoding));
+    EXPECT_EQ(2, be(4));
+    EXPECT_EQ(273, be(O::Encoding));
 
     L::Bytes expected(0);
     expected.data = original;
@@ -541,19 +653,76 @@ TEST(Golden, MqmdBigendianRoundTripFollowsTheCoreNotWindows)
         expected.putLong(offset, be(offset), L::Order::Little);
     }
     expected.putLong(O::Encoding, 0x01 | 0x10 | 0x200, L::Order::Little);
+    return expected.data;
+}
 
+// What Windows would write for mqmd-bigendian.bin (UNVERIFIED on Windows, from the source):
+// processMQMD calls reverseBytes24 on MsgId, CorrelId and GroupId and reverseBytes32 on
+// AccountingToken (RFHUtil/comsubs.cpp), which reverse the bytes inside each 4-byte word
+// (01 02 03 04 becomes 04 03 02 01), not the whole field; buildMQMD copies the ids back as
+// they are. Everything else is what the core writes.
+static Bytes windowsBigendianOutput()
+{
+    Bytes out = coreBigendianOutput();
+    for (auto field : { std::make_pair(O::MsgId, (size_t)24), std::make_pair(O::CorrelId, (size_t)24),
+                        std::make_pair(O::AccountingToken, (size_t)32), std::make_pair(O::GroupId, (size_t)24) })
+    {
+        for (size_t word = 0; word < field.second; word += 4)
+        {
+            std::reverse(out.begin() + field.first + word, out.begin() + field.first + word + 4);
+        }
+    }
+    return out;
+}
+
+// What Windows would write for mqmd-ebcdic-host.bin: the golden with Encoding 529.
+static Bytes windowsEbcdicHostOutput()
+{
+    L::Bytes b(0);
+    b.data = golden("mqmd-ebcdic-host.bin");
+    b.putLong(O::Encoding, 0x211);
+    return b.data;
+}
+
+// What Windows would write for mqmd-mqmde-text.bin (UNVERIFIED, from the source): no MQMDE
+// (nothing builds one) and an MQMD whose group fields come from the MQMDE read with its
+// integers swapped: the group id as it is, sequence number 2 -> 0x02000000, offset 10 ->
+// 0x0A000000, original length 42 -> 0x2A000000, and flags 8 -> 0x08000000, which has none of
+// the five flag bits, so MsgFlags is 0.
+static Bytes windowsMdeOutput()
+{
+    Bytes original = golden("mqmd-mqmde-text.bin");
+    L::Bytes b(0);
+    b.data.assign(original.begin(), original.begin() + 364);
+    b.putBytes(O::GroupId, &original[364 + 32], 24);
+    b.putLong(O::MsgSeqNumber, 0x02000000);
+    b.putLong(O::Offset, 0x0A000000);
+    b.putLong(O::MsgFlags, 0);
+    b.putLong(O::OriginalLength, 0x2A000000);
+    b.data.insert(b.data.end(), original.begin() + 364 + 72, original.end());
+    return b.data;
+}
+
+TEST(Golden, MqmdBigendianRoundTripFollowsTheCoreNotWindows)
+{
+    // Windows swaps the bytes inside each 4-byte word of MsgId, CorrelId, GroupId and
+    // AccountingToken of a big-endian MQMD (processMQMD); the core keeps them (CODEMAP
+    // section 7, owner's decision), so what it writes has the ids exactly as in the golden.
+    Bytes original = golden("mqmd-bigendian.bin");
+    Bytes expected = coreBigendianOutput();
     Bytes written = readAndWriteBack("mqmd-bigendian.bin");
-    EXPECT_EQ(expected.data, written);
-    // and the four ids are exactly the golden's, not reversed
-    ASSERT_EQ(expected.data.size(), written.size());
-    EXPECT_EQ(Bytes(original.begin() + O::MsgId, original.begin() + O::MsgId + 24),
-              Bytes(written.begin() + O::MsgId, written.begin() + O::MsgId + 24));
-    EXPECT_EQ(Bytes(original.begin() + O::CorrelId, original.begin() + O::CorrelId + 24),
-              Bytes(written.begin() + O::CorrelId, written.begin() + O::CorrelId + 24));
-    EXPECT_EQ(Bytes(original.begin() + O::GroupId, original.begin() + O::GroupId + 24),
-              Bytes(written.begin() + O::GroupId, written.begin() + O::GroupId + 24));
-    EXPECT_EQ(Bytes(original.begin() + O::AccountingToken, original.begin() + O::AccountingToken + 32),
-              Bytes(written.begin() + O::AccountingToken, written.begin() + O::AccountingToken + 32));
+    EXPECT_EQ(expected, written);
+    ASSERT_EQ(expected.size(), written.size());
+    for (auto field : { std::make_pair(O::MsgId, (size_t)24), std::make_pair(O::CorrelId, (size_t)24),
+                        std::make_pair(O::GroupId, (size_t)24), std::make_pair(O::AccountingToken, (size_t)32) })
+    {
+        EXPECT_EQ(Bytes(original.begin() + field.first, original.begin() + field.first + field.second),
+                  Bytes(written.begin() + field.first, written.begin() + field.first + field.second));
+    }
+    // the first MsgId word of the golden is 01 02 03 04; Windows would write 04 03 02 01
+    EXPECT_EQ((Bytes{ 1, 2, 3, 4 }), Bytes(original.begin() + O::MsgId, original.begin() + O::MsgId + 4));
+    Bytes windows = windowsBigendianOutput();
+    EXPECT_EQ((Bytes{ 4, 3, 2, 1, 8, 7, 6, 5 }), Bytes(windows.begin() + O::MsgId, windows.begin() + O::MsgId + 8));
 }
 
 TEST(Golden, MqmdEbcdicHostRoundTripDropsTheFloatFormat)
@@ -644,6 +813,22 @@ TEST(GoldenGenerator, FailsOnAnIoErrorAndWithoutADirectory)
     EXPECT_NE(0, status);
 }
 
+namespace
+{
+    std::string compare(const std::string & dir, int & status, const std::string & options = std::string())
+    {
+        return run("bash \"" + kCompareScript + "\" " + options + " \"" + dir + "\"", status);
+    }
+
+    bool has(const std::string & out, const std::string & text)
+    {
+        return out.find(text) != std::string::npos;
+    }
+
+    const std::string kBigendianReason =
+        "Windows writes the MQMD little endian with Encoding 529 and swaps the bytes inside each 4-byte word of MsgId, CorrelId, AccountingToken and GroupId; the core keeps the ids as they are";
+}
+
 TEST(Golden, CompareScriptReportsDifferences)
 {
     std::string dir = scratchDir();
@@ -651,28 +836,112 @@ TEST(Golden, CompareScriptReportsDifferences)
     Bytes modified = golden("plain-lf.txt");
     modified[0] ^= 0x20;
     save(dir + "/plain-lf.txt", modified);                              // modified
-    Bytes reversed = golden("mqmd-bigendian.bin");
-    reversed[O::MsgId] ^= 0xFF;
-    save(dir + "/mqmd-bigendian.bin", reversed);                        // known difference
+    save(dir + "/mqmd-ebcdic-host.bin", windowsEbcdicHostOutput());     // known difference, as expected
     save(dir + "/notes.txt", Bytes{ 'x' });                             // not a golden name
 
     int status = -1;
-    std::string out = run("bash \"" + kCompareScript + "\" \"" + dir + "\"", status);
+    std::string out = compare(dir, status);
     EXPECT_EQ(1, status) << out;
-    EXPECT_NE(std::string::npos, out.find("plain-crlf.txt: same\n")) << out;
-    EXPECT_NE(std::string::npos, out.find("plain-lf.txt: DIFFERENT\n")) << out;
-    EXPECT_NE(std::string::npos, out.find("mqmd-bigendian.bin: DIFFERENT (expected: Windows reverses MsgId, CorrelId, GroupId and AccountingToken of a big-endian MQMD; the core keeps them)\n")) << out;
-    EXPECT_NE(std::string::npos, out.find("notes.txt: not a golden file (ignored)\n")) << out;
-    EXPECT_NE(std::string::npos, out.find("summary: 1 same, 1 different as expected, 1 DIFFERENT unexpectedly, 8 golden files not in the directory\n")) << out;
+    EXPECT_TRUE(has(out, "plain-crlf.txt: same\n")) << out;
+    EXPECT_TRUE(has(out, "plain-lf.txt: DIFFERENT; 1 byte differs, length 53 (golden 53), first offsets: 0\n")) << out;
+    EXPECT_TRUE(has(out, "mqmd-ebcdic-host.bin: DIFFERENT (expected: Windows rebuilds the MQMD Encoding without the S/390 float format (785 becomes 529), because reading a file does not set the float format; the core does the same); 1 byte differs, length 399 (golden 399), first offsets: 25\n")) << out;
+    EXPECT_TRUE(has(out, "notes.txt: not a golden file (ignored)\n")) << out;
+    EXPECT_TRUE(has(out, "summary: 1 same, 1 different as expected, 1 DIFFERENT unexpectedly, 8 golden files not in the directory\n")) << out;
 
     // without the unexpected difference the exit status is 0
     save(dir + "/plain-lf.txt", golden("plain-lf.txt"));
-    out = run("bash \"" + kCompareScript + "\" \"" + dir + "\"", status);
+    out = compare(dir, status);
     EXPECT_EQ(0, status) << out;
-    EXPECT_NE(std::string::npos, out.find("plain-lf.txt: same\n")) << out;
+    EXPECT_TRUE(has(out, "plain-lf.txt: same\n")) << out;
 
-    // a directory that is not there is a usage error
+    // --all: a partial run is a failure
+    compare(dir, status, "--all");
+    EXPECT_EQ(1, status);
+
+    // a directory that is not there, and no directory, are usage errors
     run("bash \"" + kCompareScript + "\" \"" + dir + "/missing\"", status);
     EXPECT_EQ(2, status);
+    run("bash \"" + kCompareScript + "\"", status);
+    EXPECT_EQ(2, status);
     removeTree(dir);
+}
+
+TEST(Golden, CompareScriptChecksTheShapeOfEachKnownDifference)
+{
+    int status = -1;
+    std::string out;
+
+    // mqmd-ebcdic-host.bin: only offset 25 (0x03 -> 0x02) is expected
+    {
+        std::string dir = scratchDir();
+        Bytes b = windowsEbcdicHostOutput();
+        save(dir + "/mqmd-ebcdic-host.bin", b);
+        out = compare(dir, status);
+        EXPECT_EQ(0, status) << out;
+        b[200] ^= 1;
+        save(dir + "/mqmd-ebcdic-host.bin", b);
+        out = compare(dir, status);
+        EXPECT_EQ(1, status) << out;
+        EXPECT_TRUE(has(out, "mqmd-ebcdic-host.bin: DIFFERENT; 2 bytes differ")) << out;
+        EXPECT_TRUE(has(out, "first offsets: 25 200")) << out;
+        b = windowsEbcdicHostOutput();
+        b[25] = 0x04;      // the right place, the wrong value
+        save(dir + "/mqmd-ebcdic-host.bin", b);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+        removeTree(dir);
+    }
+
+    // mqmd-bigendian.bin: the little-endian MQMD with the ids swapped inside each word
+    {
+        std::string dir = scratchDir();
+        Bytes b = windowsBigendianOutput();
+        save(dir + "/mqmd-bigendian.bin", b);
+        out = compare(dir, status);
+        EXPECT_EQ(0, status) << out;
+        EXPECT_TRUE(has(out, "mqmd-bigendian.bin: DIFFERENT (expected: " + kBigendianReason + "); ")) << out;
+
+        Bytes outside = b;
+        outside[O::ApplIdentityData] ^= 1;          // not an id or a number
+        save(dir + "/mqmd-bigendian.bin", outside);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+
+        Bytes kept = coreBigendianOutput();         // the ids not swapped: the core's, not Windows'
+        save(dir + "/mqmd-bigendian.bin", kept);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+
+        Bytes reversedWhole = b;                    // whole-field reversal is not what Windows does
+        std::reverse(reversedWhole.begin() + O::MsgId, reversedWhole.begin() + O::MsgId + 24);
+        save(dir + "/mqmd-bigendian.bin", reversedWhole);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+
+        Bytes shorter = b;
+        shorter.pop_back();
+        save(dir + "/mqmd-bigendian.bin", shorter);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+        removeTree(dir);
+    }
+
+    // mqmd-mqmde-text.bin: 384 bytes, no MQMDE, group fields from the swapped MQMDE
+    {
+        std::string dir = scratchDir();
+        Bytes b = windowsMdeOutput();
+        ASSERT_EQ(384u, b.size());
+        save(dir + "/mqmd-mqmde-text.bin", b);
+        out = compare(dir, status);
+        EXPECT_EQ(0, status) << out;
+        EXPECT_TRUE(has(out, "mqmd-mqmde-text.bin: DIFFERENT (expected: Windows swaps the MQMDE integers")) << out;
+        b[O::Priority] ^= 1;
+        save(dir + "/mqmd-mqmde-text.bin", b);
+        compare(dir, status);
+        EXPECT_EQ(1, status);
+        save(dir + "/mqmd-mqmde-text.bin", golden("mqmd-mqmde-text.bin"));    // same as the golden: fine
+        out = compare(dir, status);
+        EXPECT_EQ(0, status) << out;
+        removeTree(dir);
+    }
 }

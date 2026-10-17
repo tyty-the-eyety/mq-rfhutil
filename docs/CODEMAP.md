@@ -18,7 +18,7 @@ says where things are.
   sources. Phase 1 covers the Main, Data and MQMD tabs. Both connection modes (local bindings and
   client) are chosen at run time in one binary.
 - **What exists.** The core (platform layer, MQ loader and session, MQMD field conversion, header chain,
-  message files, the eight Data tab views) with 614 ctest tests. **There is no GUI yet**: the Qt
+  message files, the eight Data tab views) with 661 ctest tests. **There is no GUI yet**: the Qt
   application (`qt/` in the spec) is Plan 3 and has not been started.
 - **Branch.** `features/linux-qt-port` (the spec says `feat/...`; it was renamed so upstream CI,
   which runs on `master` and `features/**`, would run). Not pushed.
@@ -155,7 +155,7 @@ edited by hand, and this was not reproduced. If a script drifts from `HEAD`, the
   default `/opt/mqm`; headers only, the library is loaded at run time).
 - **Executables** (`tests/CMakeLists.txt`): `rfhutil_unit_tests` (IBM's suites + platform + shared-source tests), `rfhutil_core_tests`
   (everything else, no queue manager), `rfhutil_loader_tests` and `rfhutil_mq_tests` (label `mq`), `rfhutil_mq_fake_tests` (fake MQI).
-- **Expected result:** 614 tests, 100% pass, 8 skipped (6 `GuardMalloc` tests and
+- **Expected result:** 661 tests, 100% pass, 8 skipped (6 `GuardMalloc` tests and
   `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under memcheck;
   `MqClient.PutThenGetOverClientChannel`).
 - **Labels.** `ctest -L mq` (36 tests: loader and session tests against a real queue manager, plus the client test).
@@ -248,6 +248,7 @@ Use `tools/index/q sym NAME` for the current range.
 | How is a file without an MQMD classified? | `detectLeadingHeader`, `looksLikeEbcdic` (`rfh_header_chain.cpp`); `fileio::read` (`core/fileio/rfh_message_file.cpp`) |
 | What is the message file layout? | `rfh_message_file.h` comment; `fileio::read` / `fileio::write`; `tests/core/MessageFileTests.cpp` (`MessageFile.*`) |
 | MQMD tab fields <-> MQMD | `mqmd_fields::toMqmd` / `fromMqmd` (`core/message/rfh_mqmd_fields.cpp`); Windows `MQMDPAGE::buildMQMD` / `processMQMD`; `MqmdFields.*` tests |
+| Where are the golden message files, who writes them and how are they checked against Windows? | `tests/core/golden/` (`MANIFEST.md` has hashes, byte layouts and the Windows steps), written by `tools/golden/make_goldens.cpp` from `tests/core/mq_layout.h` only; compared with Windows output by `tools/golden/compare-windows-output.sh` / `.ps1`; tests `Golden.*` and `GoldenGenerator.*` in `tests/core/GoldenFileTests.cpp` |
 | Big-endian or EBCDIC MQMD normalising | `translateMQMD`, `getIntEncode`, `getFloatEncode` in `RFHUtil/mqsubs.cpp`; `Mqsubs_*` tests |
 | Display/encoding constants (`NUMERIC_PC`, `CHAR_EBCDIC`, `DATA_COBOL`, `FLOAT_390`) | `RFHUtil/rfhconst.h` |
 | Connect, put, get, browse, purge | `MqSession` in `core/mq/rfh_mq_session.cpp` (`getOnce`, `browseTo`); tests `MqBindingsTest.*`, `MqSessionFakeTest.*` |
@@ -285,7 +286,7 @@ Use `tools/index/q sym NAME` for the current range.
 
 - **Done.** Plan 1 (portable core, complete at `7febad7`; client mode verified 2026-10-16 against an MQ 10.0.1.0 container), Plan 2A (message files,
   MQMD fields, headers; `0e065a2`), Plan 2B (Data tab views, guard allocator, memory-safety fixes; Tasks 1-8 and 10, HEAD `f415713`).
-  614 tests pass, 8 skipped; `ctest -L memcheck` passes 5 of 5.
+  661 tests pass, 8 skipped; `ctest -L memcheck` passes 5 of 5.
 - **Gated on the owner's Windows build of Plan 1** (RFHUtil, rfhutilc, UnitTests): Plan 2A Task 6 and Plan 2B Task 9 (section 7.5). Windows
   CI (Plan 1 Task 6) is also the owner's. Unverified on Windows: everything under `core/` and all edited shared sources;
   behaviours still assumed: unmappable surrogate pair gives two default characters, code page 1258 flush, the used-default flag, `mbclen`.
