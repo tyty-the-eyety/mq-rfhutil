@@ -106,3 +106,17 @@ rfh_add_memcheck_test(memcheck.DataFormatter rfhutil_core_tests "DataFormatter.*
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
 rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")
 rfh_add_memcheck_test(memcheck.FormatFuzz rfhutil_core_tests "FormatFuzz.*" FORMAT_FUZZ_ITERATIONS=3000)
+
+# The core must not mention a UI toolkit, an MFC call or a process exit (tests/core/CoreHasNoUiTests.cmake).
+# core.NoUiSelfTest proves the script reports each pattern and has no false positives on ordinary words;
+# core.NoUiBadFixture must fail, so it shows that a scan of an offending directory is rejected by ctest.
+set(rfh_no_ui_script ${CMAKE_CURRENT_SOURCE_DIR}/core/CoreHasNoUiTests.cmake)
+set(rfh_no_ui_work ${CMAKE_CURRENT_BINARY_DIR}/no_ui_fixture)
+add_test(NAME core.NoUi
+    COMMAND ${CMAKE_COMMAND} -DSCAN_DIR=${PROJECT_SOURCE_DIR}/core -P ${rfh_no_ui_script})
+add_test(NAME core.NoUiSelfTest
+    COMMAND ${CMAKE_COMMAND} -DSELFTEST=1 -DWORK_DIR=${rfh_no_ui_work} -P ${rfh_no_ui_script})
+add_test(NAME core.NoUiBadFixture
+    COMMAND ${CMAKE_COMMAND} -DSCAN_DIR=${rfh_no_ui_work}/bad -P ${rfh_no_ui_script})
+set_tests_properties(core.NoUiSelfTest PROPERTIES FIXTURES_SETUP rfh_no_ui_fixture)
+set_tests_properties(core.NoUiBadFixture PROPERTIES FIXTURES_REQUIRED rfh_no_ui_fixture WILL_FAIL TRUE)
