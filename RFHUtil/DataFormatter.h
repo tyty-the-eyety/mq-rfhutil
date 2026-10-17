@@ -45,9 +45,10 @@ http://www.apache.org/licenses/LICENSE-2.0
 //   a longer one is treated as no tables, where DataArea overruns its file name;
 // - the UCS-2 fallback of the character view converts from the data itself;
 //   DataArea reads the units from a 4-unit local array;
-// - the display table is built when the formatter is made. DataArea fills it with
-//   '.' and builds it in the first character or both view, which Windows always
-//   shows first; the other views use it without building it.
+// - the display table is built when the formatter is made, and again by
+//   setDisplay for the display code page. DataArea fills it with '.' and builds it
+//   in the first character or both view, which Windows always shows first; the
+//   other views use it without building it.
 
 #pragma once
 
@@ -82,13 +83,19 @@ public:
 	// still the data they show.
 	const unsigned char * source() const { return sourceData; }
 
+	// The display code pages, { rfh_get_acp(), 437 } until setDisplay is called.
+	// setDisplay also rebuilds the display table for codepages.ansi, as Windows
+	// builds it for GetACP(), which is the code page it shows text in. Call it
+	// before the first get...Data call.
+	void setDisplay(const DisplayCodepages & codepages);
+	const DisplayCodepages & displayCodepages() const { return display; }
+
 	// Inputs.
 	unsigned char *	fileData;			// set by setData
 	unsigned int	fileSize;			// set by setData
 	int				fileCcsid;			// the message's code page (the MQMD's)
 	int				fileIntFormat;		// NUMERIC_PC or NUMERIC_HOST
 	int				m_char_format;		// CHAR_* of the data (DataArea::m_char_format)
-	DisplayCodepages display;			// default { rfh_get_acp(), 437 }
 	std::string		conversionTableDir;	// MQ's conversion tables (Windows: conv\table under the
 										// MQ install directory; Linux: /opt/mqm/lib/iconv); empty for none.
 										// A directory of kTablePathMax - 32 characters or more leaves no
@@ -134,6 +141,7 @@ private:
 	void dumpTraceData(const char * label, const unsigned char * data, unsigned int length);
 	void updateMsgText() {}				// DataArea shows m_error_msg; callers read it instead
 
+	DisplayCodepages display;			// see setDisplay
 	const DisplayCodepages * app;		// &display: the moved code reads app->ansi and app->oem
 
 	BOOL traceEnabled;

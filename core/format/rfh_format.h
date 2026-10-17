@@ -3,7 +3,9 @@
 // render produces the text the Windows Data tab shows, with DataFormatter
 // (RFHUtil/DataFormatter.cpp), the code the Windows Data tab uses. The text is in
 // the display code page options.display.ansi, as Windows puts it in the edit
-// control; a UI decodes it from that code page.
+// control; a UI decodes it from that code page. The bytes that code page does not
+// display are shown as '.', as on Windows for its ANSI code page, whatever
+// rfh_get_acp says (DataFormatter::setDisplay).
 //
 // Differences from Windows RFHUtil:
 // - the COBOL view reads the copy book named by options.copybookPath instead of

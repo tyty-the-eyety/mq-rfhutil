@@ -157,7 +157,7 @@ namespace rfh
 			formatter.fileCcsid = options.ccsid;
 			formatter.fileIntFormat = options.intFormat;
 			formatter.m_char_format = options.charFormat;
-			formatter.display = options.display;
+			formatter.setDisplay(options.display);
 			formatter.conversionTableDir = options.conversionTableDir;
 
 			const unsigned char * text = NULL;

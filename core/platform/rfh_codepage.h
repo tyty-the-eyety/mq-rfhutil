@@ -6,10 +6,29 @@
 
 #include "rfh_platform.h"
 
-// The ANSI code page used for display translation.
-// Windows: GetACP(). Linux: the RFHUTIL_ACP environment variable if it holds a
-// positive number, otherwise 1252 (Western European, the common Windows default).
+// The ANSI code page used for display translation: the code page of the innermost
+// RfhAcpScope active on the calling thread; otherwise, on Windows GetACP(), and on
+// Linux the RFHUTIL_ACP environment variable if it holds a positive number,
+// otherwise 1252 (Western European, the common Windows default).
 int rfh_get_acp();
+
+// Makes rfh_get_acp() return acp on the calling thread while the object exists, so
+// that IBM code which asks for the ANSI code page (buildInvalidCharTable) can work
+// for a display code page other than the process's (DataFormatter::setDisplay).
+// Scopes nest; an acp that is not positive changes nothing. Windows' _mbclen, and
+// so rfh_mbclen there, does not follow it.
+class RfhAcpScope
+{
+public:
+	explicit RfhAcpScope(int acp);
+	~RfhAcpScope();
+
+	RfhAcpScope(const RfhAcpScope &) = delete;
+	RfhAcpScope & operator=(const RfhAcpScope &) = delete;
+
+private:
+	int m_previous;
+};
 
 // The Windows ANSI and OEM code pages the display formatters (DataFormatter) show
 // text in. On Windows these are GetACP() and GetOEMCP(), which CRfhutilApp holds as

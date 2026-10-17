@@ -21,7 +21,7 @@ namespace
     {
         formatter.setData((const unsigned char *)text, (unsigned int)strlen(text));
         formatter.fileCcsid = 819;
-        formatter.display = kDisplay;
+        formatter.setDisplay(kDisplay);
     }
 
     // The formatter is allocated with new so that, under the guard allocator
@@ -31,7 +31,7 @@ namespace
         std::unique_ptr<DataFormatter> formatter(new DataFormatter);
         formatter->setData((const unsigned char *)data.data(), (unsigned int)data.size());
         formatter->fileCcsid = 819;
-        formatter->display = kDisplay;
+        formatter->setDisplay(kDisplay);
         return formatter;
     }
 

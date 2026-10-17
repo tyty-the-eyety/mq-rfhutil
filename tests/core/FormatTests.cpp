@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <unistd.h>
@@ -949,4 +950,52 @@ TEST(Format_Limit, BodyOverMQsMaximumMessageLengthFailsBeforeItIsCopied)
     // a copy of the body would raise the peak by 100 MB; the peak only grows, so a
     // larger peak from earlier in the process cannot make this fail
     EXPECT_LT(peakResidentBytes() - before, 16LL * 1024 * 1024);
+}
+
+// --- display code page ----------------------------------------------------------
+
+namespace
+{
+    // Saves RFHUTIL_ACP and restores it (or removes it) when the test ends.
+    struct AcpEnvGuard
+    {
+        AcpEnvGuard()
+        {
+            const char * old = getenv("RFHUTIL_ACP");
+            had = (old != nullptr);
+            if (had) saved = old;
+        }
+        ~AcpEnvGuard()
+        {
+            if (had) setenv("RFHUTIL_ACP", saved.c_str(), 1); else unsetenv("RFHUTIL_ACP");
+        }
+        std::string saved;
+        bool had;
+    };
+}
+
+TEST(Format_Character, BytesTheDisplayCodePageDoesNotShowAreDots)
+{
+    // comsubs.cpp's table: 932 does not show 0x80, 0xA0 and 0xFD-0xFF; 1252 does
+    // not show 0x81, 0x8D, 0x8F, 0x90, 0x98 and 0x9D
+    AcpEnvGuard guard;
+    const std::string body = "\x80\xa0\xfd\x81" "A";
+    RenderOptions japanese = options();
+    japanese.display = { 932, 932 };
+    RenderOptions western = options();
+    western.display = { 1252, 437 };
+
+    // the table follows display.ansi, not the process ANSI code page
+    unsetenv("RFHUTIL_ACP");
+    EXPECT_EQ(std::string("00000000 ...\x81" "A"), render(message(body), View::Character, japanese));
+    EXPECT_EQ(std::string("00000000 \x80\xa0\xfd." "A"), render(message(body), View::Character, western));
+
+    setenv("RFHUTIL_ACP", "932", 1);
+    EXPECT_EQ(std::string("00000000 ...\x81" "A"), render(message(body), View::Character, japanese));
+    EXPECT_EQ(std::string("00000000 \x80\xa0\xfd." "A"), render(message(body), View::Character, western));
+
+    // and the scope ends with the render
+    EXPECT_EQ(932, rfh_get_acp());
+    unsetenv("RFHUTIL_ACP");
+    EXPECT_EQ(1252, rfh_get_acp());
 }

@@ -242,6 +242,24 @@ TEST(Platform_Codepage, GetAcpHonoursEnvironment)
     setenv("RFHUTIL_ACP", "abc", 1);
     EXPECT_EQ(1252, rfh_get_acp());
 }
+
+TEST(Platform_Codepage, AcpScopeOverridesTheEnvironmentWhileItLasts)
+{
+    AcpEnvGuard guard;
+    setenv("RFHUTIL_ACP", "437", 1);
+    {
+        RfhAcpScope outer(932);
+        EXPECT_EQ(932, rfh_get_acp());
+        {
+            RfhAcpScope inner(1250);
+            EXPECT_EQ(1250, rfh_get_acp());
+            RfhAcpScope ignored(0);
+            EXPECT_EQ(1250, rfh_get_acp());
+        }
+        EXPECT_EQ(932, rfh_get_acp());
+    }
+    EXPECT_EQ(437, rfh_get_acp());
+}
 #endif
 
 TEST(Platform_Codepage, Ucs2ToCLocaleRejectsAbove255)

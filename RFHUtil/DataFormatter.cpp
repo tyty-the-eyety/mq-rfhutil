@@ -126,6 +126,17 @@ void DataFormatter::setData(const unsigned char * bytes, unsigned int size)
 	sourceData = bytes;
 }
 
+void DataFormatter::setDisplay(const DisplayCodepages & codepages)
+{
+	display = codepages;
+
+	// buildInvalidCharTable (comsubs.cpp) marks the bytes that the ANSI code page
+	// does not display, which it asks rfh_get_acp for
+	RfhAcpScope acp(display.ansi);
+	buildInvalidCharTable(invalidCharTable);
+	invalidCharTableNotBuilt = FALSE;
+}
+
 void DataFormatter::logTraceEntry(const char * traceInfo)
 {
 	rfhGetTrace()->logTraceEntry(traceInfo);

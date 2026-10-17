@@ -5,11 +5,34 @@
 #include <stdlib.h>
 #include <string.h>
 
+namespace
+{
+	// set by RfhAcpScope; 0 when no scope is active on this thread
+	thread_local int acpOverride = 0;
+}
+
+RfhAcpScope::RfhAcpScope(int acp) : m_previous(acpOverride)
+{
+	if (acp > 0)
+	{
+		acpOverride = acp;
+	}
+}
+
+RfhAcpScope::~RfhAcpScope()
+{
+	acpOverride = m_previous;
+}
+
 #ifdef _WIN32
 #include <mbstring.h>
 
 int rfh_get_acp()
 {
+	if (acpOverride > 0)
+	{
+		return acpOverride;
+	}
 	return (int)GetACP();
 }
 
@@ -256,6 +279,11 @@ namespace
 
 int rfh_get_acp()
 {
+	if (acpOverride > 0)
+	{
+		return acpOverride;
+	}
+
 	const char * env = getenv("RFHUTIL_ACP");
 	if (env != NULL)
 	{
