@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <string>
 #include <vector>
@@ -460,4 +461,358 @@ TEST(Format_Cobol, AnUnreadableCopybookFails)
     Result r = format::render(message(kCustomer), View::Cobol, o, out);
     EXPECT_FALSE(r.ok());
     EXPECT_EQ(0u, r.text.find("copy book file " + o.copybookPath + " could not be read"));
+}
+
+// --- COBOL view: IBM's copy book parser ---------------------------------------
+//
+// tools/port/harden-copybook.pl keeps IBM's parser within its buffers on malformed
+// copy books and data; these are the reviewer's reproducers. Each crashed or wrote
+// past a buffer before (under the guard allocator or a sanitizer); now each gives
+// the view, with the defined text pinned where it is short.
+
+namespace
+{
+    // A copy book in a file of its own, removed when the test ends. ctest runs each
+    // test in a process of its own, in parallel, and memcheck.Format runs them again,
+    // so the name has the test's name and the process.
+    class CopybookFile
+    {
+    public:
+        explicit CopybookFile(const std::string & text)
+        {
+            static int sequence = 0;
+            const testing::TestInfo * test = testing::UnitTest::GetInstance()->current_test_info();
+            path_ = testing::TempDir() + "rfhutil_" + test->test_suite_name() + "." + test->name() + "."
+                + std::to_string((long)getpid()) + "." + std::to_string(++sequence) + ".cpy";
+            FILE * f = fopen(path_.c_str(), "wb");
+            EXPECT_NE(nullptr, f) << path_;
+            if (f != nullptr)
+            {
+                fwrite(text.data(), 1, text.size(), f);
+                fclose(f);
+            }
+        }
+
+        ~CopybookFile()
+        {
+            remove(path_.c_str());
+        }
+
+        CopybookFile(const CopybookFile &) = delete;
+        CopybookFile & operator=(const CopybookFile &) = delete;
+
+        const std::string & path() const { return path_; }
+
+    private:
+        std::string path_;
+    };
+
+    Result renderCobol(const std::string & copybook, const std::string & body, RenderOptions o, std::string & out)
+    {
+        CopybookFile file(copybook);
+        o.copybookPath = file.path();
+        return format::render(message(body), View::Cobol, o, out);
+    }
+
+    // the view, which must render
+    std::string cobol(const std::string & copybook, const std::string & body, const RenderOptions & o = options())
+    {
+        std::string out;
+        Result r = renderCobol(copybook, body, o, out);
+        EXPECT_TRUE(r.ok()) << r.text;
+        return out;
+    }
+
+    RenderOptions with(RenderOptions o, bool indent, bool checkData)
+    {
+        o.indent = indent;
+        o.checkData = checkData;
+        return o;
+    }
+
+    const std::string kHeading = "Level  Ofs  Len Type  Occ Variable Name                  Value\r\n";
+    const std::string kMismatch = "\r\n***** RFHUtil error - Data length does not match copybook";
+}
+
+TEST(Format_CobolMalformed, AGroupOccursDependingOnWithoutAMaximumShowsTheOccurrencesInTheData)
+{
+    // the count, 600, has no maximum to cap it; the buffer was sized for 10
+    EXPECT_EQ(kHeading +
+              "01     0   604           R\r\n"
+              "05     0     4 NUMB      CNT                            0600\r\n"
+              "05     4     1         1 ITEMS\r\n"
+              "10     4     1 CHAR    1 V                              A\r\n"
+              "05     5     1         2 ITEMS\r\n"
+              "10     5     1 CHAR    2 V                              A\r\n"
+              "05     6     1         3 ITEMS\r\n"
+              "10     6     1 CHAR    3 V                              A\r\n"
+              "05     7     1         4 ITEMS\r\n"
+              "10     7     1 CHAR    4 V                              A\r\n"
+              "05     8     1         5 ITEMS\r\n"
+              "10     8     1 CHAR    5 V                              A\r\n"
+              "05     9     1         6 ITEMS\r\n"
+              "10     9     1 CHAR    6 V                              A\r\n"
+              "Copy book size 604, Data area size 10" + kMismatch,
+              cobol("       01 R.\n"
+                    "         05 CNT PIC 9(4).\n"
+                    "         05 ITEMS OCCURS 5 TIMES DEPENDING ON CNT.\n"
+                    "            10 V PIC X.\n", "0600AAAAAA"));
+}
+
+TEST(Format_CobolMalformed, AGroupOccursStopsAtTheEndOfItsBuffer)
+{
+    // 100000 occurrences in the data, two lines each, in a buffer sized for 10
+    std::string out = cobol("       01 R.\n"
+                            "         05 CNT PIC 9(6).\n"
+                            "         05 ITEMS OCCURS 5 TIMES DEPENDING ON CNT.\n"
+                            "            10 V PIC X.\n", "100000" + std::string(100000, 'A'));
+    const std::string end = "***** Exceeded memory buffer\r\nCopy book size 100006, Data area size 100006";
+    ASSERT_GT(out.size(), end.size());
+    EXPECT_EQ(end, out.substr(out.size() - end.size()));
+    // (23 lines * 128) + 65536, and the 8192 beyond it
+    EXPECT_LT(out.size(), (23u * 128) + 65536 + 8192);
+}
+
+TEST(Format_CobolMalformed, AStatementOfManyShortLinesStopsAtItsBuffer)
+{
+    // no period: 5000 lines and the blanks between them overran the statement
+    std::string copybook = "       01  REC\n";
+    for (int i = 0; i < 5000; i++)
+    {
+        copybook += "       X\n";
+    }
+    EXPECT_EQ(kHeading +
+              "00     0     0           \r\n"
+              "Copy book size 0, Data area size 6" + kMismatch,
+              cobol(copybook, "aabbcc"));
+}
+
+TEST(Format_CobolMalformed, ALineThatStartsWithANulIsSkipped)
+{
+    EXPECT_EQ(kHeading +
+              "01     0     1           A\r\n"
+              "Copy book size 1, Data area size 6" + kMismatch,
+              cobol(std::string("\0\n", 2) + "       01  A PIC X.\n", "aabbcc"));
+}
+
+TEST(Format_CobolMalformed, ASyncGroupWhoseFirstChildIsNotAlignedDoesNotDivideByZero)
+{
+    std::string out = cobol("       01 F0 BINARY OCCURS 17 TIMES SYNC.\n"
+                            "       10 F1 COMP PIC.\n"
+                            "       77 F2 REDEFINES F0 POINTER.\n", std::string(40, '\0'));
+    EXPECT_EQ(0u, out.find(kHeading + "01     0     2         1 F0\r\n10     0     2         1 F1\r\n"));
+}
+
+TEST(Format_CobolMalformed, IndentingDeeperThanThirtyTwoLevelsStopsAtThirtyOneBlanks)
+{
+    std::string copybook = "       01  R.\n";
+    for (int level = 2; level < 49; level++)
+    {
+        char line[32];
+        snprintf(line, sizeof(line), "       %02d  LV%d.\n", level, level);
+        copybook += line;
+    }
+    copybook += "       49  LEAF PIC X(5).\n";
+    std::string out = cobol(copybook, "aabbcc", with(options(), true, false));
+    EXPECT_NE(std::string::npos, out.find("\r\n" + std::string(30, ' ') + "31     0     5           LV31\r\n"));
+    EXPECT_NE(std::string::npos, out.find("\r\n" + std::string(31, ' ') + "32     0     5           LV32\r\n"));
+    EXPECT_NE(std::string::npos, out.find("\r\n" + std::string(31, ' ') + "33     0     5           LV33\r\n"));
+    EXPECT_NE(std::string::npos, out.find("\r\n" + std::string(31, ' ') + "49     0     5 CHAR      LEAF                           aabbc\r\n"));
+}
+
+TEST(Format_CobolMalformed, APackedDecimalFieldLongerThanItsWorkAreaShowsWhatFits)
+{
+    // 101 bytes, shown as 202 digits in a 160 byte work area
+    std::string out = cobol("       01 R.\n"
+                            "         05 A PIC S9(200) COMP-3.\n", std::string(400, '\x11'));
+    EXPECT_EQ(kHeading +
+              "01     0   101           R\r\n"
+              "***** RFHUtil format error - Invalid Packed Decimal data in next field\r\n"
+              "05     0   101 PD        A                              " + std::string(158, '1') + "\r\n"
+              "Copy book size 101, Data area size 400" + kMismatch,
+              out);
+}
+
+TEST(Format_CobolMalformed, ANegativeLengthShowsNoValue)
+{
+    EXPECT_EQ(kHeading +
+              "01     0    -5           R\r\n"
+              "05     0    -5 CHAR      A\r\n"
+              "Copy book size -5, Data area size 6" + kMismatch,
+              cobol("       01 R.\n"
+                    "         05 A PIC X(-5).\n", "aabbcc"));
+}
+
+TEST(Format_CobolMalformed, ALengthBeyondAnIntShowsNoValue)
+{
+    // atoi wraps the length here; Windows' atoi saturates at INT_MAX
+    std::string out = cobol("       01 R.\n"
+                            "         05 A PIC X(999999999999).\n", "aabbcc");
+    EXPECT_NE(std::string::npos, out.find(" CHAR      A\r\n"));
+    EXPECT_NE(std::string::npos, out.find(", Data area size 6" + kMismatch));
+}
+
+TEST(Format_CobolMalformed, AHugeLengthDoesNotOverflowTheOffsets)
+{
+    std::string out = cobol("       01 R.\n"
+                            "         05 A PIC X(2000000000).\n"
+                            "         05 B PIC X(2000000000).\n"
+                            "         05 C PIC X.\n", "aabbcc");
+    EXPECT_NE(std::string::npos, out.find("05     0 2000000000 CHAR      A                              aabbcc\r\n"));
+}
+
+TEST(Format_CobolMalformed, ACountWiderThanItsWorkAreaIsRead)
+{
+    // the count, PIC 9(300), overran its 256 byte work area
+    std::string out = cobol("       01 R.\n"
+                            "         05 CNT PIC 9(300).\n"
+                            "         05 ITEMS PIC X OCCURS 1 TO 3 TIMES DEPENDING ON CNT.\n",
+                            std::string(299, '0') + "2AB");
+    EXPECT_NE(std::string::npos, out.find("05     0   300 NUMB      CNT                            " + std::string(128, '0') + "\r\n"));
+    EXPECT_NE(std::string::npos, out.find("Copy book size 300, Data area size 302" + kMismatch));
+}
+
+TEST(Format_CobolMalformed, AFieldBeforeTheDataIsNotRead)
+{
+    // the tree puts F3 at offset -400 and its count before the data
+    EXPECT_EQ(kHeading +
+              "***** RFHUtil format error - Occurs value past end of input buffer\n"
+              "***** RFHUtil format error - Occurs value below minimum - value=0 minimum=100\r\n"
+              "***** RFHUtil format error - Occurs value below minimum - value=0 minimum=3\r\n"
+              "01     0     5           F0\r\n"
+              "03  -400     2           F3\r\n"
+              "***** RFHUtil formating error - Copy book offset exceeds data area\r\n"
+              "Copy book size 5, Data area size 1" + kMismatch,
+              cobol("       01 F0 .\n"
+                    "       10 F1 OCCURS 100 TO 1 TIMES DEPENDING ON F0 COMP-3 A(-1).\n"
+                    "       15 F2 COMP-1.\n"
+                    "       03 F3 G(0) SIGN TRAILING.\n"
+                    "       77 F4 PACKED-DECIMAL COMP-2.\n"
+                    "       10 F5 USAGE OCCURS 3 TO 9 TIMES DEPENDING ON F3 COMP-3.\n"
+                    "       01 F6 A(9) X(100).\n"
+                    "       77 F7 SIGN LEADING SEPARATE.\n"
+                    "       03 F8 BINARY BINARY.\n", "\x99"));
+}
+
+TEST(Format_CobolMalformed, NestedOccursDependingOnStaysWithinTheData)
+{
+    std::string body = "99";
+    for (int i = 0; i < 50; i++)
+    {
+        body += "99X";
+    }
+    std::string out = cobol("       01 R.\n"
+                            "         05 C1 PIC 9(2).\n"
+                            "         05 A OCCURS 1 TO 99 TIMES DEPENDING ON C1.\n"
+                            "            10 C2 PIC 9(2).\n"
+                            "            10 B OCCURS 1 TO 99 TIMES DEPENDING ON C2.\n"
+                            "               15 V PIC X.\n", body);
+    EXPECT_EQ(0u, out.find(kHeading + "01     0  9903           R\r\n05     0     2 NUMB      C1                             99\r\n"));
+    const std::string end = "Copy book size 9903, Data area size 152" + kMismatch;
+    ASSERT_GT(out.size(), end.size());
+    EXPECT_EQ(end, out.substr(out.size() - end.size()));
+}
+
+TEST(Format_CobolMalformed, CheckingANumberShorterThanItsFieldReadsOnlyTheData)
+{
+    EXPECT_EQ(kHeading +
+              "01     0   100           R\r\n"
+              "***** RFHUtil format error - Invalid numeric data in next field\r\n"
+              "05     0   100 NUMB      N                              12\r\n"
+              "***** RFHUtil formating error - Copy book offset exceeds data area\r\n"
+              "Copy book size 100, Data area size 2" + kMismatch,
+              cobol("       01 R.\n"
+                    "         05 N PIC 9(100).\n", "12", with(options(), false, true)));
+}
+
+TEST(Format_CobolMalformed, AGroupOccursStopsAfterTheEndOfTheData)
+{
+    // 1000 * 1000 occurrences and 100 bytes: one occurrence past the end is shown
+    std::string out = cobol("       01 R.\n"
+                            "         05 A OCCURS 1000 TIMES.\n"
+                            "            10 B OCCURS 1000 TIMES.\n"
+                            "               15 V PIC X.\n", std::string(100, 'A'));
+    const std::string end = "10   100     1       101 B\r\n"
+                            "15   100     1 CHAR  101 V\r\n"
+                            "***** RFHUtil formating error - Copy book offset exceeds data area\r\n"
+                            "Copy book size 1000000, Data area size 100" + kMismatch;
+    ASSERT_GT(out.size(), end.size());
+    EXPECT_EQ(end, out.substr(out.size() - end.size()));
+    EXPECT_LT(out.size(), 16384u);
+}
+
+// --- COBOL view: IBM's behaviour, pinned ---------------------------------------
+
+TEST(Format_CobolIbm, AnOccursOfAFixedCountListsEachOccurrence)
+{
+    EXPECT_EQ(kHeading +
+              "01     0     6           R\r\n"
+              "05     0     2 CHAR    1 A                              aa\r\n"
+              "05     2     2 CHAR    2 A                              bb\r\n"
+              "05     4     2 CHAR    3 A                              cc\r\n"
+              "Copy book size 6, Data area size 6",
+              cobol("       01  R.\n"
+                    "           05  A  PIC X(2) OCCURS 3 TIMES.\n", "aabbcc"));
+}
+
+TEST(Format_CobolIbm, ARedefinitionNamesTheFieldItRedefines)
+{
+    EXPECT_EQ(kHeading +
+              "01     0     4           R\r\n"
+              "05     0     4 CHAR      A                              1234\r\n"
+              "05     0     4 NUMB      B                              1234                             A\r\n"
+              "Copy book size 4, Data area size 4",
+              cobol("       01  R.\n"
+                    "           05  A  PIC X(4).\n"
+                    "           05  B  REDEFINES A PIC 9(4).\n", "1234"));
+}
+
+TEST(Format_CobolIbm, EbcdicDisplayFieldsAreTranslated)
+{
+    EXPECT_EQ(kHeading +
+              "01     0     5           R\r\n"
+              "05     0     5 CHAR      N                              HELLO\r\n"
+              "Copy book size 5, Data area size 5",
+              cobol("       01  R.\n"
+                    "           05  N  PIC X(5).\n", ebcdic("HELLO"), options(500, CHAR_EBCDIC)));
+}
+
+TEST(Format_CobolIbm, ADSignMakesAPackedNumberNegative)
+{
+    RenderOptions o = options();
+    o.pdNumericFormat = NUMERIC_HOST;
+    EXPECT_EQ(kHeading +
+              "01     0     2           R\r\n"
+              "05     0     2 PD        P                              -123\r\n"
+              "Copy book size 2, Data area size 2",
+              cobol("       01  R.\n"
+                    "           05  P  PIC S9(3) COMP-3.\n", "\x12\x3D", o));
+}
+
+TEST(Format_CobolIbm, CheckingCallsASignedEbcdicNumberInvalid)
+{
+    // IBM's check runs on the translated text, where the sign zone D3 is an L
+    EXPECT_EQ(kHeading +
+              "01     0     3           R\r\n"
+              "***** RFHUtil format error - Invalid numeric data in next field\r\n"
+              "05     0     3 NUMB      Z                              123-\r\n"
+              "Copy book size 3, Data area size 3",
+              cobol("       01  R.\n"
+                    "           05  Z  PIC S9(3).\n", "\xF1\xF2\xD3", with(options(500, CHAR_EBCDIC), false, true)));
+}
+
+TEST(Format_CobolIbm, DataLongerThanTheCopybookIsReported)
+{
+    EXPECT_EQ(kHeading +
+              "01     0     2           R\r\n"
+              "05     0     2 CHAR      A                              aa\r\n"
+              "Copy book size 2, Data area size 6" + kMismatch,
+              cobol("       01  R.\n"
+                    "           05  A  PIC X(2).\n", "aabbcc"));
+}
+
+TEST(Format_CobolIbm, AnEmptyBodyShowsNothing)
+{
+    EXPECT_EQ("", cobol("       01  R.\n"
+                        "           05  A  PIC X(2).\n", ""));
 }

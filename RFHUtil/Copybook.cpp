@@ -206,6 +206,43 @@ static char THIS_FILE[]=__FILE__;
 // trace file environment variable
 #define RFHUTIL_TRACE_COBOL "RFHUTIL_TRACE_COBOL"
 
+// Lengths and offsets that a malformed copy book overflows wrap, as they do on
+// Windows in practice, instead of being undefined.
+static int wrapAdd(const int a, const int b)
+{
+	return (int)((unsigned int)a + (unsigned int)b);
+}
+
+static int wrapMul(const int a, const int b)
+{
+	return (int)((unsigned int)a * (unsigned int)b);
+}
+
+// The bytes of a field that varReportLine shows as hex or packed decimal digits:
+// two characters a byte and a terminator must fit in a work area of size bytes.
+static int hexLength(const int len, const size_t size)
+{
+	if (len < 0)
+	{
+		return 0;
+	}
+
+	if (len > (int)((size - 1) / 2))
+	{
+		return (int)((size - 1) / 2);
+	}
+
+	return len;
+}
+
+// formatData's callers allocate maxArea + 8192 bytes. displayDat writes a line only
+// while at least 4096 bytes are left below maxArea; updateLength's messages keep to
+// the same limit.
+static bool roomForMessage(const char *printArea, const int maxArea)
+{
+	return (int)strlen(printArea) <= (maxArea - 4096);
+}
+
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
@@ -229,6 +266,8 @@ CCopybook::CCopybook()
 	bytesText=0;
 	offsetError = FALSE;
 	traceEnabled = FALSE;
+	dataStart = NULL;
+	dataEnd = NULL;
 }
 
 CCopybook::~CCopybook()
@@ -320,7 +359,7 @@ char * CCopybook::findKeyword(char *cmdline, const char *keywd)
 		if (temptr != NULL)
 		{
 			// create the trace line
-			sprintf(traceInfo, "Entering CCopybook::findKeyword() keywd=%s temptr=%.32s", keywd, temptr);
+			snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::findKeyword() keywd=%s temptr=%.32s", keywd, temptr);
 
 			// trace entry to findKeyword
 			logTraceEntry(traceInfo);
@@ -357,7 +396,7 @@ int CCopybook::calcOffsets(int varnum, int startOfs, int *newOfs)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::calcOffsets() startOfs=%d newOfs=%d varnum=%d VarName=%s", startOfs, (*newOfs), varnum, namObj->getNameAddr(fvar[varnum].VarName));
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::calcOffsets() startOfs=%d newOfs=%d varnum=%d VarName=%s", startOfs, (*newOfs), varnum, namObj->getNameAddr(fvar[varnum].VarName));
 
 		// trace entry to calcOffsets
 		logTraceEntry(traceInfo);
@@ -405,7 +444,7 @@ int CCopybook::calcOffsets(int varnum, int startOfs, int *newOfs)
 		}
 		else
 		{
-			(*newOfs) = startOfs + (length * fvar[varnum].VarOccur) + (delta * (fvar[varnum].VarOccur - 1));
+			(*newOfs) = wrapAdd(wrapAdd(startOfs, wrapMul(length, fvar[varnum].VarOccur)), wrapMul(delta, fvar[varnum].VarOccur - 1));
 		}
 	}
 	else
@@ -437,7 +476,7 @@ int CCopybook::calcOffsets(int varnum, int startOfs, int *newOfs)
 			{
 				// not a redefine - use the new offset
 				length = calcOffsets(child, offset, &offset);
-				offset += (occur - 1) * fvar[child].VarLen;
+				offset = wrapAdd(offset, wrapMul(occur - 1, fvar[child].VarLen));
 			}
 			else
 			{
@@ -450,18 +489,18 @@ int CCopybook::calcOffsets(int varnum, int startOfs, int *newOfs)
 		}
 
 		// set the total length, including any slack bytes
-		fvar[varnum].VarLen = offset - startOfs;
+		fvar[varnum].VarLen = wrapAdd(offset, wrapMul(-1, startOfs));
 		fvar[varnum].VarOffset = fvar[fvar[varnum].VarChild].VarOffset;
 
 		// check if there is an occurs without a redefine and a sync clause
-		if ((0 == fvar[varnum].VarRedefine) && (fvar[varnum].VarSync > 1) && (fvar[varnum].VarOccur > 1))
+		if ((0 == fvar[varnum].VarRedefine) && (fvar[varnum].VarSync > 1) && (fvar[varnum].VarOccur > 1) && (fvar[firstChild].VarSync > 1))
 		{
 			// calculate the number of slack bytes
 			// calculate the number of slack bytes after each occurence
 			slack = (fvar[firstChild].VarSync - (fvar[varnum].VarLen % fvar[firstChild].VarSync)) % fvar[firstChild].VarSync;
 
 			// add the appropriate number of slack bytes
-			offset += slack * (fvar[varnum].VarOccur - 1);
+			offset = wrapAdd(offset, wrapMul(slack, fvar[varnum].VarOccur - 1));
 
 			// remember the number of slack bytes
 			fvar[varnum].VarEndSlack = slack;
@@ -538,7 +577,7 @@ int CCopybook::calcOffsets(int varnum, int startOfs, int *newOfs)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::calcOffsets() Total length of area in bytes %d newofs %d delta=%d slack=%d VarName=%s", length, (*newOfs), delta, slack, namObj->getNameAddr(fvar[varnum].VarName));
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::calcOffsets() Total length of area in bytes %d newofs %d delta=%d slack=%d VarName=%s", length, (*newOfs), delta, slack, namObj->getNameAddr(fvar[varnum].VarName));
 
 		// trace exit from calcOffsets
 		logTraceEntry(traceInfo);
@@ -657,7 +696,7 @@ int CCopybook::buildTree(const char * fileName)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::buildTree() fileName=%s", (LPCTSTR)fileName);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::buildTree() fileName=%s", (LPCTSTR)fileName);
 
 		// trace entry to buildTree
 		logTraceEntry(traceInfo);
@@ -679,7 +718,7 @@ int CCopybook::buildTree(const char * fileName)
  		if (traceEnabled)
 		{
 			// create the trace line
-			sprintf(traceInfo, "Open failed for fileName=%s", (LPCTSTR)fileName);
+			snprintf(traceInfo, sizeof(traceInfo), "Open failed for fileName=%s", (LPCTSTR)fileName);
 
 			// trace entry to buildTree
 			logTraceEntry(traceInfo);
@@ -748,7 +787,7 @@ int CCopybook::buildTree(const char * fileName)
  				if (traceEnabled)
 				{
 					// create the trace line
-					sprintf(traceInfo, " cline=%.256s", cline);
+					snprintf(traceInfo, sizeof(traceInfo), " cline=%.256s", cline);
 
 					// trace the current line
 					logTraceEntry(traceInfo);
@@ -925,7 +964,7 @@ int CCopybook::buildTree(const char * fileName)
  						if (traceEnabled)
 						{
 							// create the trace line
-							sprintf(traceInfo, "CCopybook::buildTree() Invalid redefines - level=%d varname=%s redefineName=%s", level, varname, redefineName);
+							snprintf(traceInfo, sizeof(traceInfo), "CCopybook::buildTree() Invalid redefines - level=%d varname=%s redefineName=%s", level, varname, redefineName);
 
 							// trace error in buildTree
 							logTraceEntry(traceInfo);
@@ -1199,7 +1238,7 @@ int CCopybook::buildTree(const char * fileName)
 			if (traceEnabled)
 			{
 				// create the trace line
-				sprintf(traceInfo, " outCounter=%d maxvar=%d level=%d redefLevel=%d length=%d datatype=%d use=%d", outCounter, maxvar, level, redefLevel, length, datatype, use);
+				snprintf(traceInfo, sizeof(traceInfo), " outCounter=%d maxvar=%d level=%d redefLevel=%d length=%d datatype=%d use=%d", outCounter, maxvar, level, redefLevel, length, datatype, use);
 
 				// trace the current line
 				logTraceEntry(traceInfo);
@@ -1219,7 +1258,7 @@ int CCopybook::buildTree(const char * fileName)
 		{
 			if (firstatlevel[i] > 0)
 			{
-				sprintf(traceInfo,"  level %.2d - first(%d)", i, firstatlevel[i]);
+				snprintf(traceInfo, sizeof(traceInfo),"  level %.2d - first(%d)", i, firstatlevel[i]);
 				logTraceEntry(traceInfo);
 			}
 		}
@@ -1229,7 +1268,7 @@ int CCopybook::buildTree(const char * fileName)
 		{
 			if (lastatlevel[i] > 0)
 			{
-				sprintf(traceInfo,"  level %.2d -  last(%d)",i,lastatlevel[i]);
+				snprintf(traceInfo, sizeof(traceInfo),"  level %.2d -  last(%d)",i,lastatlevel[i]);
 				logTraceEntry(traceInfo);
 			}
 		}
@@ -1239,7 +1278,7 @@ int CCopybook::buildTree(const char * fileName)
 		{
 			if (occuratlevel[i] > 0)
 			{
-				sprintf(traceInfo,"  level %.2d - occurs(%d)",i,occuratlevel[i]);
+				snprintf(traceInfo, sizeof(traceInfo),"  level %.2d - occurs(%d)",i,occuratlevel[i]);
 				logTraceEntry(traceInfo);
 			}
 		}
@@ -1248,7 +1287,7 @@ int CCopybook::buildTree(const char * fileName)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::buildTree() RC=%d Input lines read=%d Output lines written=%d variables found=%d", RC, inCounter, outCounter, maxvar);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::buildTree() RC=%d Input lines read=%d Output lines written=%d variables found=%d", RC, inCounter, outCounter, maxvar);
 
 		// trace exit from buildTree
 		logTraceEntry(traceInfo);
@@ -1297,7 +1336,7 @@ int CCopybook::parseCopyBook(const char * fileName)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::parseCopyBook() fileName=%s", (LPCTSTR)fileName);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::parseCopyBook() fileName=%s", (LPCTSTR)fileName);
 
 		// trace entry to parseCopyBook
 		logTraceEntry(traceInfo);
@@ -1427,7 +1466,7 @@ int CCopybook::displayDat(char *printArea,
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::displayDat() firstvar=%d, lastvar=%d, occurCnt=%d, occurOfs=%d firstvar=%s lastvar=%s",
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::displayDat() firstvar=%d, lastvar=%d, occurCnt=%d, occurOfs=%d firstvar=%s lastvar=%s",
 			firstvar, lastvar, occurCnt, occurOfs, namObj->getNameAddr(fvar[firstvar].VarName), namObj->getNameAddr(fvar[lastvar].VarName));
 
 		// trace entry to displayDat
@@ -1483,6 +1522,13 @@ int CCopybook::displayDat(char *printArea,
 				{
 					newCount = fvar[i].VarOccurMax;
 				}
+
+				// without a maximum, show no more occurrences than the data holds
+				if ((fvar[i].VarOccurMax <= 0) && (fvar[i].VarLen > 0) &&
+					(newCount > (endData - (dataIn + fvar[i].VarOffset)) / fvar[i].VarLen))
+				{
+					newCount = (int)((endData - (dataIn + fvar[i].VarOffset)) / fvar[i].VarLen);
+				}
 			}
 
 			// check if the count is different
@@ -1492,7 +1538,7 @@ int CCopybook::displayDat(char *printArea,
 				parent = fvar[i].VarParent;
 				while (parent != 0)
 				{
-					fvar[parent].VarLen += (newCount - occurCount) * fvar[i].VarLen;
+					fvar[parent].VarLen = wrapAdd(fvar[parent].VarLen, wrapMul(newCount - occurCount, fvar[i].VarLen));
 					parent = fvar[parent].VarParent;
 				}
 
@@ -1547,7 +1593,7 @@ int CCopybook::displayDat(char *printArea,
 								  endData,
 								  redefname,
 								  iteration,
-								  occurOfs + (j - 1) * (fvar[i].VarLen + fvar[i].VarEndSlack),
+								  wrapAdd(occurOfs, wrapMul(j - 1, wrapAdd(fvar[i].VarLen, fvar[i].VarEndSlack))),
 								  charFormat,
 								  numFormat,
 								  pdNumFormat,
@@ -1571,7 +1617,7 @@ int CCopybook::displayDat(char *printArea,
 				}
 
 				// move on to the next offset
-				dataOffset += fvar[i].VarLen + fvar[i].VarEndSlack;
+				dataOffset = wrapAdd(dataOffset, wrapAdd(fvar[i].VarLen, fvar[i].VarEndSlack));
 
 				// move on to the next print location in the print buffer
 				printLoc += strlen(printLoc);
@@ -1583,8 +1629,23 @@ int CCopybook::displayDat(char *printArea,
 		}
 		else
 		{
-			while (j <= occurCount)
+			while ((j <= occurCount) && (0 == rc))
 			{
+				// stop before an occurrence that starts past the end of the data
+				if ((j > 1) && ((dataIn + fvar[i].VarOffset + dataOffset) > endData))
+				{
+					break;
+				}
+
+				// check the buffer before each occurrence, as for an elementary item
+				if ((printLoc - printArea) > (maxArea - 4096))
+				{
+					strcat(printLoc, "***** Exceeded memory buffer\r\n");
+					i = lastvar;
+					rc = 1;			// break out of all the loops
+					break;
+				}
+
 				// output the parent variable to the display
 				varReportLine(printLoc,
 							  i,
@@ -1592,7 +1653,7 @@ int CCopybook::displayDat(char *printArea,
 							  endData,
 							  redefname,
 							  iteration,
-							  occurOfs + (j - 1) * (fvar[i].VarLen + fvar[i].VarEndSlack),
+							  wrapAdd(occurOfs, wrapMul(j - 1, wrapAdd(fvar[i].VarLen, fvar[i].VarEndSlack))),
 							  charFormat,
 							  numFormat,
 							  pdNumFormat,
@@ -1618,14 +1679,14 @@ int CCopybook::displayDat(char *printArea,
 				if (occurCount > 0)
 				{
 					// now, write out the structure
-					rc = displayDat(printArea + strlen(printArea),
-									maxArea - strlen(printArea),
+					rc = displayDat(printLoc + strlen(printLoc),
+									maxArea - (int)((printLoc + strlen(printLoc)) - printArea),
 									fvar[i].VarChild,
 									fvar[i].VarLastChild,
 									dataIn + dataOffset,
 									endData,
 									iteration,
-									occurOfs + dataOffset,
+									wrapAdd(occurOfs, dataOffset),
 									charFormat,
 									numFormat,
 									pdNumFormat,
@@ -1635,7 +1696,7 @@ int CCopybook::displayDat(char *printArea,
 				}
 
 				// move on to the next offset
-				dataOffset += fvar[i].VarLen + fvar[i].VarEndSlack;
+				dataOffset = wrapAdd(dataOffset, wrapAdd(fvar[i].VarLen, fvar[i].VarEndSlack));
 				printLoc += strlen(printLoc);
 
 				// do the next occur
@@ -1644,7 +1705,7 @@ int CCopybook::displayDat(char *printArea,
 			}
 
 			// we have done all the children - don't do them again
-			dataOffset += fvar[i].VarLen;
+			dataOffset = wrapAdd(dataOffset, fvar[i].VarLen);
 //			i = fvar[i].VarLastChild;
 		}
 
@@ -1670,7 +1731,7 @@ int CCopybook::displayDat(char *printArea,
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::displayDat() rc=%d", rc);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::displayDat() rc=%d", rc);
 
 		// trace exit from displayDat
 		logTraceEntry(traceInfo);
@@ -1702,7 +1763,8 @@ void CCopybook::updateLength(const int firstVar,
 							 const unsigned int dataLen,
 							 const int numFormat,
 							 const int pdNumFormat,
-							 char *printArea)
+							 char *printArea,
+							 const int maxArea)
 {
 	int		i=firstVar;
 	int		occ;
@@ -1718,7 +1780,7 @@ void CCopybook::updateLength(const int firstVar,
 		// if so, check them
 		if (fvar[i].VarChild != 0)
 		{
-			updateLength(fvar[i].VarChild, dataIn, dataLen, numFormat, pdNumFormat, printArea);
+			updateLength(fvar[i].VarChild, dataIn, dataLen, numFormat, pdNumFormat, printArea, maxArea);
 		}
 
 		// search for any variables that have an occurs depending on clause
@@ -1738,24 +1800,33 @@ void CCopybook::updateLength(const int firstVar,
 			else
 			{
 				occ = 0;
-				sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value past end of input buffer\n");
+				if (roomForMessage(printArea, maxArea))
+				{
+					sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value past end of input buffer\n");
+				}
 			}
 
 			// check if the value is greater than the maximum allowed, assuming one was found
 			if ((occ > fvar[i].VarOccurMax) && (fvar[i].VarOccurMax > 0))
 			{
-				sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value exceeds maximum - occurCount=%d maximum=%d\r\n",
-						occ,fvar[i].VarOccurMax);
+				if (roomForMessage(printArea, maxArea))
+				{
+					sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value exceeds maximum - occurCount=%d maximum=%d\r\n",
+							occ,fvar[i].VarOccurMax);
+				}
 				occ = fvar[i].VarOccurMax;
 			}
 
 			if (occ < fvar[i].VarOccur)
 			{
-				sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value below minimum - value=%d minimum=%d\r\n",
-						occ,fvar[i].VarOccur);
+				if (roomForMessage(printArea, maxArea))
+				{
+					sprintf(printArea + strlen(printArea), "***** RFHUtil format error - Occurs value below minimum - value=%d minimum=%d\r\n",
+							occ,fvar[i].VarOccur);
+				}
 			}
 
-			extraLen = (occ - fvar[i].VarOccur) * fvar[i].VarLen;
+			extraLen = wrapMul(wrapAdd(occ, wrapMul(-1, fvar[i].VarOccur)), fvar[i].VarLen);
 			if (extraLen != 0)
 			{
 				// greater, we need to update the offsets of any later peers
@@ -1783,7 +1854,7 @@ void CCopybook::updateLength(const int firstVar,
 			j = fvar[i].VarParent;
 			while (j != 0)
 			{
-				fvar[j].VarLen += extraLen;
+				fvar[j].VarLen = wrapAdd(fvar[j].VarLen, extraLen);
 
 				// check if this variable also has an occurs depending on clause
 				//if ((fvar[j].VarFlags & OCCURS_VAR) > 0)
@@ -1828,7 +1899,7 @@ int CCopybook::formatData(char *printArea,
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::formatData() dataIn=0x%x dataLen=%d", (unsigned int)(uintptr_t)dataIn, dataLen);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::formatData() dataIn=0x%x dataLen=%d", (unsigned int)(uintptr_t)dataIn, dataLen);
 
 		// trace entry to formatData
 		logTraceEntry(traceInfo);
@@ -1844,6 +1915,10 @@ int CCopybook::formatData(char *printArea,
 		// no data - nothing to do
 		return 0;
 	}
+
+	// the data that getVarValue and varReportLine may read
+	dataStart = dataIn;
+	dataEnd = dataIn + dataLen;
 
 	// check if we need to fix up the copybook
 	if (dependCount > 0)
@@ -1861,7 +1936,7 @@ int CCopybook::formatData(char *printArea,
 		// now fix up the variable area, so that any
 		// occurs depending on clauses appear as normal
 		// occurs clauses
-		updateLength(1, dataIn, dataLen, numFormat, pdNumFormat, printArea);
+		updateLength(1, dataIn, dataLen, numFormat, pdNumFormat, printArea, maxArea);
 
 		copyBookSize = fvar[1].VarLen;
 	}
@@ -1903,7 +1978,7 @@ int CCopybook::formatData(char *printArea,
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::formatData() RC=%d", RC);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::formatData() RC=%d", RC);
 
 		// trace exit from formatData
 		logTraceEntry(traceInfo);
@@ -1933,7 +2008,7 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::buildNextLine() line=0x%8.8x maxSize=%d inCounter=%d inFileCount=%d", (unsigned int)(uintptr_t)line, maxSize, (*inCounter), (*inFileCount));
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::buildNextLine() line=0x%8.8x maxSize=%d inCounter=%d inFileCount=%d", (unsigned int)(uintptr_t)line, maxSize, (*inCounter), (*inFileCount));
 
 		// trace entry to buildNextLine
 		logTraceEntry(traceInfo);
@@ -1962,7 +2037,7 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
 
 		// get rid of the newline character in the line, if present
 		len = strlen(cobolLine) - 1;
-		if (cobolLine[len] == '\n')
+		if ((len >= 0) && (cobolLine[len] == '\n'))
 		{
 			cobolLine[len--] = '\0';
 		}
@@ -1999,7 +2074,9 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
 
 				if (i > 0)
 				{
-					if (i < remaining)
+					// line holds maxSize + MAX_LINE_LEN + 1 bytes (buildTree's cobolStmt);
+					// remaining does not count the blanks between lines
+					if ((i < remaining) && (((int)strlen(line) + i) < (maxSize + MAX_LINE_LEN + 1)))
 					{
 						// concatenate this to the output line
 						strcat(line, cline);
@@ -2026,7 +2103,12 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
 					}
 					else
 					{
-						// Insert a blank as a delimiter
+						// Insert a blank as a delimiter, if it fits
+						if (((int)strlen(line) + 1) >= (maxSize + MAX_LINE_LEN + 1))
+						{
+							return 1;
+						}
+
 						strcat(line," ");
 					} // endif
 				} // endif
@@ -2037,7 +2119,7 @@ int CCopybook::buildNextLine(char *line, const int maxSize, FILE *commareafile, 
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::buildNextLine() inCounter=%d inFileCount=%d", (*inCounter), (*inFileCount));
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::buildNextLine() inCounter=%d inFileCount=%d", (*inCounter), (*inFileCount));
 
 		// trace exit from buildNextLine
 		logTraceEntry(traceInfo);
@@ -2062,7 +2144,7 @@ char * CCopybook::processRedefine(char * redefines)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::processRedefine() redefines=%.16s", redefines);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::processRedefine() redefines=%.16s", redefines);
 
 		// trace entry to processRedefine
 		logTraceEntry(traceInfo);
@@ -2087,7 +2169,7 @@ char * CCopybook::processRedefine(char * redefines)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::processRedefine() redefines=%.16s", redefines);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::processRedefine() redefines=%.16s", redefines);
 
 		// trace exit from processRedefine
 		logTraceEntry(traceInfo);
@@ -2158,7 +2240,7 @@ char CCopybook::handleComp(char *usage, int *length)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::handleComp() usage=%.16s", usage);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::handleComp() usage=%.16s", usage);
 
 		// trace entry to handleComp
 		logTraceEntry(traceInfo);
@@ -2237,7 +2319,7 @@ char CCopybook::handleComp(char *usage, int *length)
   	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::handleComp() use=%d length=%d", use, (*length));
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::handleComp() use=%d length=%d", use, (*length));
 
 		// trace exit from handleComp
 		logTraceEntry(traceInfo);
@@ -2268,7 +2350,7 @@ void CCopybook::handleOccurs(char *occurs, int *dependCount)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::handleOccurs() occurs=%.16s", occurs);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::handleOccurs() occurs=%.16s", occurs);
 
 		// trace entry to handleOccurs
 		logTraceEntry(traceInfo);
@@ -2372,7 +2454,7 @@ void CCopybook::handleOccurs(char *occurs, int *dependCount)
   	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::handleOccurs() dependCount=%d", (*dependCount));
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::handleOccurs() dependCount=%d", (*dependCount));
 
 		// trace exit from handleOccurs
 		logTraceEntry(traceInfo);
@@ -2536,7 +2618,7 @@ int CCopybook::handlePic(char *pic, char *type, char *flags)
 		picInfo[i] = 0;
 
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::handlePic() pic=%s", picInfo);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::handlePic() pic=%s", picInfo);
 
 		// trace entry to handlePic
 		logTraceEntry(traceInfo);
@@ -2619,7 +2701,7 @@ int CCopybook::handlePic(char *pic, char *type, char *flags)
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::handlePic() length=%d type=%c flags=%c", length, savetype, (*flags));
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::handlePic() length=%d type=%c flags=%c", length, savetype, (*flags));
 
 		// trace exit from handlePic
 		logTraceEntry(traceInfo);
@@ -2907,7 +2989,7 @@ void CCopybook::varReportLine(char *textArea,
 	int				depth;
 	char			*ptr;
 	char			*extra;
-	char			occ[10];
+	char			occ[16];
 	char			type[10];
 	char			lineOfs[32];
 	char			dataText[160];
@@ -2955,6 +3037,26 @@ void CCopybook::varReportLine(char *textArea,
 					extra = "";
 				}
 
+				// a negative length shows nothing
+				if (len < 0)
+				{
+					len = 0;
+				}
+
+				// make sure we don't go past the end of the data (before checkData
+				// copies it), or start before it
+				if ((msgdata < dataStart) || (msgdata + len > endData))
+				{
+					// limit the length to the available data
+					len = endData - msgdata;
+
+					// but never less than zero
+					if ((len < 0) || (msgdata < dataStart))
+					{
+						len = 0;
+					}
+				}
+
 				switch (fvar[varnum].VarType)
 				{
 					case '9':
@@ -2995,19 +3097,6 @@ void CCopybook::varReportLine(char *textArea,
 							strcpy(type, "CHAR ");
 							break;
 						}
-				}
-
-				// make sure we don't go past the end of the data
-				if (msgdata + len > endData)
-				{
-					// limit the length to the available data
-					len = endData - msgdata;
-
-					// but never less than zero
-					if (len < 0)
-					{
-						len = 0;
-					}
 				}
 
 				// clear the temporary data area
@@ -3060,6 +3149,12 @@ void CCopybook::varReportLine(char *textArea,
 								j += rfh_mbclen(msgdata + j);
 							}
 
+							// but not past the end of the data
+							if (j > endData - msgdata)
+							{
+								j = (int)(endData - msgdata);
+							}
+
 							len = j;
 							memcpy(tempText, msgdata, len);
 						}
@@ -3108,12 +3203,15 @@ void CCopybook::varReportLine(char *textArea,
 				// packed decimal
 				strcpy(type, "PD   ");
 
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					// check if the packed decimal data is valid
 					if (checkPacked(msgdata, len, pdNumFormat) == 1)
 					{
@@ -3135,12 +3233,15 @@ void CCopybook::varReportLine(char *textArea,
 			{
 				// binary
 				strcpy(type, "INT  ");
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					if (len > 4)
 					{
 						len = 4;
@@ -3156,12 +3257,15 @@ void CCopybook::varReportLine(char *textArea,
 				// index pointer
 				strcpy(type, "IDX  ");
 
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					buildHex(dataText, len, msgdata, numFormat);
 				}
 
@@ -3172,12 +3276,15 @@ void CCopybook::varReportLine(char *textArea,
 				// pointer
 				strcpy(type, "PTR  ");
 
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					buildHex(dataText, len, msgdata, numFormat);
 				}
 
@@ -3188,12 +3295,15 @@ void CCopybook::varReportLine(char *textArea,
 				// floating point 4 byte
 				strcpy(type, "FLT4 ");
 
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					buildHex(dataText, len, msgdata, numFormat);
 				}
 
@@ -3204,12 +3314,15 @@ void CCopybook::varReportLine(char *textArea,
 				// floating point 8 byte
 				strcpy(type, "FLT8 ");
 
-				if (msgdata + len > endData)
+				if ((msgdata < dataStart) || (msgdata + len > endData))
 				{
 					dataText[0] = 0;
 				}
 				else
 				{
+					// no more than dataText holds
+					len = hexLength(len, sizeof(dataText));
+
 					buildHex(dataText, len, msgdata, numFormat);
 				}
 
@@ -3223,6 +3336,11 @@ void CCopybook::varReportLine(char *textArea,
 	if (indent != 0)
 	{
 		depth = fvar[varnum].VarDepth - 1;
+		if (depth > (int)sizeof(lineOfs) - 1)
+		{
+			depth = (int)sizeof(lineOfs) - 1;
+		}
+
 		while (depth > 0)
 		{
 			strcat(lineOfs, " ");
@@ -3399,7 +3517,7 @@ void CCopybook::dumpVar(int varnum, COPY_STRUCT *fvar, int count)
 		{
 			// print out the variable in the listing file
 			// create the trace line
-			sprintf(traceInfo,"%.2d %-32s offset(%.5d) length(%.5d) type(%d) usage(%d) occ(%d) occmax(%d) occvar(%d) redefine(%d) sync(%d) endSlack{%d}",
+			snprintf(traceInfo, sizeof(traceInfo),"%.2d %-32s offset(%.5d) length(%.5d) type(%d) usage(%d) occ(%d) occmax(%d) occvar(%d) redefine(%d) sync(%d) endSlack{%d}",
 						i,
 						namObj->getNameAddr(fvar[i].VarName),
 						fvar[i].VarOffset,
@@ -3415,7 +3533,7 @@ void CCopybook::dumpVar(int varnum, COPY_STRUCT *fvar, int count)
 			// write trace entry
 			logTraceEntry(traceInfo);
 
-			sprintf(traceInfo,"     next(%d) prev(%d) nextLevel(%d) prevLevel(%d) parent(%d) child(%d) lastchild(%d) level(%d) depth(%d) flags(0x%2.2x)",
+			snprintf(traceInfo, sizeof(traceInfo),"     next(%d) prev(%d) nextLevel(%d) prevLevel(%d) parent(%d) child(%d) lastchild(%d) level(%d) depth(%d) flags(0x%2.2x)",
 						fvar[i].VarNext,
 						fvar[i].VarPrev,
 						fvar[i].VarNextLevel,
@@ -3431,7 +3549,7 @@ void CCopybook::dumpVar(int varnum, COPY_STRUCT *fvar, int count)
 
 			if (fvar[i].VarOccur > 0)
 			{
-				sprintf(traceInfo, "     occurs(%d) MaxOccurs(%d) DependingVar(%d)",
+				snprintf(traceInfo, sizeof(traceInfo), "     occurs(%d) MaxOccurs(%d) DependingVar(%d)",
 							fvar[i].VarOccur,
 							fvar[i].VarOccurMax,
 							fvar[i].VarOccurDepend);
@@ -3456,13 +3574,13 @@ void CCopybook::resetCopybook()
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Entering CCopybook::resetCopybook() maxvar=%d dependCount=%d", maxvar, dependCount);
+		snprintf(traceInfo, sizeof(traceInfo), "Entering CCopybook::resetCopybook() maxvar=%d dependCount=%d", maxvar, dependCount);
 
 		// trace entry to findKeyword
 		logTraceEntry(traceInfo);
 	}
 
-    memset(fvar,'\0',(sizeof(COPY_STRUCT) * (MAX_VAR_COUNT + 1)));
+    memset(fvar,'\0',(sizeof(COPY_STRUCT) * (maxvarcount + 1)));
 	maxvar=0;           // Number of fields found
 	dependCount=0;
 }
@@ -3508,7 +3626,7 @@ int CCopybook::extractValue(COPY_STRUCT depVar, const unsigned char* dataIn, int
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::extractValue() dependCount=%d length=%d offset=%d numFormat=%d pdNumFormat=%d", dependCount, length, offset, numFormat, pdNumFormat);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::extractValue() dependCount=%d length=%d offset=%d numFormat=%d pdNumFormat=%d", dependCount, length, offset, numFormat, pdNumFormat);
 
 		// trace entry to findKeyword
 		logTraceEntry(traceInfo);
@@ -3526,7 +3644,7 @@ int CCopybook::extractValue(COPY_STRUCT depVar, const unsigned char* dataIn, int
 int CCopybook::getPackedValue(const unsigned char *dataIn, int length, int numFormat)
 
 {
-	int	value=0;
+	unsigned int	value=0;	// wraps on overflow
 	int	i;
 	int	sign=1;
 
@@ -3590,9 +3708,9 @@ int CCopybook::getPackedValue(const unsigned char *dataIn, int length, int numFo
 	}
 
 	// change the sign if necessary
-	value = value * sign;
+	value = value * (unsigned int)sign;
 
-	return value;
+	return (int)value;
 }
 
 ////////////////////////////////////////////////
@@ -3736,6 +3854,33 @@ int CCopybook::getVarValue(int varnum, const unsigned char *dataIn, const int nu
 	// get the length and location of the data
 	len = fvar[varnum].VarLen;
 	ptr = dataIn + fvar[varnum].VarOffset;
+
+	// read only the data being formatted, and no more than workArea holds
+	if ((ptr < dataStart) || (ptr > dataEnd) || (len < 0))
+	{
+		len = 0;
+	}
+	else
+	{
+		if (len > dataEnd - ptr)
+		{
+			len = (int)(dataEnd - ptr);
+		}
+	}
+
+	if (USE_DISPLAY == fvar[varnum].VarUsage)
+	{
+		if (len > (int)sizeof(workArea) - 1)
+		{
+			len = (int)sizeof(workArea) - 1;
+		}
+	}
+	else
+	{
+		// shown as hex in the trace
+		len = hexLength(len, sizeof(workArea));
+	}
+
 	switch (fvar[varnum].VarUsage)
 	{
 	case USE_DISPLAY:
@@ -3764,7 +3909,7 @@ int CCopybook::getVarValue(int varnum, const unsigned char *dataIn, const int nu
  	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting CCopybook::getVarValue() value=%d varnum=%d len=%d numFormat=%d pdNumFormat=%d dataIn=%s", value, varnum, len, numFormat, pdNumFormat, workArea);
+		snprintf(traceInfo, sizeof(traceInfo), "Exiting CCopybook::getVarValue() value=%d varnum=%d len=%d numFormat=%d pdNumFormat=%d dataIn=%s", value, varnum, len, numFormat, pdNumFormat, workArea);
 
 		// trace entry to findKeyword
 		logTraceEntry(traceInfo);
@@ -3791,6 +3936,7 @@ int CCopybook::getMaxChildren(int varnum)
 	int		maxLines=0;
 	int		child;
 	int		occur=1;
+	int		lines;
 
 	if (fvar[varnum].VarOccurMax > 0)
 	{
@@ -3817,18 +3963,24 @@ int CCopybook::getMaxChildren(int varnum)
 	child = fvar[varnum].VarChild;
 	if (0 == child)
 	{
-		maxLines = occur;
+		maxLines = (occur > MAX_COBOL_LINES) ? MAX_COBOL_LINES : occur;
 	}
 	else
 	{
+		// saturate at MAX_COBOL_LINES instead of overflowing
 		while (child > 0)
 		{
-			maxLines += getMaxChildren(child);
+			lines = getMaxChildren(child);
+			maxLines = (lines > MAX_COBOL_LINES - maxLines) ? MAX_COBOL_LINES : maxLines + lines;
 			child = fvar[child].VarNext;
 		}
 
-		maxLines++;
-		maxLines *= occur;
+		if (maxLines < MAX_COBOL_LINES)
+		{
+			maxLines++;
+		}
+
+		maxLines = (maxLines > MAX_COBOL_LINES / occur) ? MAX_COBOL_LINES : maxLines * occur;
 	}
 
 	return maxLines;

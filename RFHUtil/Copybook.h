@@ -40,6 +40,10 @@ Jim MacNair - Initial Contribution
 
 #define MAX_VAR_COUNT  12288
 
+// getMaxLines saturates here, which keeps the size of a caller's output buffer,
+// (lines * 128) + 65536 + 8192, within an int.
+#define MAX_COBOL_LINES  ((0x7FFFFFFF - 65536 - 8192) / 128)
+
 /**************************************************************/
 /* Variable table structure definition                        */
 /*                                                            */
@@ -193,6 +197,8 @@ private:
 	int syncCount;
 	int maxvarcount;
 	int dependCount;
+	const unsigned char * dataStart;	// formatData: the data being formatted,
+	const unsigned char * dataEnd;		// which getVarValue and varReportLine stay within
 	int getMaxChildren(int varnum);
 	int calcOffsets(int varnum, int startOfs, int *newOfs);
 	int buildTree(const char * fileName);
@@ -215,7 +221,8 @@ private:
 					  const unsigned int dataLen,
 					  const int numFormat,
 					  const int pdNumFormat,
-					  char *printArea);
+					  char *printArea,
+					  const int maxArea);
 	void finishOcc(COPY_STRUCT *fvar, 
 				   int occuratlevel[50], 
 				   int lastlevel, 
