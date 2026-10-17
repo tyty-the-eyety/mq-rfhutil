@@ -258,6 +258,22 @@ TEST(XmlsubsSetEsc, DecodeAmp)
     EXPECT_EQ(5, len);
 }
 
+TEST(XmlsubsSetEsc, NumericReferencesAreNotDecoded)
+{
+    // IBM's behaviour, pinned and reported upstream: the '#' branch tests
+    // bufferin[0], which is the '&' at every caller, so a numeric character
+    // reference is shown as its ampersand and the rest follows as text
+    unsigned char decimal[] = "&#65;rest";
+    unsigned char out1[1] = {};
+    EXPECT_EQ(1, setEscChar(decimal, out1));
+    EXPECT_EQ('&', out1[0]);
+
+    unsigned char hex[] = "&#x41;rest";
+    unsigned char out2[1] = {};
+    EXPECT_EQ(1, setEscChar(hex, out2));
+    EXPECT_EQ('&', out2[0]);
+}
+
 // ---------------------------------------------------------------------------
 // findEndBracket — find closing '>' in tag
 // ---------------------------------------------------------------------------

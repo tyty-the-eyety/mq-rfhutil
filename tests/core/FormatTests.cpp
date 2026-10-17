@@ -317,6 +317,15 @@ TEST(Format_Xml, DataThatIsNotXmlGetsTheWindowsMessage)
               render(message("plain text"), View::Xml, options()));
 }
 
+TEST(Format_Xml, NumericCharacterReferencesAreShownAsTheyAre)
+{
+    // IBM's behaviour, reported upstream: setEscChar's '#' branch tests the byte
+    // it is given, which is always the '&', so &#65; and &#x41; are never decoded,
+    // while the named entities are
+    EXPECT_EQ("<a>&#65;&#x41;<</a>",
+              render(message("<a>&#65;&#x41;&lt;</a>"), View::Xml, options()));
+}
+
 // --- parsed view --------------------------------------------------------------
 
 TEST(Format_Parsed, ElementsAreDottedPathsWithValues)
