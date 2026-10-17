@@ -268,9 +268,14 @@ namespace rfh
 		return r;
 	}
 
-	Result MqSession::openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & obj)
+	Result MqSession::openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & obj, std::string * resolvedName)
 	{
 		MQOD od = { MQOD_DEFAULT };
+		if (resolvedName != nullptr)
+		{
+			od.Version = MQOD_VERSION_3;
+			resolvedName->clear();
+		}
 
 		if (!copyField(od.ObjectName, sizeof(od.ObjectName), queue))
 		{
@@ -290,8 +295,49 @@ namespace rfh
 		{
 			obj = MQHO_UNUSABLE_HOBJ;
 		}
+		else if (resolvedName != nullptr)
+		{
+			size_t length = sizeof(od.ResolvedQName);
+			while ((length > 0) && ((od.ResolvedQName[length - 1] == ' ') || (od.ResolvedQName[length - 1] == '\0')))
+			{
+				length--;
+			}
+			resolvedName->assign(od.ResolvedQName, length);
+		}
 
 		return Result::fromMq("MQOPEN", cc, rc);
+	}
+
+	Result MqSession::inquireInteger(MQHOBJ obj, MQLONG selector, MQLONG & value)
+	{
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		MQLONG answer = 0;
+		api.inq(hConn, obj, 1, &selector, 1, &answer, 0, nullptr, &cc, &rc);
+		dropIfBroken(rc);
+		if (cc != MQCC_FAILED)
+		{
+			value = answer;
+		}
+		return Result::fromMq("MQINQ", cc, rc);
+	}
+
+	// Closes an inquiry handle unless the connection (and with it the handle) is gone.
+	void MqSession::closeInquiryHandle(MQHOBJ & obj, Result & result)
+	{
+		if (!isConnected())
+		{
+			return;
+		}
+
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		api.close(hConn, &obj, MQCO_NONE, &cc, &rc);
+		dropIfBroken(rc);
+		if (cc == MQCC_FAILED)
+		{
+			result.warnings.push_back(Result::fromMq("MQCLOSE", cc, rc).text);
+		}
 	}
 
 	Result MqSession::ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options)
@@ -672,25 +718,73 @@ namespace rfh
 			return opened;
 		}
 
-		MQLONG selector = MQIA_CURRENT_Q_DEPTH;
-		MQLONG cc = MQCC_OK;
-		MQLONG rc = MQRC_NONE;
-		api.inq(hConn, obj, 1, &selector, 1, &count, 0, nullptr, &cc, &rc);
-		dropIfBroken(rc);
-		Result r = Result::fromMq("MQINQ", cc, rc);
+		Result r = inquireInteger(obj, MQIA_CURRENT_Q_DEPTH, count);
+		closeInquiryHandle(obj, r);
+		return r;
+	}
 
-		if (isConnected())
+	Result MqSession::queueInfo(const std::string & queue, QueueInfo & info)
+	{
+		info = QueueInfo();
+		if (!isConnected())
 		{
-			MQLONG ccc = MQCC_OK;
-			MQLONG crc = MQRC_NONE;
-			api.close(hConn, &obj, MQCO_NONE, &ccc, &crc);
-			dropIfBroken(crc);
-			if (ccc == MQCC_FAILED)
+			return notConnected();
+		}
+
+		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
+		std::string resolved;
+		Result opened = openQueue(queue, std::string(), MQOO_INQUIRE, obj, &resolved);
+		if (!opened.ok())
+		{
+			return opened;
+		}
+
+		if (resolved != queue)
+		{
+			info.resolvedName = resolved;
+		}
+
+		// One MQINQ per attribute, in Windows' order (type 18244, depth 18200, maximum length 12273)
+		struct Step
+		{
+			MQLONG selector;
+			MQLONG * value;
+		};
+		const Step steps[] = { { MQIA_Q_TYPE, &info.type }, { MQIA_CURRENT_Q_DEPTH, &info.depth }, { MQIA_MAX_MSG_LENGTH, &info.maxMsgLength } };
+
+		Result r;
+		for (size_t i = 0; (i < sizeof(steps) / sizeof(steps[0])) && isConnected(); i++)
+		{
+			Result inquired = inquireInteger(obj, steps[i].selector, *steps[i].value);
+			if (inquired.ok())
 			{
-				r.warnings.push_back(Result::fromMq("MQCLOSE", ccc, crc).text);
+				continue;
+			}
+			if (r.ok())
+			{
+				r = inquired;
+			}
+			else
+			{
+				r.warnings.push_back(inquired.text);
 			}
 		}
 
+		switch (info.type)
+		{
+		case 0:				// not learned
+		case MQQT_LOCAL:
+		case MQQT_MODEL:
+		case MQQT_ALIAS:
+		case MQQT_REMOTE:
+		case MQQT_CLUSTER:
+			break;
+		default:
+			r.warnings.push_back("Unrecognised queue type " + std::to_string(info.type));
+			break;
+		}
+
+		closeInquiryHandle(obj, r);
 		return r;
 	}
 

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <deque>
@@ -37,6 +38,7 @@ namespace rfh_test
         MQLONG type = MQQT_LOCAL;
         MQLONG maxMsgLength = 4194304;
         std::string baseQName;
+        std::string resolvedQName;   // returned in MQOD.ResolvedQName by an open with MQOD version 3; empty echoes the name opened
         std::deque<FakeMessage> messages;
         bool hasDepthOverride = false;
         MQLONG depthOverride = 0;
@@ -51,6 +53,7 @@ namespace rfh_test
         MQLONG putRc = MQRC_NONE;
         MQLONG platform = MQPL_UNIX;
         MQLONG commandLevel = 940;
+        std::map<MQLONG, MQLONG> inqRcBySelector;   // an inquiry that names one of these selectors fails with the given reason
         int unlimitedWaitMs = 1000;   // how long a get with MQWI_UNLIMITED waits in the fake
 
         // What it saw.
@@ -61,6 +64,7 @@ namespace rfh_test
         int putCalls = 0;
         int getCalls = 0;
         int commitCalls = 0;
+        int inqCalls = 0;
         MQLONG lastPmoOptions = 0;
         MQLONG lastGmoOptions = 0;
         MQLONG lastGmoWaitInterval = 0;
@@ -139,6 +143,15 @@ namespace rfh_test
                 fake.lastOpenedName = trimmed(od->ObjectName, sizeof(od->ObjectName));
                 fake.handleNames[*hObj] = fake.lastOpenedName;
                 fake.handleIsQmgr[*hObj] = (od->ObjectType == MQOT_Q_MGR);
+            }
+            if ((od != nullptr) && (od->Version >= MQOD_VERSION_3) && (fake.openRc == MQRC_NONE))
+            {
+                // an open with a version 3 descriptor reports the name the object resolved to
+                MQOD * out = static_cast<MQOD *>(objDesc);
+                FakeQueue * resolved = fake.find(fake.lastOpenedName);
+                std::string name = ((resolved != nullptr) && !resolved->resolvedQName.empty()) ? resolved->resolvedQName : fake.lastOpenedName;
+                memset(out->ResolvedQName, ' ', sizeof(out->ResolvedQName));
+                memcpy(out->ResolvedQName, name.data(), std::min(sizeof(out->ResolvedQName), name.size()));
             }
             report(fake.openRc, cc, rc);
         }
@@ -255,6 +268,17 @@ namespace rfh_test
         inline void fakeInq(MQHCONN, MQHOBJ hObj, MQLONG selectorCount, PMQLONG selectors, MQLONG intCount, PMQLONG intAttrs, MQLONG charLength, PMQCHAR charAttrs, PMQLONG cc, PMQLONG rc)
         {
             FakeMq & fake = fakeMq();
+            fake.inqCalls++;
+            for (MQLONG i = 0; i < selectorCount; i++)
+            {
+                std::map<MQLONG, MQLONG>::const_iterator failure = fake.inqRcBySelector.find(selectors[i]);
+                if (failure != fake.inqRcBySelector.end())
+                {
+                    report(failure->second, cc, rc);
+                    return;
+                }
+            }
+
             FakeQueue * q = queueOf(hObj);
             bool qmgr = fake.handleIsQmgr.count(hObj) && fake.handleIsQmgr[hObj];
 

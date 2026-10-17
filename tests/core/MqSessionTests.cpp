@@ -462,6 +462,27 @@ TEST_F(MqBindingsTest, ReportsDepthAndPurges)
     EXPECT_EQ(0, depth);
 }
 
+TEST_F(MqBindingsTest, QueueInfoOnARealQueueAfterAPut)
+{
+    MQLONG before = 0;
+    ASSERT_TRUE(session.depth(kQueue, before).ok());
+
+    Message m = textMessage("queue info");
+    ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+
+    QueueInfo info;
+    Result r = session.queueInfo(kQueue, info);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_TRUE(r.warnings.empty());
+    EXPECT_EQ(MQQT_LOCAL, info.type);
+    EXPECT_EQ(before + 1, info.depth);
+    EXPECT_GT(info.maxMsgLength, 0);
+    EXPECT_EQ("", info.resolvedName);
+
+    Result missing = session.queueInfo("RFHUTIL.TEST.NO.SUCH.QUEUE", info);
+    EXPECT_EQ(MQRC_UNKNOWN_OBJECT_NAME, missing.rc);
+}
+
 TEST_F(MqBindingsTest, GrowsBufferForLargeMessage)
 {
     std::string big(100 * 1024, 'x');

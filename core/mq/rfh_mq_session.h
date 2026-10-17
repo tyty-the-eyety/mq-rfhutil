@@ -88,6 +88,16 @@ namespace rfh
 		const std::atomic<bool> * cancel = nullptr;
 	};
 
+	// What MQINQ and MQOPEN report about a queue. Every field has an explicit unknown
+	// value for an inquiry that failed (Windows stores 0 or -1 silently; see queueInfo).
+	struct QueueInfo
+	{
+		MQLONG type = 0;				// MQQT_LOCAL, MQQT_MODEL, MQQT_ALIAS, MQQT_REMOTE, MQQT_CLUSTER; 0 unknown; any other value is kept as MQ returned it
+		MQLONG depth = -1;				// -1 when unknown
+		MQLONG maxMsgLength = -1;		// -1 when unknown
+		std::string resolvedName;		// the queue the name resolved to (MQOD.ResolvedQName); empty when it is the same or unknown
+	};
+
 	class MqSession
 	{
 	public:
@@ -126,6 +136,16 @@ namespace rfh
 
 		Result depth(const std::string & queue, MQLONG & count);
 
+		// Opens queue for inquiry on a handle of its own (a browse cursor is not
+		// disturbed), asks MQ for its type, current depth and maximum message length
+		// with one MQINQ each, as Windows does, and closes the handle. info is reset
+		// first and then holds every fact that was learned. The result is the first
+		// failure (MQOPEN, or the first failing MQINQ); later failures go to
+		// warnings, and so does an unrecognised queue type or a failing MQCLOSE.
+		// Inquiries stop when the connection is lost. A remote queue definition
+		// refuses the inquiry at open (2045); that is the failure reported.
+		Result queueInfo(const std::string & queue, QueueInfo & info);
+
 		// Removes every message from queue with destructive gets; count receives how many.
 		Result purge(const std::string & queue, MQLONG & count);
 
@@ -133,7 +153,10 @@ namespace rfh
 		Result closeQueue(CloseOption option = CloseOption::None);
 
 	private:
-		Result openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & hObj);
+		// resolvedName, when given, makes the open use an MQOD version 3 and receives the trimmed ResolvedQName.
+		Result openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & hObj, std::string * resolvedName = nullptr);
+		Result inquireInteger(MQHOBJ obj, MQLONG selector, MQLONG & value);
+		void closeInquiryHandle(MQHOBJ & obj, Result & result);
 		Result ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options);
 		Result getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs);
 		void dropIfBroken(MQLONG rc);

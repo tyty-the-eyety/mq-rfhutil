@@ -254,3 +254,301 @@ TEST(FakeMq, CommitIsCounted)
     EXPECT_EQ(MQCC_OK, cc);
     EXPECT_EQ(2, fake.commitCalls);
 }
+
+// ---- MqSession::queueInfo (Windows: getQueueType 18244, getCurrentDepth 18200, openQ 12268-12310) ----
+
+namespace
+{
+    const char * kInfoQueue = "RFHUTIL.TEST.INFO";
+
+    void addMessages(const char * queue, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            rfh_test::FakeMessage m;
+            m.data.assign({'a', 'b', 'c'});
+            fake.queue(queue).messages.push_back(m);
+        }
+    }
+
+    void expectNoHandleLeaked()
+    {
+        EXPECT_EQ(fake.openCalls, fake.closeCalls) << "an opened handle was not closed";
+    }
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoReturnsTypeDepthAndMaximum)
+{
+    connect();
+    fake.queue(kInfoQueue).maxMsgLength = 1234;
+    addMessages(kInfoQueue, 3);
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_TRUE(r.warnings.empty());
+    EXPECT_EQ(MQQT_LOCAL, info.type);
+    EXPECT_EQ(3, info.depth);
+    EXPECT_EQ(1234, info.maxMsgLength);
+    EXPECT_EQ("", info.resolvedName);   // a local queue resolves to itself
+    EXPECT_EQ(1, fake.openCalls);
+    EXPECT_NE(0, fake.lastOpenOptions & MQOO_INQUIRE);
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoReportsAResolvedAliasName)
+{
+    connect();
+    rfh_test::FakeQueue & alias = fake.queue("RFHUTIL.TEST.ALIAS");
+    alias.type = MQQT_ALIAS;
+    alias.resolvedQName = "RFHUTIL.TEST.BASE";
+
+    QueueInfo info;
+    Result r = session.queueInfo("RFHUTIL.TEST.ALIAS", info);
+
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQQT_ALIAS, info.type);   // Windows records the alias type; its resolution loop is disabled (while (... && 0))
+    EXPECT_EQ("RFHUTIL.TEST.BASE", info.resolvedName);
+    EXPECT_EQ(1, fake.openCalls) << "the base queue is not opened";
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoResolvedNameIsEmptyWhenItEqualsTheQueueName)
+{
+    connect();
+    fake.queue(kInfoQueue).resolvedQName = kInfoQueue;
+
+    QueueInfo info;
+    ASSERT_TRUE(session.queueInfo(kInfoQueue, info).ok());
+    EXPECT_EQ("", info.resolvedName);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoHasUnknownDefaultsBeforeAnyInquiry)
+{
+    QueueInfo info;
+    EXPECT_EQ(0, info.type);
+    EXPECT_EQ(-1, info.depth);
+    EXPECT_EQ(-1, info.maxMsgLength);
+    EXPECT_EQ("", info.resolvedName);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoOfAMissingQueueFails)
+{
+    connect();
+    fake.openRc = MQRC_UNKNOWN_OBJECT_NAME;
+
+    QueueInfo info;
+    info.type = MQQT_ALIAS;   // stale facts from an earlier call must not survive
+    info.depth = 5;
+    info.maxMsgLength = 99;
+    info.resolvedName = "OLD";
+    Result r = session.queueInfo("RFHUTIL.TEST.NO.SUCH", info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_UNKNOWN_OBJECT_NAME, r.rc);
+    EXPECT_NE(std::string::npos, r.text.find("MQOPEN"));
+    EXPECT_EQ(0, info.type);
+    EXPECT_EQ(-1, info.depth);
+    EXPECT_EQ(-1, info.maxMsgLength);
+    EXPECT_EQ("", info.resolvedName);
+    EXPECT_EQ(0, fake.inqCalls);
+    EXPECT_EQ(0, fake.closeCalls) << "there is no handle to close after a failed open";
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoOfARemoteQueueDefinitionReportsTheOpenFailureWithoutInquiring)
+{
+    // Windows retries such an open without MQOO_INQUIRE (openQ 12164-12176) and then
+    // records type 0 and depth 0 silently; queueInfo reports the reason instead.
+    connect();
+    fake.openRc = MQRC_OPTION_NOT_VALID_FOR_TYPE;
+
+    QueueInfo info;
+    Result r = session.queueInfo("RFHUTIL.TEST.REMOTE", info);
+
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_EQ(MQRC_OPTION_NOT_VALID_FOR_TYPE, r.rc);
+    EXPECT_EQ(0, info.type);
+    EXPECT_EQ(-1, info.depth);
+    EXPECT_EQ(0, fake.inqCalls);
+    EXPECT_EQ(1, fake.openCalls) << "no second open without MQOO_INQUIRE: it would only prove the name exists";
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoKeepsTheTypeOfARemoteQueueWhenMqAnswersIt)
+{
+    connect();
+    fake.queue(kInfoQueue).type = MQQT_REMOTE;
+
+    QueueInfo info;
+    ASSERT_TRUE(session.queueInfo(kInfoQueue, info).ok());
+    EXPECT_EQ(MQQT_REMOTE, info.type);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoWithAnUnknownQueueTypeKeepsTheValueAndWarns)
+{
+    // Windows leaves the type text empty for a value outside local/model/alias/remote/cluster (setQueueType 10354).
+    connect();
+    fake.queue(kInfoQueue).type = 99;
+    addMessages(kInfoQueue, 1);
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(99, info.type);
+    EXPECT_EQ(1, info.depth);
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_NE(std::string::npos, r.warnings[0].find("99"));
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoTypeInquiryFailureKeepsTheLaterFacts)
+{
+    connect();
+    fake.queue(kInfoQueue).maxMsgLength = 500;
+    addMessages(kInfoQueue, 2);
+    fake.inqRcBySelector[MQIA_Q_TYPE] = MQRC_SELECTOR_NOT_FOR_TYPE;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_SELECTOR_NOT_FOR_TYPE, r.rc);
+    EXPECT_NE(std::string::npos, r.text.find("MQINQ"));
+    EXPECT_EQ(0, info.type);            // Windows: queueType = 0 (18269)
+    EXPECT_EQ(2, info.depth);
+    EXPECT_EQ(500, info.maxMsgLength);
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoDepthInquiryFailureKeepsTheOtherFacts)
+{
+    connect();
+    fake.queue(kInfoQueue).type = MQQT_MODEL;
+    fake.queue(kInfoQueue).maxMsgLength = 500;
+    fake.inqRcBySelector[MQIA_CURRENT_Q_DEPTH] = MQRC_NOT_AUTHORIZED;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_NOT_AUTHORIZED, r.rc);
+    EXPECT_EQ(MQQT_MODEL, info.type);
+    EXPECT_EQ(-1, info.depth);          // Windows stores 0; the core says unknown
+    EXPECT_EQ(500, info.maxMsgLength);
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoMaximumLengthInquiryFailureKeepsTheOtherFacts)
+{
+    // Windows tests cc, not cc2, after this inquiry (12276) and so uses whatever
+    // the failed call left in its buffer; queueInfo reports the failure.
+    connect();
+    addMessages(kInfoQueue, 4);
+    fake.inqRcBySelector[MQIA_MAX_MSG_LENGTH] = MQRC_HOBJ_ERROR;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_HOBJ_ERROR, r.rc);
+    EXPECT_EQ(MQQT_LOCAL, info.type);
+    EXPECT_EQ(4, info.depth);
+    EXPECT_EQ(-1, info.maxMsgLength);
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoReportsTheFirstOfSeveralInquiryFailuresAndNotesTheRest)
+{
+    connect();
+    fake.inqRcBySelector[MQIA_Q_TYPE] = MQRC_NOT_AUTHORIZED;
+    fake.inqRcBySelector[MQIA_MAX_MSG_LENGTH] = MQRC_HOBJ_ERROR;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_EQ(MQRC_NOT_AUTHORIZED, r.rc);
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_NE(std::string::npos, r.warnings[0].find("2019"));
+    EXPECT_EQ(7, info.depth) << "the fake answers 7 for the depth of a queue it does not know";
+    expectNoHandleLeaked();
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoStopsWhenTheConnectionIsLostDuringAnInquiry)
+{
+    connect();
+    addMessages(kInfoQueue, 2);
+    fake.inqRcBySelector[MQIA_CURRENT_Q_DEPTH] = MQRC_CONNECTION_BROKEN;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(MQQT_LOCAL, info.type);   // learned before the connection broke
+    EXPECT_EQ(-1, info.depth);
+    EXPECT_EQ(-1, info.maxMsgLength);
+    EXPECT_EQ(2, fake.inqCalls) << "no inquiry after the connection is gone";
+    EXPECT_EQ(1, fake.discCalls);
+    EXPECT_EQ(0, fake.closeCalls) << "MQDISC released the handle";
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoCloseFailureIsAWarningAndKeepsTheFacts)
+{
+    connect();
+    addMessages(kInfoQueue, 1);
+    fake.closeRc = MQRC_HOBJ_ERROR;
+
+    QueueInfo info;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    ASSERT_TRUE(r.ok()) << r.text;
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_NE(std::string::npos, r.warnings[0].find("MQCLOSE"));
+    EXPECT_EQ(1, info.depth);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoRequiresAConnection)
+{
+    QueueInfo info;
+    info.depth = 3;
+    Result r = session.queueInfo(kInfoQueue, info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(-1, info.depth);
+    EXPECT_EQ(0, fake.openCalls);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoRejectsAQueueNameLongerThan48Characters)
+{
+    connect();
+    QueueInfo info;
+    Result r = session.queueInfo(std::string(49, 'Q'), info);
+
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, fake.openCalls);
+}
+
+TEST_F(MqSessionFakeTest, QueueInfoDoesNotDisturbAnOpenBrowse)
+{
+    connect();
+    addMessages(kInfoQueue, 3);
+
+    GetOptions first;
+    first.mode = GetMode::BrowseFirst;
+    Message m;
+    ASSERT_TRUE(session.get(kInfoQueue, m, first).ok());
+    ASSERT_EQ(1, fake.openCalls);
+
+    QueueInfo info;
+    ASSERT_TRUE(session.queueInfo(kInfoQueue, info).ok());
+    EXPECT_EQ(3, info.depth);
+    EXPECT_EQ(2, fake.openCalls);
+    EXPECT_EQ(1, fake.closeCalls) << "only the inquiry handle is closed";
+
+    GetOptions next;
+    next.mode = GetMode::BrowseNext;
+    ASSERT_TRUE(session.get(kInfoQueue, m, next).ok());
+    EXPECT_EQ(2, fake.openCalls) << "the browse handle is still the one in use";
+    EXPECT_NE(0, fake.lastGmoOptions & MQGMO_BROWSE_NEXT);
+}
