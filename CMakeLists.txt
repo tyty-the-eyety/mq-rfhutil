@@ -12,6 +12,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# compile_commands.json in the build directory, for clangd and other tools.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 option(RFHUTIL_BUILD_TESTS "Build the core tests" ON)
 option(RFHUTIL_FETCH_GTEST "Download GoogleTest when no installed package is found" OFF)
 

@@ -64,3 +64,7 @@ docs/P1_3_64BIT_IMPLEMENTATION.md
 
 # CMake build output
 /build/
+
+# Code index (tools/index), never committed
+.index/
+__pycache__/
