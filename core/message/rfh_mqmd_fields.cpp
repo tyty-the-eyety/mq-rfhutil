@@ -35,6 +35,13 @@ namespace rfh
 				return temp;
 			}
 
+			// An MQ character field up to its first NUL or its end, whichever comes first
+			std::string untilNul(const MQCHAR * field, size_t fieldLength)
+			{
+				const void * nul = memchr(field, 0, fieldLength);
+				return std::string(field, nul ? (const char *)nul - field : fieldLength);
+			}
+
 			std::string number(MQLONG value)
 			{
 				char temp[16];
@@ -542,6 +549,83 @@ namespace rfh
 			}
 
 			return true;
+		}
+
+		void fromGetMqmd(const MQMD2 & received, MqmdFields & f)
+		{
+			clear(f);
+
+			f.reportException = reportChoice(received.Report, MQRO_EXCEPTION, MQRO_EXCEPTION_WITH_DATA, MQRO_EXCEPTION_WITH_FULL_DATA);
+			f.reportExpiration = reportChoice(received.Report, MQRO_EXPIRATION, MQRO_EXPIRATION_WITH_DATA, MQRO_EXPIRATION_WITH_FULL_DATA);
+			f.reportCoa = reportChoice(received.Report, MQRO_COA, MQRO_COA_WITH_DATA, MQRO_COA_WITH_FULL_DATA);
+			f.reportCod = reportChoice(received.Report, MQRO_COD, MQRO_COD_WITH_DATA, MQRO_COD_WITH_FULL_DATA);
+			f.reportPan = (received.Report & MQRO_PAN) != 0;
+			f.reportNan = (received.Report & MQRO_NAN) != 0;
+			f.reportActivity = (received.Report & MQRO_ACTIVITY) != 0;
+			f.reportDiscard = (received.Report & MQRO_DISCARD_MSG) != 0;
+			f.reportPassDiscardAndExpiry = (received.Report & MQRO_PASS_DISCARD_AND_EXPIRY) != 0;
+			f.reportPassMsgId = (received.Report & MQRO_PASS_MSG_ID) != 0;
+			f.reportPassCorrelId = (received.Report & MQRO_PASS_CORREL_ID) != 0;
+
+			f.msgType = msgTypeText(received.MsgType);
+			f.expiry = number(received.Expiry);
+			f.feedback = number(received.Feedback);
+			f.encoding = getIntEncode(received.Encoding);
+			f.pdEncoding = getPDEncode(received.Encoding);
+			f.ccsid = number(received.CodedCharSetId);
+			f.priority = number(received.Priority);
+			f.persistence = received.Persistence;
+			f.backoutCount = number(received.BackoutCount);
+
+			memcpy(f.msgId, received.MsgId, sizeof(f.msgId));
+			memcpy(f.correlId, received.CorrelId, sizeof(f.correlId));
+
+			f.userId = trimmedField(received.UserIdentifier, sizeof(received.UserIdentifier));
+			f.applOrigin = trimmedField(received.ApplOriginData, sizeof(received.ApplOriginData));
+			f.applIdentity = trimmedField(received.ApplIdentityData, sizeof(received.ApplIdentityData));
+
+			unsigned char token[2 * sizeof(received.AccountingToken) + 1] = { 0 };
+			AsciiToHex(received.AccountingToken, sizeof(received.AccountingToken), token);
+			f.accountingToken = (const char *)token;
+
+			// setPutApplType: a name, else the number of a positive type, else "-1 Other/Unknown"
+			f.putApplType = getApplTypeDisplay(received.PutApplType);
+			if (f.putApplType.empty())
+			{
+				f.putApplType = (received.PutApplType > 0) ? number(received.PutApplType) : "-1 Other/Unknown";
+			}
+
+			f.putApplName = untilNul(received.PutApplName, sizeof(received.PutApplName));
+			f.format = untilNul(received.Format, sizeof(received.Format));
+			f.replyToQMgr = untilNul(received.ReplyToQMgr, sizeof(received.ReplyToQMgr));
+			f.replyToQ = untilNul(received.ReplyToQ, sizeof(received.ReplyToQ));
+
+			// formatDateTime builds one string of 22 characters; the first NUL ends all of it
+			char dateTime[23];
+			memcpy(dateTime, received.PutDate, 4);
+			dateTime[4] = '/';
+			memcpy(dateTime + 5, received.PutDate + 4, 2);
+			dateTime[7] = '/';
+			memcpy(dateTime + 8, received.PutDate + 6, 2);
+			dateTime[10] = ' ';
+			memcpy(dateTime + 11, received.PutTime, 2);
+			dateTime[13] = ':';
+			memcpy(dateTime + 14, received.PutTime + 2, 2);
+			dateTime[16] = ':';
+			memcpy(dateTime + 17, received.PutTime + 4, 2);
+			dateTime[19] = '.';
+			memcpy(dateTime + 20, received.PutTime + 6, 2);
+			dateTime[22] = 0;
+			f.dateTime = dateTime;
+
+			if (received.Version >= MQMD_VERSION_2)
+			{
+				memcpy(f.groupId, received.GroupId, sizeof(f.groupId));
+				f.seqNo = number(received.MsgSeqNumber);
+				setFlagBoxes(received.MsgFlags, f);
+				f.offset = number(received.Offset);
+				f.originalLength = number(received.OriginalLength);
+			}
 		}
 
 		void applyMdExtension(const MdExtensionFields & e, MqmdFields & f)

@@ -1216,3 +1216,549 @@ TEST(ApplyAfterPut, GroupIdIsKeptForGroupsAndSegmentsAndZeroedOtherwise)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// fromGetMqmd: MQMDPAGE::processMessageMQMD (MQMDPAGE.cpp:1530-1686), the MQMD
+// tab after a get or browse. Expectations are written from that source and from
+// the helpers it calls (setPutApplType :1046, formatDateTime comsubs.cpp:636).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    const size_t kVersion = 4;
+
+    MQMD2 receivedFrom(const L::Bytes & b)
+    {
+        MQMD2 md;
+        EXPECT_EQ(sizeof(md), b.data.size());
+        memcpy(&md, b.data.data(), sizeof(md));
+        return md;
+    }
+
+    MqmdFields gotFrom(const L::Bytes & b)
+    {
+        MqmdFields f;
+        rfh::mqmd_fields::fromGetMqmd(receivedFrom(b), f);
+        return f;
+    }
+
+    // Compares every member of MqmdFields and names each one that differs.
+    void expectFields(const MqmdFields & want, const MqmdFields & got)
+    {
+#define SAME(member) EXPECT_EQ(want.member, got.member) << "field " #member
+        SAME(format);
+        SAME(ccsid);
+        SAME(msgType);
+        SAME(expiry);
+        SAME(feedback);
+        SAME(priority);
+        SAME(backoutCount);
+        SAME(replyToQ);
+        SAME(replyToQMgr);
+        SAME(userId);
+        SAME(accountingToken);
+        SAME(applIdentity);
+        SAME(applOrigin);
+        SAME(putApplName);
+        SAME(putApplType);
+        SAME(dateTime);
+        SAME(seqNo);
+        SAME(offset);
+        SAME(originalLength);
+        SAME(persistence);
+        SAME(encoding);
+        SAME(pdEncoding);
+        SAME(floatEncoding);
+        SAME(reportException);
+        SAME(reportExpiration);
+        SAME(reportCoa);
+        SAME(reportCod);
+        SAME(reportPan);
+        SAME(reportNan);
+        SAME(reportActivity);
+        SAME(reportDiscard);
+        SAME(reportPassMsgId);
+        SAME(reportPassCorrelId);
+        SAME(reportPassDiscardAndExpiry);
+        SAME(groupYes);
+        SAME(groupLast);
+        SAME(segmentYes);
+        SAME(segmentLast);
+        SAME(segmentAllowed);
+#undef SAME
+        EXPECT_EQ(0, memcmp(want.msgId, got.msgId, 24)) << "field msgId";
+        EXPECT_EQ(0, memcmp(want.correlId, got.correlId, 24)) << "field correlId";
+        EXPECT_EQ(0, memcmp(want.groupId, got.groupId, 24)) << "field groupId";
+    }
+
+    // A version 2 MQMD with every text field filled to its size with characters that
+    // are neither blank nor NUL, and each field a different letter so that a read past
+    // the end of one field shows in the text.
+    L::Bytes unterminatedMqmd()
+    {
+        L::Bytes b = L::defaultMqmd2();
+        b.putChars(O::Format, 8, "FFFFFFFF");
+        b.putChars(O::ReplyToQ, 48, std::string(48, 'Q'));
+        b.putChars(O::ReplyToQMgr, 48, std::string(48, 'M'));
+        b.putChars(O::UserIdentifier, 12, std::string(12, 'U'));
+        b.putChars(O::ApplIdentityData, 32, std::string(32, 'I'));
+        b.putChars(O::PutApplName, 28, std::string(28, 'N'));
+        b.putChars(O::ApplOriginData, 4, "OOOO");
+        b.putChars(O::PutDate, 8, "20261016");
+        b.putChars(O::PutTime, 8, "01020304");
+        return b;
+    }
+
+    // MQMD with the fields that fromMqmd and fromGetMqmd read alike
+    L::Bytes populatedMqmd()
+    {
+        L::Bytes b = unterminatedMqmd();
+        b.putLong(O::Report, MQRO_EXCEPTION_WITH_FULL_DATA | MQRO_COA_WITH_DATA | MQRO_COD | MQRO_PAN | MQRO_PASS_CORREL_ID);
+        b.putLong(O::MsgType, 1);
+        b.putLong(O::Expiry, 600);
+        b.putLong(O::Feedback, 3);
+        b.putLong(O::Encoding, 273);
+        b.putLong(O::CodedCharSetId, 1208);
+        b.putLong(O::Priority, 5);
+        b.putLong(O::Persistence, 1);
+        b.putBytes(O::MsgId, "ABCDEFGHIJKLMNOPQRSTUVWX", 24);
+        b.putBytes(O::CorrelId, "abcdefghijklmnopqrstuvwx", 24);
+        b.putLong(O::BackoutCount, 2);
+        const unsigned char token[3] = { 0xDE, 0xAD, 0xBE };
+        b.putBytes(O::AccountingToken, token, 3);
+        b.putLong(O::PutApplType, 11);
+        b.putBytes(O::GroupId, "GRPGRPGRPGRPGRPGRPGRPGRP", 24);
+        b.putLong(O::MsgSeqNumber, 4);
+        b.putLong(O::Offset, 100);
+        b.putLong(O::MsgFlags, MQMF_MSG_IN_GROUP | MQMF_SEGMENT);
+        b.putLong(O::OriginalLength, 900);
+        return b;
+    }
+}
+
+TEST(FromGetMqmd, EveryFieldMatchesFromMqmdForAVersionTwoMqmd)
+{
+    L::Bytes e = populatedMqmd();
+    MQMD2 md = receivedFrom(e);
+
+    MqmdFields want;
+    want.format = "FFFFFFFF";
+    want.ccsid = "1208";
+    want.msgType = "1 Request";
+    want.expiry = "600";
+    want.feedback = "3";
+    want.priority = "5";
+    want.backoutCount = "2";
+    want.replyToQ = std::string(48, 'Q');
+    want.replyToQMgr = std::string(48, 'M');
+    want.userId = std::string(12, 'U');
+    want.accountingToken = "DEADBE" + std::string(58, '0');
+    want.applIdentity = std::string(32, 'I');
+    want.applOrigin = "OOOO";
+    want.putApplName = std::string(28, 'N');
+    want.putApplType = "11 32-bit Windows";
+    want.dateTime = "2026/10/16 01:02:03.04";
+    want.seqNo = "4";
+    want.offset = "100";
+    want.originalLength = "900";
+    want.persistence = MQPERSIST_YES;
+    want.encoding = NUMERIC_HOST;
+    want.pdEncoding = NUMERIC_HOST;
+    want.reportException = REPORT_FULL;
+    want.reportExpiration = REPORT_NONE;
+    want.reportCoa = REPORT_DATA;
+    want.reportCod = REPORT_YES;
+    want.reportPan = true;
+    want.reportPassCorrelId = true;
+    want.groupYes = true;
+    want.segmentYes = true;
+    memcpy(want.msgId, "ABCDEFGHIJKLMNOPQRSTUVWX", 24);
+    memcpy(want.correlId, "abcdefghijklmnopqrstuvwx", 24);
+    memcpy(want.groupId, "GRPGRPGRPGRPGRPGRPGRPGRP", 24);
+
+    MqmdFields got;
+    rfh::mqmd_fields::fromGetMqmd(md, got);
+    expectFields(want, got);
+
+    // where the header comment lists no difference, the file path gives the same result
+    MqmdFields fromFile;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, fromFile));
+    expectFields(fromFile, got);
+}
+
+TEST(FromGetMqmd, AGetPathWithNothingReceivedLeavesTheClearedPage)
+{
+    // clearMQMD runs first: nothing of an earlier message survives except the float
+    // encoding, which neither function touches
+    MqmdFields got;
+    got.userId = "old";
+    got.replyToQ = "OLD.Q";
+    got.groupYes = true;
+    got.segmentAllowed = true;
+    got.reportCoa = REPORT_FULL;
+    got.floatEncoding = FLOAT_TNS;
+    memcpy(got.msgId, "OLDOLDOLDOLDOLDOLDOLDOLD", 24);
+    memcpy(got.groupId, "OLDOLDOLDOLDOLDOLDOLDOLD", 24);
+
+    L::Bytes e = L::defaultMqmd2();
+    e.putLong(kVersion, 1);
+    rfh::mqmd_fields::fromGetMqmd(receivedFrom(e), got);
+
+    MqmdFields want;
+    want.floatEncoding = FLOAT_TNS;
+    want.msgType = "8 Datagram";
+    want.expiry = "-1";
+    want.feedback = "0";
+    want.priority = "-1";
+    want.ccsid = "0";
+    want.persistence = MQPERSIST_AS_Q;
+    want.encoding = NUMERIC_PC;
+    want.pdEncoding = NUMERIC_PC;
+    want.putApplType = "0 None";
+    want.accountingToken = std::string(64, '0');
+    want.dateTime = "";
+    want.format = std::string(8, ' ');          // blank filled, and kept
+    want.replyToQ = std::string(48, ' ');
+    want.replyToQMgr = std::string(48, ' ');
+    want.putApplName = std::string(28, ' ');
+    want.reportException = REPORT_NONE;         // processReportOptions sets none, not -1
+    want.reportExpiration = REPORT_NONE;
+    want.reportCoa = REPORT_NONE;
+    want.reportCod = REPORT_NONE;
+    expectFields(want, got);
+}
+
+TEST(FromGetMqmd, VersionOneGroupIdIsHandledAsWindowsDoes)
+{
+    // processMessageMQMD copies GroupId only for version 2 (:1655-1658); the group id
+    // stays at what clearMQMD left, zeros, and so do the version 2 fields
+    L::Bytes e = populatedMqmd();
+    e.putLong(kVersion, 1);
+    MqmdFields got = gotFrom(e);
+
+    MqmdFields want;
+    want.floatEncoding = got.floatEncoding;
+    EXPECT_EQ(0, memcmp(want.groupId, got.groupId, 24)) << "field groupId";
+    EXPECT_EQ("1", got.seqNo) << "field seqNo";
+    EXPECT_EQ("", got.offset) << "field offset";
+    EXPECT_EQ("-1", got.originalLength) << "field originalLength";
+    EXPECT_FALSE(got.groupYes) << "field groupYes";
+    EXPECT_FALSE(got.segmentYes) << "field segmentYes";
+
+    // fromMqmd copies the bytes after a version 1 MQMD as the Group Id: this is the
+    // difference
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(receivedFrom(e), file));
+    EXPECT_EQ(0, memcmp(file.groupId, "GRPGRPGRPGRPGRPGRPGRPGRP", 24));
+}
+
+TEST(FromGetMqmd, EveryVersionOfTwoOrMoreIsReadAsVersionTwoAndOthersAsVersionOne)
+{
+    // Version >= MQMD_VERSION_2 (:1655); fromMqmd would return false for all but 1 and 2
+    const struct { int version; bool v2; } cases[] = { { 3, true }, { 100, true }, { 2, true },
+        { 1, false }, { 0, false }, { -1, false } };
+    for (const auto & c : cases)
+    {
+        L::Bytes e = populatedMqmd();
+        e.putLong(kVersion, c.version);
+        MqmdFields got = gotFrom(e);
+        EXPECT_EQ(c.v2 ? "4" : "1", got.seqNo) << "field seqNo, version " << c.version;
+        EXPECT_EQ(c.v2 ? "900" : "-1", got.originalLength) << "field originalLength, version " << c.version;
+        EXPECT_EQ(c.v2, got.groupYes) << "field groupYes, version " << c.version;
+        EXPECT_EQ(c.v2 ? 'G' : 0, got.groupId[0]) << "field groupId, version " << c.version;
+    }
+}
+
+TEST(FromGetMqmd, IdsAreKeptAsReceived)
+{
+    // NUL, blank and high bytes are all kept; nothing is reversed or translated
+    unsigned char msgId[24], correlId[24], groupId[24];
+    for (int i = 0; i < 24; i++)
+    {
+        msgId[i] = (unsigned char)(i * 11);          // starts with a NUL
+        correlId[i] = (unsigned char)(0xFF - i * 7); // high bytes
+        groupId[i] = (i % 2) ? ' ' : (unsigned char)(0x80 + i);
+    }
+    L::Bytes e = L::defaultMqmd2();
+    e.putBytes(O::MsgId, msgId, 24);
+    e.putBytes(O::CorrelId, correlId, 24);
+    e.putBytes(O::GroupId, groupId, 24);
+    MqmdFields got = gotFrom(e);
+    for (int i = 0; i < 24; i++)
+    {
+        EXPECT_EQ(msgId[i], got.msgId[i]) << "field msgId byte " << i;
+        EXPECT_EQ(correlId[i], got.correlId[i]) << "field correlId byte " << i;
+        EXPECT_EQ(groupId[i], got.groupId[i]) << "field groupId byte " << i;
+    }
+}
+
+TEST(FromGetMqmd, OverlongOrUnterminatedTextFieldsAreTruncatedNotOverrun)
+{
+    // every text field is full, with no blank or NUL; each result is exactly the field
+    // and the bytes of the next field (a different letter) never show
+    MqmdFields got = gotFrom(unterminatedMqmd());
+    EXPECT_EQ("FFFFFFFF", got.format) << "field format";
+    EXPECT_EQ(std::string(48, 'Q'), got.replyToQ) << "field replyToQ";
+    EXPECT_EQ(std::string(48, 'M'), got.replyToQMgr) << "field replyToQMgr";
+    EXPECT_EQ(std::string(12, 'U'), got.userId) << "field userId";
+    EXPECT_EQ(std::string(32, 'I'), got.applIdentity) << "field applIdentity";
+    EXPECT_EQ(std::string(28, 'N'), got.putApplName) << "field putApplName";
+    EXPECT_EQ("OOOO", got.applOrigin) << "field applOrigin";
+    EXPECT_EQ("2026/10/16 01:02:03.04", got.dateTime) << "field dateTime";
+}
+
+TEST(FromGetMqmd, FieldsOfHighBytesAndNoNulAreAlsoBounded)
+{
+    // as above, with bytes above 0x7F, which MSVC's signed char sees as negative
+    L::Bytes e = unterminatedMqmd();
+    e.putChars(O::Format, 8, std::string(8, '\xC1'));
+    e.putChars(O::ReplyToQ, 48, std::string(48, '\xC2'));
+    e.putChars(O::PutApplName, 28, std::string(28, '\xC3'));
+    MqmdFields got = gotFrom(e);
+    EXPECT_EQ(std::string(8, '\xC1'), got.format) << "field format";
+    EXPECT_EQ(std::string(48, '\xC2'), got.replyToQ) << "field replyToQ";
+    EXPECT_EQ(std::string(28, '\xC3'), got.putApplName) << "field putApplName";
+}
+
+TEST(FromGetMqmd, FormatKeepsItsBlanksAndEndsAtTheFirstNul)
+{
+    // :1641-1643 copies the 8 bytes into a zeroed buffer; nothing trims it
+    L::Bytes e = L::defaultMqmd2();
+    e.putChars(O::Format, 8, "MQSTR");
+    EXPECT_EQ("MQSTR   ", gotFrom(e).format) << "field format";
+
+    e.putChars(O::Format, 8, "");
+    EXPECT_EQ("        ", gotFrom(e).format) << "field format of a blank format";
+
+    e.putBytes(O::Format, "AB\0CD   ", 8);
+    EXPECT_EQ("AB", gotFrom(e).format) << "field format with a NUL";
+
+    e.putBytes(O::Format, "\0\0\0\0\0\0\0\0", 8);
+    EXPECT_EQ("", gotFrom(e).format) << "field format of zero bytes";
+
+    // a control byte does not end it, unlike in fromMqmd
+    e.putBytes(O::Format, "A\tB     ", 8);
+    EXPECT_EQ(std::string("A\tB     "), gotFrom(e).format) << "field format with a tab";
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(receivedFrom(e), file));
+    EXPECT_EQ("A", file.format);
+}
+
+TEST(FromGetMqmd, ReplyToNamesAndPutApplNameKeepTheirBlanksAndEndAtTheFirstNul)
+{
+    // :1636-1652; User Id, Appl Identity and Appl Origin are trimmed (Rtrim), these are not
+    L::Bytes e = L::defaultMqmd2();
+    e.putChars(O::ReplyToQ, 48, "REPLY.Q");
+    e.putChars(O::ReplyToQMgr, 48, "QM1");
+    e.putChars(O::PutApplName, 28, "app.exe");
+    e.putChars(O::UserIdentifier, 12, "me");
+    e.putChars(O::ApplIdentityData, 32, "ident");
+    e.putChars(O::ApplOriginData, 4, "o");
+    MqmdFields got = gotFrom(e);
+    EXPECT_EQ("REPLY.Q" + std::string(41, ' '), got.replyToQ) << "field replyToQ";
+    EXPECT_EQ("QM1" + std::string(45, ' '), got.replyToQMgr) << "field replyToQMgr";
+    EXPECT_EQ("app.exe" + std::string(21, ' '), got.putApplName) << "field putApplName";
+    EXPECT_EQ("me", got.userId) << "field userId";
+    EXPECT_EQ("ident", got.applIdentity) << "field applIdentity";
+    EXPECT_EQ("o", got.applOrigin) << "field applOrigin";
+
+    e.putBytes(O::ReplyToQ, "Q1\0GARBAGE", 10);
+    e.putBytes(O::ReplyToQMgr, "M1\0GARBAGE", 10);
+    e.putBytes(O::PutApplName, "N1\0GARBAGE", 10);
+    e.putBytes(O::UserIdentifier, "U1\0GARBAGE", 10);
+    got = gotFrom(e);
+    EXPECT_EQ("Q1", got.replyToQ) << "field replyToQ with a NUL";
+    EXPECT_EQ("M1", got.replyToQMgr) << "field replyToQMgr with a NUL";
+    EXPECT_EQ("N1", got.putApplName) << "field putApplName with a NUL";
+    EXPECT_EQ("U1", got.userId) << "field userId with a NUL";
+
+    // fromMqmd trims all of them
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(receivedFrom(L::defaultMqmd2()), file));
+    EXPECT_EQ("", file.replyToQ);
+}
+
+TEST(FromGetMqmd, PutApplTypeShowsAnUnnamedTypeAsWindowsSetPutApplTypeDoes)
+{
+    const struct { int type; const char * text; } cases[] = {
+        { 0, "0 None" }, { 6, "6 Unix" }, { 28, "28 Java" },
+        { 99, "99" },                          // unnamed, positive: its number
+        { 1000, "1000" }, { 2147483647, "2147483647" },
+        { -1, "-1 Other/Unknown" }, { -7, "-1 Other/Unknown" } };
+    for (const auto & c : cases)
+    {
+        L::Bytes e = L::defaultMqmd2();
+        e.putLong(O::PutApplType, c.type);
+        EXPECT_EQ(c.text, gotFrom(e).putApplType) << "field putApplType for type " << c.type;
+    }
+
+    // fromMqmd shows an unnamed type as an empty text
+    L::Bytes e = L::defaultMqmd2();
+    e.putLong(O::PutApplType, 99);
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(receivedFrom(e), file));
+    EXPECT_EQ("", file.putApplType);
+}
+
+TEST(FromGetMqmd, ADateAndTimeAreShownAsWindowsFormatsThem)
+{
+    L::Bytes e = L::defaultMqmd2();
+    e.putChars(O::PutDate, 8, "20261016");
+    e.putChars(O::PutTime, 8, "23595999");
+    EXPECT_EQ("2026/10/16 23:59:59.99", gotFrom(e).dateTime) << "field dateTime";
+
+    // blanks are not NULs: all 22 characters
+    e.putChars(O::PutDate, 8, "");
+    e.putChars(O::PutTime, 8, "");
+    EXPECT_EQ("    /  /     :  :  .  ", gotFrom(e).dateTime) << "field dateTime of blanks";
+}
+
+TEST(FromGetMqmd, AZeroDateAndTimeGiveAnEmptyText)
+{
+    // formatDateTime's first byte is the NUL of PutDate, which ends the text; fromMqmd
+    // gives a single blank here
+    L::Bytes e = L::defaultMqmd2();
+    e.putBytes(O::PutDate, "\0\0\0\0\0\0\0\0", 8);
+    e.putBytes(O::PutTime, "\0\0\0\0\0\0\0\0", 8);
+    MQMD2 md = receivedFrom(e);
+    MqmdFields got;
+    rfh::mqmd_fields::fromGetMqmd(md, got);
+    EXPECT_EQ("", got.dateTime) << "field dateTime";
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, file));
+    EXPECT_EQ(" ", file.dateTime);
+}
+
+TEST(FromGetMqmd, ANulInTheDateEndsTheWholeDateAndTime)
+{
+    // the single string ends at the first NUL, wherever it is
+    L::Bytes e = L::defaultMqmd2();
+    e.putBytes(O::PutDate, "20\0\0\0\0\0\0", 8);
+    e.putChars(O::PutTime, 8, "01020304");
+    MQMD2 md = receivedFrom(e);
+    MqmdFields got;
+    rfh::mqmd_fields::fromGetMqmd(md, got);
+    EXPECT_EQ("20", got.dateTime) << "field dateTime";
+
+    MqmdFields file;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(md, file));
+    EXPECT_EQ("20 01:02:03.04", file.dateTime);
+
+    // a NUL in the time keeps the date and the text before it, and the next separator
+    e.putChars(O::PutDate, 8, "20261016");
+    e.putBytes(O::PutTime, "01\0\0\0\0\0\0", 8);
+    EXPECT_EQ("2026/10/16 01:", gotFrom(e).dateTime) << "field dateTime with a NUL in the time";
+    e.putBytes(O::PutTime, "010203\0\0", 8);
+    EXPECT_EQ("2026/10/16 01:02:03.", gotFrom(e).dateTime) << "field dateTime with a NUL in the hundredths";
+}
+
+TEST(FromGetMqmd, MessageTypeNamesAndUnnamedTypes)
+{
+    const struct { int type; const char * text; } cases[] = { { 1, "1 Request" }, { 2, "2 Reply" },
+        { 4, "4 Report" }, { 8, "8 Datagram" }, { 112, "112 FR_MQE" }, { 113, "113 MQE" },
+        { 3, "" }, { 0, "" }, { 65536, "" }, { -1, "" } };
+    for (const auto & c : cases)
+    {
+        L::Bytes e = L::defaultMqmd2();
+        e.putLong(O::MsgType, c.type);
+        EXPECT_EQ(c.text, gotFrom(e).msgType) << "field msgType for type " << c.type;
+    }
+}
+
+TEST(FromGetMqmd, ReportOptionsAreReadAsProcessReportOptionsDoes)
+{
+    // :1389-1512: each pair of options has none/yes/data/full; the rest are check boxes
+    L::Bytes e = L::defaultMqmd2();
+    e.putLong(O::Report, MQRO_EXCEPTION | MQRO_EXPIRATION_WITH_DATA | MQRO_COA_WITH_FULL_DATA
+        | MQRO_NAN | MQRO_ACTIVITY | MQRO_DISCARD_MSG | MQRO_PASS_MSG_ID | MQRO_PASS_DISCARD_AND_EXPIRY);
+    MqmdFields got = gotFrom(e);
+    EXPECT_EQ(REPORT_YES, got.reportException) << "field reportException";
+    EXPECT_EQ(REPORT_DATA, got.reportExpiration) << "field reportExpiration";
+    EXPECT_EQ(REPORT_FULL, got.reportCoa) << "field reportCoa";
+    EXPECT_EQ(REPORT_NONE, got.reportCod) << "field reportCod";
+    EXPECT_FALSE(got.reportPan) << "field reportPan";
+    EXPECT_TRUE(got.reportNan) << "field reportNan";
+    EXPECT_TRUE(got.reportActivity) << "field reportActivity";
+    EXPECT_TRUE(got.reportDiscard) << "field reportDiscard";
+    EXPECT_TRUE(got.reportPassMsgId) << "field reportPassMsgId";
+    EXPECT_FALSE(got.reportPassCorrelId) << "field reportPassCorrelId";
+    EXPECT_TRUE(got.reportPassDiscardAndExpiry) << "field reportPassDiscardAndExpiry";
+}
+
+TEST(FromGetMqmd, EncodingsAreReadFromTheirOwnBits)
+{
+    // getIntEncode tests MQENC_INTEGER_REVERSED (2), getPDEncode MQENC_DECIMAL_REVERSED (0x20)
+    const struct { int encoding; int integer; int decimal; } cases[] = {
+        { 0x222, NUMERIC_PC, NUMERIC_PC }, { 0x111, NUMERIC_HOST, NUMERIC_HOST },
+        { 0x012, NUMERIC_PC, NUMERIC_HOST }, { 0x101, NUMERIC_HOST, NUMERIC_HOST },
+        { 0x021, NUMERIC_HOST, NUMERIC_PC }, { 0, NUMERIC_HOST, NUMERIC_HOST } };
+    for (const auto & c : cases)
+    {
+        L::Bytes e = L::defaultMqmd2();
+        e.putLong(O::Encoding, c.encoding);
+        MqmdFields got = gotFrom(e);
+        EXPECT_EQ(c.integer, got.encoding) << "field encoding for " << c.encoding;
+        EXPECT_EQ(c.decimal, got.pdEncoding) << "field pdEncoding for " << c.encoding;
+        EXPECT_EQ(FLOAT_PC, got.floatEncoding) << "field floatEncoding for " << c.encoding;
+    }
+}
+
+TEST(FromGetMqmd, TheAccountingTokenIsAllThirtyTwoBytesInUpperCaseHex)
+{
+    L::Bytes e = L::defaultMqmd2();
+    unsigned char token[32];
+    for (int i = 0; i < 32; i++)
+    {
+        token[i] = (unsigned char)(0xF0 - i * 3);
+    }
+    e.putBytes(O::AccountingToken, token, 32);
+    EXPECT_EQ("F0EDEAE7E4E1DEDBD8D5D2CFCCC9C6C3C0BDBAB7B4B1AEABA8A5A29F9C999693", gotFrom(e).accountingToken)
+        << "field accountingToken";
+}
+
+TEST(FromGetMqmd, VersionTwoFlagsAreReadBitByBit)
+{
+    const struct { int flags; bool group; bool last; bool segment; bool segLast; bool allowed; } cases[] = {
+        { MQMF_MSG_IN_GROUP, true, false, false, false, false },
+        { MQMF_LAST_MSG_IN_GROUP, false, true, false, false, false },
+        { MQMF_SEGMENT, false, false, true, false, false },
+        { MQMF_LAST_SEGMENT, false, false, false, true, false },
+        { MQMF_SEGMENTATION_ALLOWED, false, false, false, false, true },
+        { 0, false, false, false, false, false } };
+    for (const auto & c : cases)
+    {
+        L::Bytes e = L::defaultMqmd2();
+        e.putLong(O::MsgFlags, c.flags);
+        MqmdFields got = gotFrom(e);
+        EXPECT_EQ(c.group, got.groupYes) << "field groupYes for flags " << c.flags;
+        EXPECT_EQ(c.last, got.groupLast) << "field groupLast for flags " << c.flags;
+        EXPECT_EQ(c.segment, got.segmentYes) << "field segmentYes for flags " << c.flags;
+        EXPECT_EQ(c.segLast, got.segmentLast) << "field segmentLast for flags " << c.flags;
+        EXPECT_EQ(c.allowed, got.segmentAllowed) << "field segmentAllowed for flags " << c.flags;
+    }
+}
+
+TEST(FromGetMqmd, FromMqmdIsUnchanged)
+{
+    // regression: the file path keeps its own rules (trimmed Format and names, an empty
+    // text for an unnamed application type, the single blank for a zero date, and the
+    // Group Id of a version 1 MQMD)
+    L::Bytes e = L::defaultMqmd2();
+    e.putLong(kVersion, 1);
+    e.putChars(O::Format, 8, "MQSTR");
+    e.putChars(O::ReplyToQ, 48, "R.Q");
+    e.putChars(O::PutApplName, 28, "app");
+    e.putLong(O::PutApplType, 99);
+    e.putBytes(O::GroupId, "GRPGRPGRPGRPGRPGRPGRPGRP", 24);
+    MqmdFields f;
+    ASSERT_TRUE(rfh::mqmd_fields::fromMqmd(receivedFrom(e), f));
+    EXPECT_EQ("MQSTR", f.format) << "field format";
+    EXPECT_EQ("R.Q", f.replyToQ) << "field replyToQ";
+    EXPECT_EQ("app", f.putApplName) << "field putApplName";
+    EXPECT_EQ("", f.putApplType) << "field putApplType";
+    EXPECT_EQ(" ", f.dateTime) << "field dateTime";
+    EXPECT_EQ(0, memcmp(f.groupId, "GRPGRPGRPGRPGRPGRPGRPGRP", 24)) << "field groupId";
+
+    e.putLong(kVersion, 3);
+    EXPECT_FALSE(rfh::mqmd_fields::fromMqmd(receivedFrom(e), f));
+}

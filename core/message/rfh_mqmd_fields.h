@@ -110,6 +110,50 @@ namespace rfh
 		// Returns false, leaving fields unchanged, for any other version.
 		bool fromMqmd(const MQMD2 & mqmd, MqmdFields & fields);
 
+		// The port of MQMDPAGE::processMessageMQMD (MQMDPAGE.cpp:1530-1686) after clearMQMD
+		// (:1688-1785): the MQMD tab's values for an MQMD that MQ returned from a get or
+		// browse. `received` is in host byte order, as MQ returns it, so nothing is swapped
+		// or translated. Text fields are read at their MQ size and never past it, whether or
+		// not they hold a blank or NUL. The float encoding is left unchanged, as on Windows.
+		// Never fails: any Version is accepted (see rule 1).
+		//
+		// What of Windows' DataArea::processMessage (DataArea.cpp:7064-7144) is not ported:
+		// the brief and the inventory expected an ASCII/EBCDIC/endian pre-translation of the
+		// MQMD there; there is none. processMessage calls the page at once, and the get path
+		// (processMQGet, DataArea.cpp:7851) hands the MQMD from MQGET straight on. The
+		// translation lives in processMQMD (file path) and translateMQMD (mqsubs.cpp:410,
+		// used by WritePubs), neither of which a get uses; MQ returns native-order ASCII-
+		// character fields, so fromGetMqmd needs none. What processMessage does after the
+		// page is document state, not tab fields, and stays with the caller: numeric format
+		// from MQENC_INTEGER_REVERSED (fromMqmd's caller does the same), the CCSID sanity
+		// check (a value outside 0..99999 is tried byte-reversed, else "Invalid code page in
+		// MQMD - %d" and 0; the tab keeps showing the raw CCSID), the character format from
+		// the CCSID, and parsing the headers. Unlike processMQMD, a get never sets the
+		// document's packed decimal format (it stays NUMERIC_PC after clearMQMD).
+		//
+		// Differences from fromMqmd (the file path, MQMDPAGE::processMQMD :1092-1380), each
+		// pinned by a test:
+		// 1. Version: 2 or more is read as version 2, anything else (0, 1, negative) as
+		//    version 1 (:1655); fromMqmd accepts only 1 and 2 and returns false otherwise.
+		// 2. Group Id: copied only for version 2 (:1658); fromMqmd copies it for version 1
+		//    too (bytes after the MQMD). Here a version 1 Group Id stays zero.
+		// 3. Format: all 8 bytes up to the first NUL, trailing blanks kept (:1641-1643);
+		//    fromMqmd ends the text at the first byte at or below a blank.
+		// 4. Reply To Queue and Queue Manager: up to the first NUL, trailing blanks kept
+		//    (:1646-1652); fromMqmd removes trailing blanks and controls.
+		// 5. Put Application Name: up to the first NUL, trailing blanks kept (:1636-1638);
+		//    fromMqmd trims it.
+		// 6. Put Application Type: setPutApplType (:1046) shows an unnamed positive type as
+		//    its number and any other unnamed type as "-1 Other/Unknown"; fromMqmd shows "".
+		// 7. Put Date/Time: formatDateTime (comsubs.cpp:636) builds one 22 character string
+		//    and the first NUL anywhere ends all of it, so zero date and time give "";
+		//    fromMqmd cuts the date and the time separately and gives " ".
+		// Equal to fromMqmd: report options, message type, expiry, feedback, encodings, CCSID,
+		// priority, persistence, Msg Id, Correl Id, backout count, User Id, accounting token,
+		// Appl Identity and Origin (trimmed), and for version 2 the sequence number, offset,
+		// flags and original length. A version 1 MQMD leaves those as clearMQMD does.
+		void fromGetMqmd(const MQMD2 & received, MqmdFields & fields);
+
 		// Sets the MQMD tab's version 2 fields from an MQMDE, as MQMDPAGE::processMQMDE does
 		void applyMdExtension(const MdExtensionFields & e, MqmdFields & fields);
 
