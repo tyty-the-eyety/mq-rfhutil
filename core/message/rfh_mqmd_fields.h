@@ -13,6 +13,7 @@
 #include <cmqc.h>
 
 #include <string>
+#include <time.h>
 
 #include "rfh_header_chain.h"
 #include "rfhconst.h"
@@ -74,6 +75,22 @@ namespace rfh
 		MQBYTE24 groupId = { 0 };
 	};
 
+	// What MQMDPAGE::setMessageMQMD takes besides the page: the Set Iden Context and
+	// Set All Context check boxes (m_setUserID, m_set_all of DataArea).
+	struct PutContext
+	{
+		bool setIdentity = false;		// Set Iden Context
+		bool setAll = false;			// Set All Context
+		// Set when the OS user name could be looked up (GetUserNameEx or GetUserName
+		// succeeded); empty means the lookup failed. setMessageMQMD never copies the name
+		// itself: see toPutMqmd.
+		std::string osUser;
+		// Not read: setMessageMQMD formats the current time but never uses it, so a blank
+		// Put Date/Time is written as binary zeros. Kept so callers need not change if
+		// that Windows defect is ever fixed.
+		const struct tm * now = nullptr;
+	};
+
 	namespace mqmd_fields
 	{
 		// Fills mqmd from fields, as MQMDPAGE::buildMQMD does. mqmd must already hold
@@ -99,6 +116,35 @@ namespace rfh
 		// Resets fields as MQMDPAGE::clearMQMD does; only the float encoding is left
 		// unchanged.
 		void clear(MqmdFields & fields);
+
+		// Fills mqmd as MQMDPAGE::setMessageMQMD does for a put (toMqmd is the file-write
+		// path and stays as it is; the rules differ). mqmd must hold MQMD2_DEFAULT, whose
+		// values stay wherever a rule does not write. Rules, with the Windows quirks kept:
+		// - Format is blank filled and cut to 8; ReplyToQ and ReplyToQMgr are copied
+		//   without filling (the default content stays after a short text), cut to the
+		//   field size where Windows would overrun.
+		// - Encoding and Persistence are always set; CCSID, Priority, Expiry, Feedback,
+		//   Original Length and Seq No only when their text is not empty.
+		// - MsgId, CorrelId and GroupId are copied only when not all zero. MsgFlags are
+		//   set only when a flag box is checked (Offset then too, when its text is not
+		//   empty); a GroupId with no flag box checked sets MQMF_LAST_MSG_IN_GROUP.
+		// - Report is set only when not zero; MsgType only for the types toMqmd accepts.
+		// - With Set Iden or Set All: a User Id text is copied zero padded to 12; when it
+		//   is empty and osUser is not, UserIdentifier becomes zeros (Windows passes the OS
+		//   user to setUserId, which reads the empty page field instead). The accounting
+		//   token is converted from hex (at most 48 bytes, 32 stored, rest zeros).
+		// - With Set All only: Appl Identity, Appl Origin (at most 4) and Put Appl Name (at
+		//   most 28) are zero padded; Put Appl Type is its leading number (0 when empty);
+		//   Put Date/Time come from the date text "YYYY/MM/DD HH:MM:SS.hh", zeros when empty.
+		// StrucId, Version and BackoutCount are never written.
+		void toPutMqmd(const MqmdFields & fields, const PutContext & context, MQMD2 & mqmd);
+
+		// What the MQMD tab takes from the MQMD returned by a put, as
+		// MQMDPAGE::updateMQMDafterPut does: Seq No, Offset (the returned offset plus
+		// msgLen while a segment sequence continues, else "0"), MsgId, and GroupId (zeroed
+		// unless a group or segment box is checked). msgLen is the length of the message
+		// just put; the Windows function takes it too.
+		void applyAfterPut(const MQMD2 & returned, MQLONG msgLen, MqmdFields & fields);
 
 		// "8 Datagram" for 8, "" for types the MQMD tab does not name (including
 		// application-defined types), as MQMDPAGE::setMsgType does.

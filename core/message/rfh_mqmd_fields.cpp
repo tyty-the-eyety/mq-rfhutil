@@ -261,6 +261,196 @@ namespace rfh
 			}
 		}
 
+		void toPutMqmd(const MqmdFields & f, const PutContext & context, MQMD2 & mqmd)
+		{
+			static const MQBYTE24 zeros = { 0 };
+
+			// pad the format on the right with blanks, then copy exactly 8 bytes
+			memset(mqmd.Format, ' ', sizeof(mqmd.Format));
+			memcpy(mqmd.Format, f.format.data(), std::min(f.format.size(), sizeof(mqmd.Format)));
+
+			// Windows copies the text over the existing contents, neither filling nor clearing
+			memcpy(mqmd.ReplyToQMgr, f.replyToQMgr.data(), std::min(f.replyToQMgr.size(), sizeof(mqmd.ReplyToQMgr)));
+			memcpy(mqmd.ReplyToQ, f.replyToQ.data(), std::min(f.replyToQ.size(), sizeof(mqmd.ReplyToQ)));
+
+			mqmd.Encoding = getEncodingValue(f.encoding, f.pdEncoding, f.floatEncoding);
+
+			if (!f.ccsid.empty())
+			{
+				mqmd.CodedCharSetId = atoi(f.ccsid.c_str());
+			}
+
+			mqmd.Persistence = persistenceValue(f.persistence);
+
+			if (!f.priority.empty())
+			{
+				mqmd.Priority = atoi(f.priority.c_str());
+			}
+
+			if (!f.expiry.empty())
+			{
+				mqmd.Expiry = atoi(f.expiry.c_str());
+			}
+
+			if (!f.feedback.empty())
+			{
+				mqmd.Feedback = atoi(f.feedback.c_str());
+			}
+
+			if (!f.originalLength.empty())
+			{
+				mqmd.OriginalLength = atoi(f.originalLength.c_str());
+			}
+
+			if (!f.seqNo.empty())
+			{
+				mqmd.MsgSeqNumber = atoi(f.seqNo.c_str());
+			}
+
+			if (memcmp(f.msgId, zeros, sizeof(f.msgId)) != 0)
+			{
+				memcpy(mqmd.MsgId, f.msgId, sizeof(mqmd.MsgId));
+			}
+
+			if (memcmp(f.correlId, zeros, sizeof(f.correlId)) != 0)
+			{
+				memcpy(mqmd.CorrelId, f.correlId, sizeof(mqmd.CorrelId));
+			}
+
+			MQLONG flags = buildFlags(f);
+			if (flags != 0)
+			{
+				mqmd.MsgFlags = flags;
+
+				if (!f.offset.empty())
+				{
+					mqmd.Offset = atoi(f.offset.c_str());
+				}
+			}
+
+			if (memcmp(f.groupId, zeros, sizeof(f.groupId)) != 0)
+			{
+				memcpy(mqmd.GroupId, f.groupId, sizeof(mqmd.GroupId));
+
+				if (0 == flags)
+				{
+					mqmd.MsgFlags = MQMF_LAST_MSG_IN_GROUP;
+				}
+			}
+
+			if (!f.msgType.empty())
+			{
+				int msgType = atoi(f.msgType.c_str());
+				if (acceptedMsgType(msgType))
+				{
+					mqmd.MsgType = msgType;
+				}
+			}
+
+			MQLONG report = buildReportOptions(f);
+			if (report != 0)
+			{
+				mqmd.Report = report;
+			}
+
+			// a segment sets the offset again; with flags checked it is already set
+			if ((f.segmentYes || f.segmentLast) && !f.offset.empty())
+			{
+				mqmd.Offset = atoi(f.offset.c_str());
+			}
+
+			if (!(context.setIdentity || context.setAll))
+			{
+				return;
+			}
+
+			if (!f.userId.empty())
+			{
+				memset(mqmd.UserIdentifier, 0, sizeof(mqmd.UserIdentifier));
+				memcpy(mqmd.UserIdentifier, f.userId.data(), std::min(f.userId.size(), sizeof(mqmd.UserIdentifier)));
+			}
+			else if (!context.osUser.empty())
+			{
+				// setUserId reads the (empty) page field, not the OS user it was meant to use
+				memset(mqmd.UserIdentifier, 0, sizeof(mqmd.UserIdentifier));
+			}
+
+			if (!f.accountingToken.empty())
+			{
+				unsigned char token[48];
+				memset(token, 0, sizeof(token));
+				unsigned int len = (unsigned int)std::min(f.accountingToken.size() / 2, sizeof(token));
+				std::string hex = f.accountingToken;
+				HexToAscii((unsigned char *)&hex[0], len, token);
+				memcpy(mqmd.AccountingToken, token, sizeof(mqmd.AccountingToken));
+			}
+
+			if (!context.setAll)
+			{
+				return;
+			}
+
+			// each of these goes through a zeroed 48 byte buffer, so a short text is zero padded
+			if (!f.applIdentity.empty())
+			{
+				memset(mqmd.ApplIdentityData, 0, sizeof(mqmd.ApplIdentityData));
+				memcpy(mqmd.ApplIdentityData, f.applIdentity.data(), std::min(f.applIdentity.size(), sizeof(mqmd.ApplIdentityData)));
+			}
+
+			if (!f.applOrigin.empty() && (f.applOrigin.size() <= MQ_APPL_ORIGIN_DATA_LENGTH))
+			{
+				memset(mqmd.ApplOriginData, 0, sizeof(mqmd.ApplOriginData));
+				memcpy(mqmd.ApplOriginData, f.applOrigin.data(), f.applOrigin.size());
+			}
+
+			if (!f.putApplName.empty() && (f.putApplName.size() <= MQ_APPL_NAME_LENGTH))
+			{
+				memset(mqmd.PutApplName, 0, sizeof(mqmd.PutApplName));
+				memcpy(mqmd.PutApplName, f.putApplName.data(), f.putApplName.size());
+			}
+
+			mqmd.PutApplType = atoi(f.putApplType.c_str());
+
+			// Put Date and Time: a zeroed 48 byte buffer holds the text (47 characters at
+			// most); an empty text leaves it zero
+			char temp[48];
+			memset(temp, 0, sizeof(temp));
+			memcpy(temp, f.dateTime.data(), std::min(f.dateTime.size(), sizeof(temp) - 1));
+			memcpy(mqmd.PutDate, temp, 4);
+			memcpy(mqmd.PutDate + 4, temp + 5, 2);
+			memcpy(mqmd.PutDate + 6, temp + 8, 2);
+			memcpy(mqmd.PutTime, temp + 11, 2);
+			memcpy(mqmd.PutTime + 2, temp + 14, 2);
+			memcpy(mqmd.PutTime + 4, temp + 17, 2);
+			memcpy(mqmd.PutTime + 6, temp + 20, 2);
+		}
+
+		void applyAfterPut(const MQMD2 & returned, MQLONG msgLen, MqmdFields & f)
+		{
+			f.seqNo = number(returned.MsgSeqNumber);
+
+			if (f.segmentYes && !f.segmentLast)
+			{
+				// 32 bit arithmetic as on Windows, without the signed overflow
+				f.offset = number((MQLONG)((unsigned int)returned.Offset + (unsigned int)msgLen));
+			}
+			else
+			{
+				f.offset = "0";
+			}
+
+			memcpy(f.msgId, returned.MsgId, sizeof(f.msgId));
+
+			if (f.groupYes || f.groupLast || f.segmentYes || f.segmentLast)
+			{
+				memcpy(f.groupId, returned.GroupId, sizeof(f.groupId));
+			}
+			else
+			{
+				memset(f.groupId, 0, sizeof(f.groupId));
+			}
+		}
+
 		bool fromMqmd(const MQMD2 & mqmd, MqmdFields & f)
 		{
 			if ((MQMD_VERSION_1 != mqmd.Version) && (MQMD_VERSION_2 != mqmd.Version))
