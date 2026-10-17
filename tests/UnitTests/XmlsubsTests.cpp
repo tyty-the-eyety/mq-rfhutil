@@ -8,6 +8,7 @@
 #include "comsubs.h"
 #include "xmlsubs.h"
 
+#include <string.h>
 #include <string>
 #include <vector>
 

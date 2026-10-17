@@ -242,11 +242,11 @@ TEST(Platform_Codepage, GetAcpHonoursEnvironment)
     setenv("RFHUTIL_ACP", "abc", 1);
     EXPECT_EQ(1252, rfh_get_acp());
 }
+#endif
 
-TEST(Platform_Codepage, AcpScopeOverridesTheEnvironmentWhileItLasts)
+TEST(Platform_Codepage, AcpScopeOverridesTheAnsiCodePageWhileItLasts)
 {
-    AcpEnvGuard guard;
-    setenv("RFHUTIL_ACP", "437", 1);
+    const int before = rfh_get_acp();
     {
         RfhAcpScope outer(932);
         EXPECT_EQ(932, rfh_get_acp());
@@ -258,9 +258,8 @@ TEST(Platform_Codepage, AcpScopeOverridesTheEnvironmentWhileItLasts)
         }
         EXPECT_EQ(932, rfh_get_acp());
     }
-    EXPECT_EQ(437, rfh_get_acp());
+    EXPECT_EQ(before, rfh_get_acp());
 }
-#endif
 
 TEST(Platform_Codepage, Ucs2ToCLocaleRejectsAbove255)
 {
