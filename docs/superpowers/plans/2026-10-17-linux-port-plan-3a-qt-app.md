@@ -1,3 +1,5 @@
+> **Superseded.** This draft is replaced by `2026-10-17-linux-port-plan-3-qt-application.md`, which closes every gap of the inventory (G1–G18) in Phase 1, moves the MQMD put, get and ID-display paths into the core, and maps each task to a design section 8 acceptance criterion. Its Task 1 is this draft's Task 1, unchanged. Kept for reference only; do not execute it.
+
 # RFHUtil Linux Port, Plan 3A: The Qt6 Application (Main, Data and MQMD tabs) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
