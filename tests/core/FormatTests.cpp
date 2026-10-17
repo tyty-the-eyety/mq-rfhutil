@@ -335,6 +335,16 @@ TEST(Format_Parsed, AnUnterminatedAttributeQuoteEndsAtTheEndOfTheTag)
     EXPECT_NE(std::string::npos, out.find("a.(XML.attr)x='open"));
 }
 
+TEST(Format_Parsed, AnEmptyTagNameIsNotReadBeforeItsStart)
+{
+    // "< />" has an empty name and ends with "/>": DataArea's getNameValueData
+    // looked for a trailing '/' and '\\' at tempVarName[strlen(tempVarName) - 1],
+    // the byte before the name, and could clear it
+    EXPECT_EQ("a\r\n"
+              "a.=''",
+              render(message("<a>< /></a>"), View::Parsed, options()));
+}
+
 // --- JSON view ----------------------------------------------------------------
 
 TEST(Format_Json, MembersBecomeDottedNameValueLines)

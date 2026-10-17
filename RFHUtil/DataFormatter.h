@@ -41,6 +41,8 @@ http://www.apache.org/licenses/LICENSE-2.0
 // - the parsed and XML views stop copying a tag name, an attribute list, an end
 //   tag name or a value when its work area is full; a long name is cut short and
 //   parsing goes on, where DataArea overruns the work area;
+// - the parsed view does not look for a trailing '/' or '\\' in an empty tag name
+//   ("< />"); DataArea reads, and may clear, the byte before the name;
 // - the table directory must leave room for a table file name (see tablesUsable);
 //   a longer one is treated as no tables, where DataArea overruns its file name;
 // - the UCS-2 fallback of the character view converts from the data itself;

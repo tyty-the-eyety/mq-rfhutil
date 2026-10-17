@@ -2905,7 +2905,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 					specvar = 1;
 
 					// remove the / from the variable name
-					if ('/' == tempVarName[strlen(tempVarName) - 1])
+					if ((tempVarName[0] != 0) && ('/' == tempVarName[strlen(tempVarName) - 1]))
 					{
 						tempVarName[strlen(tempVarName) - 1] = 0;
 					}
@@ -2953,7 +2953,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 					if ((1 == specvar) && ('/' == tempData[buffer-2]))
 					{
 						// create a null entry for this value
-						if ('\\' == tempVarName[strlen(tempVarName) - 1])
+						if ((tempVarName[0] != 0) && ('\\' == tempVarName[strlen(tempVarName) - 1]))
 						{
 							tempVarName[strlen(tempVarName) - 1] = 0;
 						}

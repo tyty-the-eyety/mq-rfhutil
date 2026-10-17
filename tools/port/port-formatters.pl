@@ -45,6 +45,22 @@ for my $m (@methods) {
 my $methods = join("\n", map { $_->[1] } sort { $a->[0] <=> $b->[0] } @found);
 $methods =~ s/\bDataArea::(\w+)\s*\(/DataFormatter::$1(/g;
 
+# getNameValueData strips a trailing '/' or '\' from the tag name with
+# tempVarName[strlen(tempVarName) - 1], which for an empty name ("< />") reads, and
+# may clear, the byte before the buffer. The guard skips an empty name; the copies
+# in getParsedData's commented-out code are left alone.
+my @emptyName = map { [ "if ('$_' == tempVarName[strlen(tempVarName) - 1])",
+	"if ((tempVarName[0] != 0) && ('$_' == tempVarName[strlen(tempVarName) - 1]))" ] } ('/', '\\\\');
+sub guardEmptyName {
+	my $n = 0;
+	$_[0] =~ s{(\nvoid DataFormatter::getNameValueData\(.*?\n\}\n)}{
+		my $body = $1;
+		for my $e (@emptyName) { my ($old, $new) = @$e; $n += ($body =~ s/\Q$old\E/$new/g); }
+		$body
+	}se;
+	return $n;
+}
+
 # [what, expected count, substitution]
 my @rewrites = (
 	['pointers traced as %8.8X', 10, sub { $_[0] =~ s/\(unsigned int\)\s*(m_data_\w+|newData|tempData|data)\b/(unsigned int)(uintptr_t)$1/g }],
@@ -69,6 +85,7 @@ my @rewrites = (
 	['end tag name copy stops at the work area', 2, sub { $_[0] =~ s/tempEndVarName\[k\+\+\] = tempData\[buffer\+\+\];/if ((size_t)k < sizeof(tempEndVarName) - 1) { tempEndVarName[k++] = tempData[buffer]; } buffer++;/g }],
 	['value copy stops at the work area', 2, sub { $_[0] =~ s/while \(\(buffer < remaining\) && \(tempData\[buffer\] != '<'\)\)(\s*\{\s*\/\/ check if we have non-whitespace characters)/while ((buffer < remaining) && (tempData[buffer] != '<') && (templen < (sizeof(tempVarValue) - 1)))$1/g }],
 	['UCS-2 fallback loop stays within the data', 1, sub { $_[0] =~ s/for \(i=0; i<\(int\)fileSize; i\+\+\)(\s*\{\s*\/\/ translate a character from UCS to code page 1252\s*charCount = WCSto1252\()&ucsChar\[i\]/for (i=0; i<(int)((fileSize - extraOffset) \/ 2); i++)$1(const RFH_UCS2 *)(fileData + extraOffset) + i/g }],
+	['empty tag name is not read before the name', 2, sub { guardEmptyName($_[0]) }],
 	['EDI blank skip', 1, sub { $_[0] =~ s/while \(data\[buffer \+ newline\] <= ' '\)/while ((newline < remaining) && (data[buffer + newline] <= ' '))/g }],
 );
 for my $r (@rewrites) {
