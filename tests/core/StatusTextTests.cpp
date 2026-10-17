@@ -303,7 +303,9 @@ TEST(StatusText, EveryOperationWordIsAccepted)
         "Open", "OpenBase", "Close", "Get", "Get (Browse)", "Get (QBrowse)", "GetNext", "BrowsePrevGet",
         "BrowsePrevGetMsg", "Get under cursor", "Getting message", "Put", "Connect", "Disc", "begin",
         "commit", "rollback", "MQCRTMH", "MQDLTMH", "MQSETMP", "MQINQMP", "MQGETCAPT", "MQSub", "MQSubRQ",
-        "OpenSubQ", "CloseSub", "CloseSubQ", "PubOpen", "PubXMQSetMp", "MQCLOSE", "MQCMIT"
+        "OpenSubQ", "CloseSub", "CloseSubQ", "PubOpen", "PubXMQSetMp", "MQCLOSE", "MQCMIT",
+        // the variable call sites: processMQGet (DataArea.cpp:7925) and processSaveMsgsCC (14476)
+        "StartBr", "BrowseNext", "PSGet", "GetSaveMsgs", "Get2SaveMsgs", "Get3SaveMsgs"
     };
 
     for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)
@@ -324,4 +326,25 @@ TEST(StatusText, NullOperationIsTreatedAsEmpty)
     StatusContext context;
     context.operation = NULL;
     EXPECT_EQ("2035 Not authorized ()", statusText(failed(MQRC_NOT_AUTHORIZED), context));
+}
+
+// Windows formats into 512 bytes; here the text is cut and still starts with the default prefix
+TEST(StatusText, OverlongOperationWordIsCutNotOverrun)
+{
+    std::string word(700, 'x');
+    std::string text = textFor(99999, word.c_str());
+    EXPECT_LE(text.size(), 511u);
+    EXPECT_EQ(511u, text.size());
+    EXPECT_EQ(0u, text.find("*Error cc=2 rc=99999 Cannot xxx"));
+    std::string authorized = textFor(MQRC_NOT_AUTHORIZED, word.c_str());
+    EXPECT_EQ(511u, authorized.size());
+    EXPECT_EQ(0u, authorized.find("2035 Not authorized (xxx"));
+}
+
+TEST(StatusText, NoReasonCodeWithWarningIsEmpty)
+{
+    Result r;
+    r.cc = MQCC_WARNING;
+    r.rc = MQRC_NONE;
+    EXPECT_TRUE(statusText(r, StatusContext()).empty());
 }

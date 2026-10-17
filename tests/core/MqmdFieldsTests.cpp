@@ -5,6 +5,9 @@
 #include <gtest/gtest.h>
 
 #include <stddef.h>
+#include <limits>
+#include <string>
+#include <vector>
 #include <string.h>
 
 #include <cmqc.h>
@@ -886,6 +889,16 @@ TEST(ToPutMqmd, PersistenceFollowsTheRadioGroup)
     f.persistence = MQPERSIST_AS_Q;
     expected.putLong(O::Persistence, 2);
     expectMqmd(expected, putBuilt(f, none()));
+
+    // getPersistence starts from MQPER_PERSISTENCE_AS_Q_DEF and the switch has no default:
+    // any other radio value (a stale or unset control) means "as queue default"
+    const int others[] = { 3, 99, -1, 0x7FFFFFFF };
+    for (int other : others)
+    {
+        SCOPED_TRACE(other);
+        f.persistence = other;
+        expectMqmd(expected, putBuilt(f, none()));
+    }
 }
 
 TEST(ToPutMqmd, IdentityAndApplFieldsAreIgnoredWithoutSetIdentityOrSetAll)
@@ -992,24 +1005,93 @@ TEST(ToPutMqmd, ApplFieldsAndPutDateTimeOnlyWithSetAll)
     expectMqmd(clearedPutExpectation(), putBuilt(f, setIdentity()));
 }
 
+namespace
+{
+    // An MQMD whose identity and application fields hold non-zero bytes, so that a field the
+    // put leaves alone can be told from one it zero fills (the default is all zeros).
+    MQMD2 presetIdentityMqmd()
+    {
+        MQMD2 md = { MQMD2_DEFAULT };
+        memset(md.UserIdentifier, 'u', sizeof(md.UserIdentifier));
+        memset(md.AccountingToken, 'a', sizeof(md.AccountingToken));
+        memset(md.ApplIdentityData, 'i', sizeof(md.ApplIdentityData));
+        memset(md.ApplOriginData, 'o', sizeof(md.ApplOriginData));
+        memset(md.PutApplName, 'p', sizeof(md.PutApplName));
+        return md;
+    }
+
+    // What the cleared page leaves of presetIdentityMqmd under Set All: those five fields as
+    // preset, and the fields Set All always writes (Put Appl Type 0, blank date/time zeros).
+    L::Bytes presetIdentityExpectation()
+    {
+        L::Bytes b = clearedPutExpectation();
+        memset(&b.data[O::UserIdentifier], 'u', 12);
+        memset(&b.data[O::AccountingToken], 'a', 32);
+        memset(&b.data[O::ApplIdentityData], 'i', 32);
+        memset(&b.data[O::ApplOriginData], 'o', 4);
+        memset(&b.data[O::PutApplName], 'p', 28);
+        b.putLong(O::PutApplType, 0);
+        memset(&b.data[O::PutDate], 0, 16);
+        return b;
+    }
+}
+
 TEST(ToPutMqmd, ApplFieldLengthLimitsAndZeroPadding)
 {
     // :2632 identity has no length limit but only 32 bytes are stored; :2639 origin and
-    // :2646 name are ignored when longer than their fields (4, 28)
+    // :2646 name are ignored when longer than their fields (4, 28). The MQMD starts with
+    // non-zero bytes, so "ignored" (bytes kept) differs from "zero filled" and "written".
     MqmdFields f = cleared();
     f.applIdentity = std::string(40, 'I');
     f.applOrigin = "ABCDE";
     f.putApplName = std::string(29, 'N');
-    L::Bytes expected = clearedPutExpectation();
+    L::Bytes expected = presetIdentityExpectation();
     memset(&expected.data[O::ApplIdentityData], 'I', 32);
-    expectMqmd(expected, putBuilt(f, setAll()));
+    MQMD2 md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    expectMqmd(expected, md);
 
     // exactly full fields are stored, unlike toMqmd which drops them
     f.applOrigin = "ABCD";
     f.putApplName = std::string(28, 'N');
     memcpy(&expected.data[O::ApplOriginData], "ABCD", 4);
     memset(&expected.data[O::PutApplName], 'N', 28);
-    expectMqmd(expected, putBuilt(f, setAll()));
+    md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    expectMqmd(expected, md);
+
+    // a short text is zero padded: the old bytes do not show behind it
+    f.applIdentity = "ID";
+    f.applOrigin = "AB";
+    f.putApplName = "NM";
+    memset(&expected.data[O::ApplIdentityData], 0, 32);
+    memcpy(&expected.data[O::ApplIdentityData], "ID", 2);
+    memset(&expected.data[O::ApplOriginData], 0, 4);
+    memcpy(&expected.data[O::ApplOriginData], "AB", 2);
+    memset(&expected.data[O::PutApplName], 0, 28);
+    memcpy(&expected.data[O::PutApplName], "NM", 2);
+    md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    expectMqmd(expected, md);
+}
+
+TEST(ToPutMqmd, EmptyIdentityAndApplFieldsLeaveTheMqmdBytesUnderSetAll)
+{
+    // :2569-2603 an empty User Id with no OS user looked up writes nothing; :2606 an empty
+    // token, :2630 an empty Appl Identity, Origin and Name are skipped. Only Put Appl Type
+    // and the date/time are written unconditionally.
+    MqmdFields f = cleared();
+    MQMD2 md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    expectMqmd(presetIdentityExpectation(), md);
+
+    // the same under Set Iden alone: the Set All fields are also not reached
+    md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setIdentity(), md);
+    L::Bytes expected = presetIdentityExpectation();
+    expected.putLong(O::PutApplType, 0);
+    memcpy(&expected.data[O::PutDate], windowsDefault().data.data() + O::PutDate, 16);
+    expectMqmd(expected, md);
 }
 
 TEST(ToPutMqmd, EmptyApplTypeIsZeroWithSetAll)
@@ -1055,6 +1137,114 @@ TEST(ToPutMqmd, ShortPutDateTimeLeavesZeroBytes)
     expected.putBytes(O::PutDate, "20261017", 8);
     memset(&expected.data[O::PutTime], 0, 8);
     expectMqmd(expected, putBuilt(f, setAll()));
+}
+
+TEST(ToPutMqmd, UserIdAndAccountingTokenWithSetAllAlone)
+{
+    // :2567 the test is m_setUserID || m_set_all, so Set All alone reaches :2569-2628 too
+    MqmdFields f = cleared();
+    f.userId = "USER";
+    f.accountingToken = "01FFa0";
+    MQMD2 md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    L::Bytes expected = presetIdentityExpectation();
+    memset(&expected.data[O::UserIdentifier], 0, 12);
+    memcpy(&expected.data[O::UserIdentifier], "USER", 4);
+    memset(&expected.data[O::AccountingToken], 0, 32);
+    const unsigned char token[3] = { 0x01, 0xFF, 0xA0 };
+    expected.putBytes(O::AccountingToken, token, 3);
+    expectMqmd(expected, md);
+}
+
+TEST(ToPutMqmd, AccountingTokenTextThatIsOddOrNotHex)
+{
+    // :2606-2628 len = text length / 2 bytes are converted by HexToAscii (comsubs.cpp:170)
+    // and all 32 bytes of the zeroed work area are then copied, so an old token never
+    // survives a non-empty text. getHexCharValue (comsubs.cpp:114) gives 0 for any
+    // character that is not 0-9, A-F or a-f. The odd last character is not read.
+    struct Case
+    {
+        const char * text;
+        std::vector<unsigned char> bytes;
+    };
+    const Case cases[] =
+    {
+        { "ABC", { 0xAB } },                // the odd last character is dropped
+        { "A", { } },                       // zero bytes converted: the token is zeroed
+        { "ZZ12", { 0x00, 0x12 } },         // non-hex characters count as 0
+        { "G1", { 0x01 } },
+        { "1Z", { 0x10 } },
+        { "-f", { 0x0F } },
+        { " 1", { 0x01 } },
+        { "ab", { 0xAB } },
+        { "0g9", { 0x00 } },
+    };
+
+    for (const Case & c : cases)
+    {
+        SCOPED_TRACE(c.text);
+        MqmdFields f = cleared();
+        f.accountingToken = c.text;
+        MQMD2 md = presetIdentityMqmd();
+        rfh::mqmd_fields::toPutMqmd(f, setIdentity(), md);
+        L::Bytes expected = presetIdentityExpectation();
+        expected.putLong(O::PutApplType, 0);
+        memcpy(&expected.data[O::PutDate], windowsDefault().data.data() + O::PutDate, 16);
+        memset(&expected.data[O::AccountingToken], 0, 32);
+        if (!c.bytes.empty())
+        {
+            expected.putBytes(O::AccountingToken, c.bytes.data(), c.bytes.size());
+        }
+        expectMqmd(expected, md);
+    }
+}
+
+TEST(ToPutMqmd, PutDateTimeTextLongerThanFortySevenCharactersIsCut)
+{
+    // :2660-2667 at most sizeof(tempToken) - 1 = 47 characters are copied; only the first
+    // 22 are read, so the result is that of the 22 character text and nothing else changes
+    MqmdFields f = cleared();
+    f.dateTime = "2026/10/17 12:34:56.78" + std::string(60, 'Z');
+    ASSERT_GT(f.dateTime.size(), 47u);
+    MQMD2 md = presetIdentityMqmd();
+    rfh::mqmd_fields::toPutMqmd(f, setAll(), md);
+    L::Bytes expected = presetIdentityExpectation();
+    expected.putBytes(O::PutDate, "20261017", 8);
+    expected.putBytes(O::PutTime, "12345678", 8);
+    expectMqmd(expected, md);
+}
+
+TEST(ToPutMqmd, MessageTypeTextIsReadByAtoi)
+{
+    // atoi skips leading white space and takes a sign; only the accepted types are written
+    // (the default MQMD2 type is 8, so the accepted cases use other types)
+    struct Case
+    {
+        const char * text;
+        MQLONG type;
+    };
+    const Case cases[] =
+    {
+        { "   2 Reply", MQMT_REPLY },
+        { " +2", MQMT_REPLY },
+        { "\t 4abc", MQMT_REPORT },
+        { "+1", MQMT_REQUEST },
+        { "-1", MQMT_DATAGRAM },        // negative: not accepted, the default stays
+        { "- 2", MQMT_DATAGRAM },       // a sign followed by a blank is no number: 0
+        { "+ 2", MQMT_DATAGRAM },
+        { "x2", MQMT_DATAGRAM },
+        { " -8", MQMT_DATAGRAM },
+    };
+
+    for (const Case & c : cases)
+    {
+        SCOPED_TRACE(c.text);
+        MqmdFields f = cleared();
+        f.msgType = c.text;
+        L::Bytes expected = clearedPutExpectation();
+        expected.putLong(O::MsgType, c.type);
+        expectMqmd(expected, putBuilt(f, none()));
+    }
 }
 
 TEST(ToPutMqmd, StrucIdVersionAndBackoutCountAreNotWritten)
@@ -1192,6 +1382,42 @@ TEST(ApplyAfterPut, OffsetAdvancesOnlyWhileASegmentSequenceContinues)
     f.offset = "77";
     rfh::mqmd_fields::applyAfterPut(returned, 50, f);
     EXPECT_EQ("0", f.offset) << "no segmentation";
+}
+
+TEST(ApplyAfterPut, NegativeAndOverflowingOffsetsFollowTwoComplementArithmetic)
+{
+    // :2715 formats mqmd->Offset + msgLen as %d. Both are 32 bit and the sum is signed
+    // overflow (undefined in C, a wrap in two's complement as MSVC compiles it). The port
+    // does the sum unsigned and converts back, so it wraps and never traps; a negative
+    // returned Offset is subtracted from.
+    struct Case
+    {
+        MQLONG offset;
+        MQLONG msgLen;
+        const char * text;
+    };
+    const Case cases[] =
+    {
+        { -10, 50, "40" },
+        { -100, 50, "-50" },
+        { -50, 50, "0" },
+        { 2147483647, 0, "2147483647" },
+        { 2147483647, 1, "-2147483648" },
+        { 2147483647, 2147483647, "-2" },
+        { -2147483647 - 1, -1, "2147483647" },
+        { 100, -150, "-50" },
+    };
+
+    for (const Case & c : cases)
+    {
+        SCOPED_TRACE(std::to_string(c.offset) + " + " + std::to_string(c.msgLen));
+        MQMD2 returned = { MQMD2_DEFAULT };
+        returned.Offset = c.offset;
+        MqmdFields f;
+        f.segmentYes = true;
+        rfh::mqmd_fields::applyAfterPut(returned, c.msgLen, f);
+        EXPECT_EQ(c.text, f.offset);
+    }
 }
 
 TEST(ApplyAfterPut, GroupIdIsKeptForGroupsAndSegmentsAndZeroedOtherwise)
@@ -1735,6 +1961,32 @@ TEST(FromGetMqmd, VersionTwoFlagsAreReadBitByBit)
         EXPECT_EQ(c.segment, got.segmentYes) << "field segmentYes for flags " << c.flags;
         EXPECT_EQ(c.segLast, got.segmentLast) << "field segmentLast for flags " << c.flags;
         EXPECT_EQ(c.allowed, got.segmentAllowed) << "field segmentAllowed for flags " << c.flags;
+    }
+}
+
+TEST(FromGetMqmd, TrailingBytesAbove7FAreTrimmedWhereCharIsSigned)
+{
+    // trimmedField ends in Rtrim (comsubs.cpp:409), whose test is str[len - 1] <= ' ' on a
+    // plain char. Where char is signed (MSVC, x86 Linux) a byte of 0x80 or more is negative
+    // and is trimmed like a blank; where it is unsigned (ARM Linux) it would be kept. Pinned
+    // for the signed case, which is the one the Windows results come from. Only trailing
+    // bytes are trimmed; one before a visible character stays.
+    L::Bytes e = L::defaultMqmd2();
+    e.putChars(O::UserIdentifier, 12, std::string("USER") + std::string(2, '\xC1') + std::string(6, ' '));
+    e.putChars(O::ApplOriginData, 4, std::string("A") + std::string("\xC1") + "B" + std::string("\xE2"));
+    e.putChars(O::ApplIdentityData, 32, std::string("ID") + std::string(30, '\xFF'));
+    MqmdFields got = gotFrom(e);
+    if (std::numeric_limits<char>::is_signed)
+    {
+        EXPECT_EQ("USER", got.userId);
+        EXPECT_EQ(std::string("A\xC1") + "B", got.applOrigin);
+        EXPECT_EQ("ID", got.applIdentity);
+    }
+    else
+    {
+        EXPECT_EQ(std::string("USER") + std::string(2, '\xC1'), got.userId);
+        EXPECT_EQ(std::string("A\xC1") + "B" + "\xE2", got.applOrigin);
+        EXPECT_EQ("ID" + std::string(30, '\xFF'), got.applIdentity);
     }
 }
 

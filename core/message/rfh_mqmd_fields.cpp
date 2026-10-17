@@ -438,7 +438,8 @@ namespace rfh
 
 			if (f.segmentYes && !f.segmentLast)
 			{
-				// 32 bit arithmetic as on Windows, without the signed overflow
+				// Windows adds two signed 32 bit values, which wraps in two's complement on MSVC;
+				// the sum is done unsigned here so that it wraps without undefined behaviour
 				f.offset = number((MQLONG)((unsigned int)returned.Offset + (unsigned int)msgLen));
 			}
 			else

@@ -8,9 +8,12 @@
 // "Get (Browse)", "Get (QBrowse)", "GetNext", "BrowsePrevGet", "BrowsePrevGetMsg", "Get under cursor",
 // "Getting message", "Put", "Connect", "Disc", "begin", "commit", "rollback", "MQCRTMH", "MQDLTMH",
 // "MQSETMP", "MQINQMP", "MQGETCAPT", "MQSub", "MQSubRQ", "OpenSubQ", "CloseSub", "CloseSubQ",
-// "PubOpen", "PubXMQSetMp", "MQCLOSE", "MQCMIT". Two call sites pass a variable (getType at
-// DataArea.cpp:7925, operation at 14476), so any text is accepted. The word is used only by the
-// reason codes 2035, 2046, 2057, 2058, 2059 and by the default text.
+// "PubOpen", "PubXMQSetMp", "MQCLOSE", "MQCMIT". Two call sites pass a variable, so any text is accepted: getType at
+// DataArea.cpp:7925 (the callers of processMQGet pass "Get", "StartBr", "BrowseNext" and "PSGet") and
+// operation at 14476 (processSaveMsgsCC; the callers pass "GetSaveMsgs", "Get2SaveMsgs", "Get3SaveMsgs"
+// and "Get under cursor"). The word is used only by the reason codes 2035, 2046, 2057, 2058, 2059 and
+// by the default text. Windows formats into a 512 byte work area: an operation word that does not fit
+// cuts the text to 511 characters here (snprintf), where Windows would overrun its buffer.
 //
 // Differences from Windows, on purpose:
 // - Windows appends the text to m_error_msg (appendError: CRLF between messages); statusText
@@ -20,6 +23,8 @@
 // - Windows writes the text to the trace file; the caller does that.
 // - Windows passes cc and rc as two arguments; here they come from the Result. The cc is used only
 //   by the default text ("*Error cc=%d rc=%d ...").
+// - Result::warnings and Result::text are ignored when rc != MQRC_NONE; the text comes from the reason
+//   code alone.
 // - A Result without a reason code (rc MQRC_NONE) is not a Windows case: a failure keeps its own
 //   text, anything else gives an empty string.
 #pragma once

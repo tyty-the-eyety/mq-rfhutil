@@ -83,7 +83,11 @@ namespace rfh
 		bool setAll = false;			// Set All Context
 		// Set when the OS user name could be looked up (GetUserNameEx or GetUserName
 		// succeeded); empty means the lookup failed. setMessageMQMD never copies the name
-		// itself: see toPutMqmd.
+		// itself: see toPutMqmd. It has no observable effect when the MQMD starts from
+		// MQMD2_DEFAULT, whose UserIdentifier is already zeros; it matters only for a
+		// pre-populated MQMD, where a non-empty value zeroes UserIdentifier. Windows has the
+		// lookup result from the OS; on Linux "lookup succeeded" is the caller's choice
+		// (empty = lookup failed).
 		std::string osUser;
 		// Not read: setMessageMQMD formats the current time but never uses it, so a blank
 		// Put Date/Time is written as binary zeros. Kept so callers need not change if
@@ -181,13 +185,21 @@ namespace rfh
 		//   most 28) are zero padded; Put Appl Type is its leading number (0 when empty);
 		//   Put Date/Time come from the date text "YYYY/MM/DD HH:MM:SS.hh", zeros when empty.
 		// StrucId, Version and BackoutCount are never written.
+		//
+		// Known platform divergence: the numeric fields use atoi, and for text that overflows
+		// an int the result is undefined; glibc on Linux LP64 wraps the value where MSVC
+		// saturates. That is not valid input, so the byte-identical rule does not cover it.
 		void toPutMqmd(const MqmdFields & fields, const PutContext & context, MQMD2 & mqmd);
 
 		// What the MQMD tab takes from the MQMD returned by a put, as
 		// MQMDPAGE::updateMQMDafterPut does: Seq No, Offset (the returned offset plus
 		// msgLen while a segment sequence continues, else "0"), MsgId, and GroupId (zeroed
-		// unless a group or segment box is checked). msgLen is the length of the message
-		// just put; the Windows function takes it too.
+		// unless a group or segment box is checked). msgLen is the byte count passed to MQPUT
+		// (headers plus data; Windows passes msgSize, DataArea.cpp:6457). returned is the same
+		// MQMD that MQPUT updated. Windows calls this after a warning but not after a failed
+		// put. It must run on the same MqmdFields that built the put, because it reads the
+		// group and segment boxes. The offset sum wraps modulo 2^32 like MSVC's 32 bit signed
+		// addition (a negative returned Offset is simply added to).
 		void applyAfterPut(const MQMD2 & returned, MQLONG msgLen, MqmdFields & fields);
 
 		// "8 Datagram" for 8, "" for types the MQMD tab does not name (including

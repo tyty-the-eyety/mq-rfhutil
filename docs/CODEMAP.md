@@ -236,6 +236,17 @@ and `DataFormatter.h` repeat the ones that belong to them. The ones most likely 
 8. **The Qt app must** set `LC_NUMERIC`/`LC_CTYPE` to "C" after `QCoreApplication` (shared sources use `toupper`/`atof`) and never include
    `RFHUtil/rfhutil.h` or `StdAfx.h`; call `options.apply(defaultsFor(...))` after each get or read; map MQMD report radio groups with -1 = none selected.
 
+### Pinned IBM behaviours (Plan 3, MQMD tab)
+
+IBM bugs a test records and the port keeps (`tests/core/MqmdFieldsTests.cpp`, `tests/core/StatusTextTests.cpp`):
+
+- Blank User Id under Set Iden/Set All gives zeros: the OS user lookup result is discarded and `setUserId` reads the empty field (`MQMDPAGE.cpp:2573-2604`).
+- Blank Put Date/Time under Set All gives zeros: the formatted `todaysDate` is never read (`:2668-2689`).
+- Reply To Queue and Queue Manager are copied unpadded: the old bytes stay behind a short text (`:2451-2452`).
+- `OnUpdateCorrelId` tests `< 48` where it means `> 48` (`:3582`).
+- `editIDField` truncates `m_mqmd_group_id` instead of `m_mqmd_correl_id` (`:3767`, `:3799`).
+- `setErrorMsg` text for 6104 is spelled "Resouce" (`DataArea.cpp`, `rfh_status_text.cpp`).
+
 ## 9. Where do I look for...
 
 Use `tools/index/q sym NAME` for the current range.
