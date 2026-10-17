@@ -1,11 +1,27 @@
 // rfh_platform.cpp - see rfh_platform.h
 
+#ifdef _WIN32
+#ifndef SECURITY_WIN32
+#define SECURITY_WIN32		// secext.h declares GetUserNameExA only with this defined
+#endif
+#endif
+
 #include "rfh_platform.h"
 
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <secext.h>			// GetUserNameExA; the projects link Secur32.lib
+#else
+#include <pwd.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <vector>
+#endif
 
 char * rfh_strupr(char * str)
 {
@@ -36,6 +52,32 @@ size_t rfh_ucs2len(const RFH_UCS2 * str)
 }
 
 #ifdef _WIN32
+
+std::string rfh_current_user()
+{
+	// The Windows program (MQMDPAGE::setMessageMQMD) asks for DOMAIN\user first
+	char name[256];
+	DWORD size = (DWORD)sizeof(name);
+	name[0] = 0;
+
+	if (GetUserNameExA(NameSamCompatible, name, &size) && (name[0] != 0))
+	{
+		name[sizeof(name) - 1] = 0;
+		return std::string(name);
+	}
+
+	// then the plain name (advapi32, a default library)
+	size = (DWORD)sizeof(name);
+	name[0] = 0;
+
+	if (GetUserNameA(name, &size) && (name[0] != 0))
+	{
+		name[sizeof(name) - 1] = 0;
+		return std::string(name);
+	}
+
+	return std::string();
+}
 
 uint64_t rfh_hrtime_now()
 {
@@ -79,6 +121,44 @@ const char * rfh_dump_path(const char * baseName)
 }
 
 #else
+
+std::string rfh_current_user()
+{
+	long suggested = sysconf(_SC_GETPW_R_SIZE_MAX);
+	size_t size = (suggested > 0) ? (size_t)suggested : 1024;
+	const size_t limit = 1024 * 1024;
+
+	for (;;)
+	{
+		std::vector<char> buffer(size);
+		struct passwd pwd;
+		struct passwd * found = NULL;
+		int rc = getpwuid_r(geteuid(), &pwd, buffer.data(), buffer.size(), &found);
+
+		if ((rc == ERANGE) && (size < limit))
+		{
+			size *= 2;
+			continue;
+		}
+
+		if ((rc == 0) && (found != NULL) && (found->pw_name != NULL) && (found->pw_name[0] != 0))
+		{
+			return std::string(found->pw_name);
+		}
+
+		break;
+	}
+
+	// the passwd lookup failed: use what the login environment says
+	const char * fromEnv = getenv("USER");
+
+	if ((fromEnv == NULL) || (fromEnv[0] == 0))
+	{
+		fromEnv = getenv("LOGNAME");
+	}
+
+	return ((fromEnv != NULL) && (fromEnv[0] != 0)) ? std::string(fromEnv) : std::string();
+}
 
 uint64_t rfh_hrtime_now()
 {

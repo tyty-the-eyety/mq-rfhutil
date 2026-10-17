@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <inttypes.h>
+#include <string>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -70,3 +71,10 @@ RfhUtcTime rfh_utc_now();
 // Windows: "c:\<name>" (historic location). Linux: "/tmp/<name>".
 // The result stays valid until the next call on the same thread.
 const char * rfh_dump_path(const char * baseName);
+
+// The calling user's login name, in full (the caller truncates it to the 12
+// characters of an MQMD UserIdentifier); empty if it cannot be determined.
+// Windows: GetUserNameExA(NameSamCompatible), "DOMAIN\\user", then GetUserNameA.
+// Linux: getpwuid_r(geteuid()), then the USER and LOGNAME environment variables.
+// Never throws.
+std::string rfh_current_user();

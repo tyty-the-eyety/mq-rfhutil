@@ -9,6 +9,11 @@
 #include <string.h>
 #include <string>
 #include <vector>
+#ifndef _WIN32
+#include <pwd.h>
+#include <stdio.h>
+#include <unistd.h>
+#endif
 
 #include "rfh_platform.h"
 #include "rfh_codepage.h"
@@ -538,3 +543,47 @@ TEST(Platform_Snprintf, FailuresLeaveAnEmptyString)
     EXPECT_EQ(0, buf[0]);
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// rfh_current_user
+// ---------------------------------------------------------------------------
+
+TEST(Platform_User, IsNotEmptyForTheLoggedInUser)
+{
+    std::string user = rfh_current_user();
+    EXPECT_FALSE(user.empty());
+#ifndef _WIN32
+    struct passwd * entry = getpwuid(geteuid());
+    ASSERT_NE(nullptr, entry);
+    EXPECT_EQ(std::string(entry->pw_name), user);
+#endif
+}
+
+#ifndef _WIN32
+TEST(Platform_User, HonoursTheUnderlyingAccount)
+{
+    FILE * pipe = popen("id -un", "r");
+    ASSERT_NE(nullptr, pipe);
+    char line[256] = { 0 };
+    ASSERT_NE(nullptr, fgets(line, sizeof(line), pipe));
+    pclose(pipe);
+
+    std::string expected(line);
+    while (!expected.empty() && (expected.back() == '\n' || expected.back() == '\r'))
+    {
+        expected.pop_back();
+    }
+
+    EXPECT_EQ(expected, rfh_current_user());
+}
+#endif
+
+TEST(Platform_User, NeverThrowsOrReturnsAnOverlongName)
+{
+    std::string user;
+    EXPECT_NO_THROW(user = rfh_current_user());
+    EXPECT_EQ(std::string::npos, user.find('\0'));
+    EXPECT_EQ(std::string::npos, user.find('\r'));
+    EXPECT_EQ(std::string::npos, user.find('\n'));
+    EXPECT_LT(user.size(), (size_t)256);
+}
