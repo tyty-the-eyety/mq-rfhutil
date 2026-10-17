@@ -27,6 +27,45 @@ Jim MacNair - Initial Contribution
 #define CDATA_END		"]]>"
 #define ENTITY_START	"<!ENTITY"
 
+// Every comparison or peek ahead in this file checks how much data remains, so
+// cut-off or malformed data is never read past its end. When enough data remains
+// the results are the same as before.
+
+// true only if the n bytes at ptr lie before end and match lit
+static bool startsWith(const void *ptr, const void *end, const char *lit, size_t n)
+
+{
+	const unsigned char *	p = (const unsigned char *)ptr;
+	const unsigned char *	e = (const unsigned char *)end;
+
+	return (p <= e) && ((size_t)(e - p) >= n) && (memcmp(p, lit, n) == 0);
+}
+
+// skipBlanks (comsubs.cpp), stopping at end as well
+static const char * skipBlanksTo(const char *str, const char *end)
+
+{
+	while ((str < end) && (str[0] <= ' ') && (str[0] != 0))
+	{
+		str++;
+	}
+
+	return str;
+}
+
+// skipQuotedString (comsubs.cpp) reads the byte at its eod, so it is given the
+// last byte of the data, and nothing when no data remains
+static const char * skipQuotedTo(const char *start, const char *end)
+
+{
+	if (start >= end)
+	{
+		return start;
+	}
+
+	return skipQuotedString(start, end - 1);
+}
+
 ///////////////////////////////////////////////////
 //
 // Routine to handle a DTD
@@ -39,7 +78,7 @@ int processDTD(const char *dtd, const int remaining)
 {
 	const char * dtdend=dtd;
 
-	if (memcmp(dtd, "<!DOCTYPE", 9) == 0)
+	if (startsWith(dtd, dtd + remaining, "<!DOCTYPE", 9))
 	{
 		// point to the end of the DTD header (<!DOCTYPE)
 		dtdend = dtd + 9;
@@ -50,17 +89,17 @@ int processDTD(const char *dtd, const int remaining)
 		}
 
 		// did we find a bracket?
-		if ('[' == dtdend[0])
+		if ((dtdend < dtd + remaining) && ('[' == dtdend[0]))
 		{
 			while ((dtdend < dtd + remaining) && (dtdend[0] != ']'))
 			{
-				if (memcmp(dtdend, "<!ENTITY", 8) == 0)
+				if (startsWith(dtdend, dtd + remaining, "<!ENTITY", 8))
 				{
 					dtdend = processEntity(dtdend, dtd + remaining);
 				}
 				else
 				{
-					if (memcmp(dtdend, "\"]\"", 3) != 0)
+					if (!startsWith(dtdend, dtd + remaining, "\"]\"", 3))
 					{
 						dtdend++;
 					}
@@ -86,23 +125,23 @@ int processDTD(const char *dtd, const int remaining)
 	}
 	else
 	{
-		if (memcmp(dtd, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0)
+		if (startsWith(dtd, dtd + remaining, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18))
 		{
 			// point to the end of the DTD header (<!DOCTYPE)
 			dtdend = dtd + 18;
 
 			// look for either a bracket or ending greater than sign
 			while ((dtdend < (dtd + remaining)) && 
-				   (memcmp(dtdend, "[\0", 2) != 0) && 
-				   (memcmp(dtdend, ">\0", 2) != 0))
+				   !startsWith(dtdend, dtd + remaining, "[\0", 2) &&
+				   !startsWith(dtdend, dtd + remaining, ">\0", 2))
 			{
 				dtdend++;
 			}
 
 			// did we find a bracket?
-			if ('[' == dtdend[0])
+			if ((dtdend < dtd + remaining) && ('[' == dtdend[0]))
 			{
-				while ((dtdend < dtd + remaining) && (memcmp(dtdend, "]\0", 2) != 0))
+				while ((dtdend < dtd + remaining) && !startsWith(dtdend, dtd + remaining, "]\0", 2))
 				{
 					dtdend++;
 				}
@@ -111,7 +150,7 @@ int processDTD(const char *dtd, const int remaining)
 				dtdend += 2;
 
 				// find the ending greater than sign
-				while ((dtdend < dtd + remaining) && (memcmp(dtdend, ">\0", 2) != 0))
+				while ((dtdend < dtd + remaining) && !startsWith(dtdend, dtd + remaining, ">\0", 2))
 				{
 					dtdend++;
 				}
@@ -137,13 +176,13 @@ int processComment(const char *xml, const int remaining)
 {
 	const char * xmlend=xml;
 
-	if (memcmp(xml, "<!--", 4) == 0)
+	if (startsWith(xml, xml + remaining, "<!--", 4))
 	{
 		// point to the end of the comment header (<!--)
 		xmlend = xml + 4;
 
 		// search for the end of the comment
-		while ((xmlend < xml + remaining) && (memcmp(xmlend, "-->", 3) != 0))
+		while ((xmlend < xml + remaining) && !startsWith(xmlend, xml + remaining, "-->", 3))
 		{
 			xmlend++;
 		}
@@ -154,13 +193,13 @@ int processComment(const char *xml, const int remaining)
 	else
 	{
 		// check for Unicode comment
-		if (memcmp(xml, "<\0!\0-\0-\0", 8) == 0)
+		if (startsWith(xml, xml + remaining, "<\0!\0-\0-\0", 8))
 		{
 			// point to the end of the comment header (<!--)
 			xmlend = xml + 8;
 
 			// search for the end of the comment
-			while ((xmlend < xml + remaining) && (memcmp(xmlend, "-\0-\0>\0", 6) != 0))
+			while ((xmlend < xml + remaining) && !startsWith(xmlend, xml + remaining, "-\0-\0>\0", 6))
 			{
 				xmlend++;
 			}
@@ -187,20 +226,20 @@ const char * processEntity(const char *dtdend, const char *eod)
 	char	parsetype;
 
 	// make sure we have found an entity 
-	if (memcmp(dtdend, ENTITY_START, sizeof(ENTITY_START) - 1) == 0)
+	if (startsWith(dtdend, eod, ENTITY_START, sizeof(ENTITY_START) - 1))
 	{
 		// skip the entity definition
 		dtdend += 8;
 
 		// skip any blanks
-		dtdend = skipBlanks((char *) dtdend);
+		dtdend = skipBlanksTo(dtdend, eod);
 
 		// check for parameter entity
-		if ('%' == dtdend[0])
+		if ((dtdend < eod) && ('%' == dtdend[0]))
 		{
 			// skip the leading percent sign
 			dtdend++;
-			dtdend = skipBlanks((char *) dtdend);
+			dtdend = skipBlanksTo(dtdend, eod);
 		}
 
 		// skip the name of the entity
@@ -210,11 +249,11 @@ const char * processEntity(const char *dtdend, const char *eod)
 		}
 
 		// skip any intervening blanks
-		dtdend = skipBlanks((char *) dtdend);
+		dtdend = skipBlanksTo(dtdend, eod);
 
 		// we're now past the entity name and need to 
 		// figure out the type of entity
-		if ((memcmp(dtdend, "SYSTEM", 6) == 0) || (memcmp(dtdend, "PUBLIC", 6) == 0))
+		if (startsWith(dtdend, eod, "SYSTEM", 6) || startsWith(dtdend, eod, "PUBLIC", 6))
 		{
 			// remember the type of entity
 			parsetype = dtdend[0];
@@ -223,29 +262,29 @@ const char * processEntity(const char *dtdend, const char *eod)
 			dtdend += 6;
 
 			// skip any intervening blanks
-			dtdend = skipBlanks((char *) dtdend);
+			dtdend = skipBlanksTo(dtdend, eod);
 
 			// skip the first attribute value
-			dtdend = skipQuotedString(dtdend, eod);
+			dtdend = skipQuotedTo(dtdend, eod);
 
 			// find the next non-blank character
-			dtdend = skipBlanks((char *) dtdend);
+			dtdend = skipBlanksTo(dtdend, eod);
 
 			// check if we have a public entity
 			if ('P' == parsetype)
 			{
 				// skip the second quoted string
-				dtdend = skipQuotedString(dtdend, eod);
+				dtdend = skipQuotedTo(dtdend, eod);
 
 				// find the next non-blank character
-				dtdend = skipBlanks((char *) dtdend);
+				dtdend = skipBlanksTo(dtdend, eod);
 			}
 		}
 		else
 		{
 			// we should have a string in quotes
 			// skip this item
-			dtdend = skipQuotedString(dtdend, eod);
+			dtdend = skipQuotedTo(dtdend, eod);
 		}
 
 		// finally, find the last greater than sign
@@ -279,8 +318,8 @@ int removeUnneededXML(unsigned char *dataIn, unsigned int len, unsigned char *te
 			foundBegin = 1;
 
 			// check for comments, which will be removed
-			if ((memcmp(dataIn + j, "<!--", 4) == 0) ||
-				(memcmp(dataIn + j, "<\0!\0-\0-\0", 8) == 0))
+			if (startsWith(dataIn + j, dataIn + len, "<!--", 4) ||
+				startsWith(dataIn + j, dataIn + len, "<\0!\0-\0-\0", 8))
 			{
 				// skip the comment
 				j += processComment((char *) dataIn + j, len - j);
@@ -288,8 +327,8 @@ int removeUnneededXML(unsigned char *dataIn, unsigned int len, unsigned char *te
 			else
 			{
 				// check for a DTD definition, which we will remove
-				if ((memcmp(dataIn + j, "<!DOCTYPE", 9) == 0) ||
-					(memcmp(dataIn + j, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0))
+				if (startsWith(dataIn + j, dataIn + len, "<!DOCTYPE", 9) ||
+					startsWith(dataIn + j, dataIn + len, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18))
 				{
 					// skip the beginning of the DTD
 					j += processDTD((char *) dataIn + j, len - j);
@@ -368,7 +407,7 @@ int checkIfXml(const unsigned char *data, const int len, char **errmsg)
 		if (0 == inCdata)
 		{
 			// check for beginning of CDATA section
-			if (memcmp(data + offset, "<![CDATA", 8) == 0)
+			if (startsWith(data + offset, data + len, "<![CDATA", 8))
 			{
 				// remember we are in CDATA
 				inCdata = 1;
@@ -377,8 +416,8 @@ int checkIfXml(const unsigned char *data, const int len, char **errmsg)
 			else
 			{
 				// check for the beginning of a comment
-				if ((memcmp(data + offset, "<!--", 4) == 0) ||
-					(memcmp(data + offset, "<\0!\0-\0-\0", 8) == 0))
+				if (startsWith(data + offset, data + len, "<!--", 4) ||
+					startsWith(data + offset, data + len, "<\0!\0-\0-\0", 8))
 				{
 					// ignore the comment
 					offset += processComment((char *) data + offset, len - offset);
@@ -386,8 +425,8 @@ int checkIfXml(const unsigned char *data, const int len, char **errmsg)
 				else
 				{
 					// check for a DTD
-					if ((memcmp(data + offset, "<!DOCTYPE", 9) == 0) ||
-						(memcmp(data + offset, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0))
+					if (startsWith(data + offset, data + len, "<!DOCTYPE", 9) ||
+						startsWith(data + offset, data + len, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18))
 					{
 						// skip the DTD
 						offset += processDTD((const char *) data + offset, len - offset);
@@ -426,7 +465,7 @@ int checkIfXml(const unsigned char *data, const int len, char **errmsg)
 		else
 		{
 			// look for end of CDATA section
-			while ((offset < len) && (memcmp(data + offset, CDATA_END, 3) != 0))
+			while ((offset < len) && !startsWith(data + offset, data + len, CDATA_END, 3))
 			{
 				offset++;
 			}
@@ -492,8 +531,9 @@ int removeVarName(char *xmlVarName, char *VarName)
 		templen--;
 	}
 
-	tempPtr = xmlVarName + templen2 - templen;
-	if (strcmp(tempPtr, VarName + 1) == 0)
+	// an end tag longer than the whole name cannot match, and must not point before it
+	tempPtr = xmlVarName + ((templen <= templen2) ? templen2 - templen : 0);
+	if ((templen <= templen2) && (strcmp(tempPtr, VarName + 1) == 0))
 	{
 		if (tempPtr > xmlVarName)
 		{
@@ -784,8 +824,11 @@ void findXmlValue(const char *ptr, const char *srch, char *result, const int max
 		// find the ending bracket
 		tempptr = findEndBracket(tempptr);
 
-		// skip the end bracket
-		tempptr++;
+		// skip the end bracket, if there is one (findEndBracket stops at the terminator)
+		if ('>' == tempptr[0])
+		{
+			tempptr++;
+		}
 
 		// start to gather the data
 		i = 0;
@@ -1232,8 +1275,13 @@ int setEscChar(unsigned char *bufferin, unsigned char *bufferout)
 	// initialize the character to an ampersand in case we don't recognize the sequence
 	ch = '&';
 
-	// get the data in a temporary buffer
-	memcpy(tempBuf, bufferin + 1, 5);
+	// get the data in a temporary buffer: up to 5 characters after the ampersand,
+	// stopping at the terminator (the comparisons below fail there either way)
+	memset(tempBuf, 0, sizeof(tempBuf));
+	for (i = 0; (i < 5) && (bufferin[i] != 0); i++)
+	{
+		tempBuf[i] = bufferin[i + 1];
+	}
 	tempBuf[5] = 0;
 	rfh_strupr((char *)tempBuf);
 
@@ -1375,7 +1423,7 @@ char * processTag(char *ptr, const char *tagName, char *dataArea, int maxLen, in
 	len = strlen(tagName);
 
 	// now check if we have found the next part of the tag name
-	if (memcmp(ptr, tagName + 1, len - 2) != 0) 
+	if (strncmp(ptr, tagName + 1, len - 2) != 0)
 	{
 		// not the right folder so return
 		return retPtr;
@@ -1443,7 +1491,8 @@ char * processTag(char *ptr, const char *tagName, char *dataArea, int maxLen, in
 	// capture the value, begin careful to not exceed the maximum length
 	// of the allocated area
 	i = 0;
-	while ((ptr[0] != '<') && (i < maxLen))
+	// stop at the terminator, and leave room for the value's own
+	while ((ptr[0] != '<') && (ptr[0] != 0) && (i < maxLen - 1))
 	{
 		dataArea[i] = ptr[0];
 		ptr++;

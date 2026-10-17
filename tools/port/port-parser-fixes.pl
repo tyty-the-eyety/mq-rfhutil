@@ -14,6 +14,14 @@
 #     end of the text, attribute names and values are sized from the text, and
 #     processAttributes takes the size of its output (RFHUtil/xmlsubs.h and the four
 #     calls in RFHUtil/DataArea.cpp, which only Windows builds, follow).
+#     Every comparison and peek ahead checks how much data remains (startsWith,
+#     skipBlanksTo, skipQuotedTo): processDTD, processComment, processEntity,
+#     checkIfXml and removeUnneededXML compared up to 18 bytes past the end of cut-off
+#     data, and setEscChar copied 5 bytes after the ampersand whatever followed.
+#     setEscChar and processTag stop at the terminator of their text (processTag
+#     also kept its value's terminator past maxLen), findXmlValue no longer skips a
+#     missing end bracket's terminator, and removeVarName no longer compares from
+#     before the name when the end tag is longer. No signature changes.
 # Run once from the repository root.
 use strict; use warnings;
 
@@ -191,6 +199,173 @@ edit('RFHUtil/xmlsubs.cpp', 'workLen',
 		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"(XML.attr)\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, tempVarName);\n"
 		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"='\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, tempVarValue);\n"
 		. "\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"'\");\n\t\t\tappendBounded(xmlAttrStr, attrStrSize, \"\\r\\n\");\n"],
+	# look-ahead: every comparison and peek checks what remains (see the header)
+	[q~look-ahead helpers~,
+		q~#define ENTITY_START	"<!ENTITY"
+~,
+		q~#define ENTITY_START	"<!ENTITY"
+
+// Every comparison or peek ahead in this file checks how much data remains, so
+// cut-off or malformed data is never read past its end. When enough data remains
+// the results are the same as before.
+
+// true only if the n bytes at ptr lie before end and match lit
+static bool startsWith(const void *ptr, const void *end, const char *lit, size_t n)
+
+{
+	const unsigned char *	p = (const unsigned char *)ptr;
+	const unsigned char *	e = (const unsigned char *)end;
+
+	return (p <= e) && ((size_t)(e - p) >= n) && (memcmp(p, lit, n) == 0);
+}
+
+// skipBlanks (comsubs.cpp), stopping at end as well
+static const char * skipBlanksTo(const char *str, const char *end)
+
+{
+	while ((str < end) && (str[0] <= ' ') && (str[0] != 0))
+	{
+		str++;
+	}
+
+	return str;
+}
+
+// skipQuotedString (comsubs.cpp) reads the byte at its eod, so it is given the
+// last byte of the data, and nothing when no data remains
+static const char * skipQuotedTo(const char *start, const char *end)
+
+{
+	if (start >= end)
+	{
+		return start;
+	}
+
+	return skipQuotedString(start, end - 1);
+}
+~],
+	[q~DTD start~,
+		q~if (memcmp(dtd, "<!DOCTYPE", 9) == 0)~,
+		q~if (startsWith(dtd, dtd + remaining, "<!DOCTYPE", 9))~],
+	[q~DTD bracket~,
+		q~if ('[' == dtdend[0])~,
+		q~if ((dtdend < dtd + remaining) && ('[' == dtdend[0]))~, 2],
+	[q~DTD entity~,
+		q~if (memcmp(dtdend, "<!ENTITY", 8) == 0)~,
+		q~if (startsWith(dtdend, dtd + remaining, "<!ENTITY", 8))~],
+	[q~DTD quoted bracket~,
+		q~if (memcmp(dtdend, "\"]\"", 3) != 0)~,
+		q~if (!startsWith(dtdend, dtd + remaining, "\"]\"", 3))~],
+	[q~Unicode DTD start~,
+		q~if (memcmp(dtd, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0)~,
+		q~if (startsWith(dtd, dtd + remaining, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18))~],
+	[q~Unicode DTD bracket~,
+		q~(memcmp(dtdend, "[\0", 2) != 0) &&~ . " \n",
+		q~!startsWith(dtdend, dtd + remaining, "[\0", 2) &&~ . "\n"],
+	[q~Unicode DTD end~,
+		q~(memcmp(dtdend, ">\0", 2) != 0)~,
+		q~!startsWith(dtdend, dtd + remaining, ">\0", 2)~, 2],
+	[q~Unicode DTD closing bracket~,
+		q~(memcmp(dtdend, "]\0", 2) != 0)~,
+		q~!startsWith(dtdend, dtd + remaining, "]\0", 2)~],
+	[q~comment start~,
+		q~if (memcmp(xml, "<!--", 4) == 0)~,
+		q~if (startsWith(xml, xml + remaining, "<!--", 4))~],
+	[q~comment end~,
+		q~(memcmp(xmlend, "-->", 3) != 0)~,
+		q~!startsWith(xmlend, xml + remaining, "-->", 3)~],
+	[q~Unicode comment start~,
+		q~if (memcmp(xml, "<\0!\0-\0-\0", 8) == 0)~,
+		q~if (startsWith(xml, xml + remaining, "<\0!\0-\0-\0", 8))~],
+	[q~Unicode comment end~,
+		q~(memcmp(xmlend, "-\0-\0>\0", 6) != 0)~,
+		q~!startsWith(xmlend, xml + remaining, "-\0-\0>\0", 6)~],
+	[q~entity start~,
+		q~if (memcmp(dtdend, ENTITY_START, sizeof(ENTITY_START) - 1) == 0)~,
+		q~if (startsWith(dtdend, eod, ENTITY_START, sizeof(ENTITY_START) - 1))~],
+	[q~entity blanks~,
+		q~dtdend = skipBlanks((char *) dtdend);~,
+		q~dtdend = skipBlanksTo(dtdend, eod);~, 6],
+	[q~parameter entity~,
+		q~if ('%' == dtdend[0])~,
+		q~if ((dtdend < eod) && ('%' == dtdend[0]))~],
+	[q~entity type~,
+		q~if ((memcmp(dtdend, "SYSTEM", 6) == 0) || (memcmp(dtdend, "PUBLIC", 6) == 0))~,
+		q~if (startsWith(dtdend, eod, "SYSTEM", 6) || startsWith(dtdend, eod, "PUBLIC", 6))~],
+	[q~entity quoted strings~,
+		q~dtdend = skipQuotedString(dtdend, eod);~,
+		q~dtdend = skipQuotedTo(dtdend, eod);~, 3],
+	[q~removed comment~,
+		q~(memcmp(dataIn + j, "<!--", 4) == 0)~,
+		q~startsWith(dataIn + j, dataIn + len, "<!--", 4)~],
+	[q~removed Unicode comment~,
+		q~(memcmp(dataIn + j, "<\0!\0-\0-\0", 8) == 0)~,
+		q~startsWith(dataIn + j, dataIn + len, "<\0!\0-\0-\0", 8)~],
+	[q~removed DTD~,
+		q~(memcmp(dataIn + j, "<!DOCTYPE", 9) == 0)~,
+		q~startsWith(dataIn + j, dataIn + len, "<!DOCTYPE", 9)~],
+	[q~removed Unicode DTD~,
+		q~(memcmp(dataIn + j, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0)~,
+		q~startsWith(dataIn + j, dataIn + len, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18)~],
+	[q~CDATA start~,
+		q~if (memcmp(data + offset, "<![CDATA", 8) == 0)~,
+		q~if (startsWith(data + offset, data + len, "<![CDATA", 8))~],
+	[q~checked comment~,
+		q~(memcmp(data + offset, "<!--", 4) == 0)~,
+		q~startsWith(data + offset, data + len, "<!--", 4)~],
+	[q~checked Unicode comment~,
+		q~(memcmp(data + offset, "<\0!\0-\0-\0", 8) == 0)~,
+		q~startsWith(data + offset, data + len, "<\0!\0-\0-\0", 8)~],
+	[q~checked DTD~,
+		q~(memcmp(data + offset, "<!DOCTYPE", 9) == 0)~,
+		q~startsWith(data + offset, data + len, "<!DOCTYPE", 9)~],
+	[q~checked Unicode DTD~,
+		q~(memcmp(data + offset, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18) == 0)~,
+		q~startsWith(data + offset, data + len, "<\0!\0D\0O\0C\0T\0Y\0P\0E\0", 18)~],
+	[q~CDATA end~,
+		q~(memcmp(data + offset, CDATA_END, 3) != 0)~,
+		q~!startsWith(data + offset, data + len, CDATA_END, 3)~],
+	[q~value without an end bracket~,
+		q~		// skip the end bracket
+		tempptr++;
+~,
+		q~		// skip the end bracket, if there is one (findEndBracket stops at the terminator)
+		if ('>' == tempptr[0])
+		{
+			tempptr++;
+		}
+~],
+	[q~end tag longer than the name~,
+		q~	tempPtr = xmlVarName + templen2 - templen;
+	if (strcmp(tempPtr, VarName + 1) == 0)
+~,
+		q~	// an end tag longer than the whole name cannot match, and must not point before it
+	tempPtr = xmlVarName + ((templen <= templen2) ? templen2 - templen : 0);
+	if ((templen <= templen2) && (strcmp(tempPtr, VarName + 1) == 0))
+~],
+	[q~entity text~,
+		q~	// get the data in a temporary buffer
+	memcpy(tempBuf, bufferin + 1, 5);
+	tempBuf[5] = 0;
+~,
+		q~	// get the data in a temporary buffer: up to 5 characters after the ampersand,
+	// stopping at the terminator (the comparisons below fail there either way)
+	memset(tempBuf, 0, sizeof(tempBuf));
+	for (i = 0; (i < 5) && (bufferin[i] != 0); i++)
+	{
+		tempBuf[i] = bufferin[i + 1];
+	}
+	tempBuf[5] = 0;
+~],
+	[q~tag name~,
+		q~if (memcmp(ptr, tagName + 1, len - 2) != 0) ~,
+		q~if (strncmp(ptr, tagName + 1, len - 2) != 0)~],
+	[q~tag value~,
+		q~	while ((ptr[0] != '<') && (i < maxLen))
+~,
+		q~	// stop at the terminator, and leave room for the value's own
+	while ((ptr[0] != '<') && (ptr[0] != 0) && (i < maxLen - 1))
+~],
 );
 
 edit('RFHUtil/xmlsubs.h', 'attrStrSize',

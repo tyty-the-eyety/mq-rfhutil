@@ -329,3 +329,251 @@ TEST(XmlsubsAttributes, ListLongerThanTheOutputIsCutOff)
     EXPECT_EQ((size_t)1023, strlen(out.data()));
     EXPECT_EQ(0, strncmp("r.(XML.attr)a='1'\r\nr.(XML.attr)a='1'\r\n", out.data(), 38));
 }
+
+// ---------------------------------------------------------------------------
+// Reads stop at the end of the data (Plan 2B: xmlsubs.cpp compared up to 18
+// bytes ahead without checking what remained). Each test passes every prefix of
+// its texts, so the data ends at each point of each comparison. ctest -L memcheck
+// runs them under the guard allocator, where a read past the end faults.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+    // Holds text at the very end of a heap block whose size is a multiple of 16,
+    // so under the guard allocator the guard page follows its last byte.
+    class ExactTail
+    {
+    public:
+        explicit ExactTail(const std::string & text)
+            : m_block(text.empty() ? 16 : (text.size() + 15) / 16 * 16, 'x'),
+              m_size(text.size())
+        {
+            if (m_size > 0)
+            {
+                memcpy(bytes(), text.data(), m_size);
+            }
+        }
+
+        unsigned char * bytes() { return m_block.data() + m_block.size() - m_size; }
+        char * chars() { return (char *)bytes(); }
+        int size() const { return (int)m_size; }
+
+    private:
+        std::vector<unsigned char> m_block;
+        size_t m_size;
+    };
+
+    // UTF-16LE of ASCII text, as the Unicode checks in xmlsubs.cpp expect
+    std::string wide(const std::string & ascii)
+    {
+        std::string out;
+        for (size_t i = 0; i < ascii.size(); i++)
+        {
+            out += ascii[i];
+            out += '\0';
+        }
+        return out;
+    }
+
+    const std::vector<std::string> & markupTexts()
+    {
+        static const std::vector<std::string> texts = {
+            "<!DOCTYPE a>",
+            "<!DOCTYPE a [<!ENTITY e SYSTEM \"x\">]>",
+            "<!DOCTYPE a [<!ENTITY % e PUBLIC 'p' 's'>]>",
+            "<!DOCTYPE a [\"]\"]>",
+            "<!-- c -->",
+            "<a><![CDATA[x]]></a>",
+            "<a><!-- c --><b/></a>",
+            "<!DOCTYPE a [<!ENTITY e \"v\">]><a/>",
+            wide("<!DOCTYPE a [x]>"),
+            wide("<!-- c -->"),
+            wide("<a><!-- c --></a>"),
+            wide("<!DOCTYPE a><a/>"),
+        };
+        return texts;
+    }
+}
+
+TEST(XmlsubsLookAhead, ProcessDTDStopsAtTheEndOfTheData)
+{
+    for (const std::string & text : markupTexts())
+    {
+        for (size_t n = 0; n <= text.size(); n++)
+        {
+            ExactTail t(text.substr(0, n));
+            EXPECT_GE(processDTD(t.chars(), t.size()), 0) << n;
+        }
+    }
+}
+
+TEST(XmlsubsLookAhead, ProcessDTDOfCompleteDeclarations)
+{
+    const char * dtds[] = {
+        "<!DOCTYPE a>",
+        "<!DOCTYPE a [<!ENTITY e SYSTEM \"x\">]>",
+        "<!DOCTYPE a [<!ENTITY % e PUBLIC 'p' 's'>]>",
+        "<!DOCTYPE a [\"]\"]>",
+    };
+    for (const char * dtd : dtds)
+    {
+        ExactTail t(dtd);
+        EXPECT_EQ((int)strlen(dtd), processDTD(t.chars(), t.size())) << dtd;
+    }
+    std::string w = wide("<!DOCTYPE a [x]>");
+    ExactTail t(w);
+    EXPECT_EQ((int)w.size(), processDTD(t.chars(), t.size()));
+}
+
+TEST(XmlsubsLookAhead, ProcessCommentStopsAtTheEndOfTheData)
+{
+    for (const std::string & text : markupTexts())
+    {
+        for (size_t n = 0; n <= text.size(); n++)
+        {
+            ExactTail t(text.substr(0, n));
+            EXPECT_GE(processComment(t.chars(), t.size()), 0) << n;
+        }
+    }
+    std::string w = wide("<!-- c -->");
+    ExactTail full(w);
+    EXPECT_EQ((int)w.size(), processComment(full.chars(), full.size()));
+    ExactTail narrow("<!-- c -->");
+    EXPECT_EQ(10, processComment(narrow.chars(), narrow.size()));
+}
+
+TEST(XmlsubsLookAhead, CheckIfXmlStopsAtTheEndOfTheData)
+{
+    for (const std::string & text : markupTexts())
+    {
+        for (size_t n = 0; n <= text.size(); n++)
+        {
+            ExactTail t(text.substr(0, n));
+            char * errmsg = nullptr;
+            int rc = checkIfXml(t.bytes(), t.size(), &errmsg);
+            EXPECT_GE(rc, 0) << n;
+            EXPECT_LE(rc, 3) << n;
+        }
+    }
+    ExactTail cdata("<a><![CDATA[<<]]></a>");
+    char * errmsg = nullptr;
+    EXPECT_EQ(0, checkIfXml(cdata.bytes(), cdata.size(), &errmsg));
+}
+
+TEST(XmlsubsLookAhead, RemoveUnneededXmlStopsAtTheEndOfTheData)
+{
+    for (const std::string & text : markupTexts())
+    {
+        for (size_t n = 0; n <= text.size(); n++)
+        {
+            ExactTail t(text.substr(0, n));
+            std::vector<unsigned char> out(n + 1, 0);
+            int len = removeUnneededXML(t.bytes(), (unsigned int)t.size(), out.data());
+            EXPECT_GE(len, 1) << n;
+            EXPECT_LE(len, (int)n + 1) << n;
+        }
+    }
+    ExactTail t("<!DOCTYPE a [<!ENTITY e \"v\">]><a><!-- c --><b/></a>");
+    std::vector<unsigned char> out(t.size() + 1, 0);
+    removeUnneededXML(t.bytes(), (unsigned int)t.size(), out.data());
+    EXPECT_STREQ("<a><b/></a>", (const char *)out.data());
+}
+
+TEST(XmlsubsLookAhead, SetEscCharStopsAtTheEndOfTheText)
+{
+    // setEscChar has no length: its text ends at a terminator
+    const char * entities[] = { "&lt;", "&gt;", "&amp;", "&apos;", "&quot;", "&Quot;x" };
+    const char expected[] = { '<', '>', '&', '\'', '"', '"' };
+    const int lengths[] = { 4, 4, 5, 6, 6, 6 };
+    for (size_t e = 0; e < sizeof(entities) / sizeof(entities[0]); e++)
+    {
+        std::string entity = entities[e];
+        for (size_t n = 0; n <= entity.size(); n++)
+        {
+            ExactTail t(entity.substr(0, n) + std::string(1, '\0'));
+            unsigned char out[1] = { 0 };
+            int len = setEscChar(t.bytes(), out);
+            if (n == entity.size())
+            {
+                EXPECT_EQ(expected[e], (char)out[0]) << entity;
+                EXPECT_EQ(lengths[e], len) << entity;
+            }
+            else if (n < (size_t)lengths[e])
+            {
+                // a cut-off entity is shown as its ampersand
+                EXPECT_EQ('&', (char)out[0]) << entity << " " << n;
+                EXPECT_EQ(1, len) << entity << " " << n;
+            }
+        }
+    }
+}
+
+TEST(XmlsubsLookAhead, ProcessTagStopsAtTheEndOfTheText)
+{
+    std::string tag = "<Command>Publish</Command>";
+    for (size_t n = 0; n <= tag.size(); n++)
+    {
+        ExactTail t(tag.substr(0, n) + std::string(1, '\0'));
+        char value[32] = { 0 };
+        int found = 0;
+        char * end = processTag(t.chars(), "<Command>", value, sizeof(value), &found);
+        EXPECT_GE(end, t.chars()) << n;
+        EXPECT_LT(end, t.chars() + t.size()) << n;
+    }
+    ExactTail t(tag + std::string(1, '\0'));
+    char value[32] = { 0 };
+    int found = 0;
+    char * end = processTag(t.chars(), "<Command>", value, sizeof(value), &found);
+    EXPECT_EQ(1, found);
+    EXPECT_STREQ("Publish", value);
+    EXPECT_EQ(0, end[0]);
+}
+
+TEST(XmlsubsLookAhead, ProcessTagKeepsItsTerminatorInsideTheValueBuffer)
+{
+    // the value buffer is exactly maxLen bytes: a value that does not fit is cut
+    // to maxLen - 1 characters and terminated, rather than terminated past the end
+    char text[] = "<Command>RegisterSubscriber</Command>";
+    ExactTail value(std::string(16, '\0'));
+    int found = 0;
+    processTag(text, "<Command>", value.chars(), value.size(), &found);
+    EXPECT_EQ(1, found);
+    EXPECT_STREQ("RegisterSubscri", value.chars());
+
+    // a value that fits is kept whole
+    char fits[] = "<Command>Register</Command>";
+    ExactTail value2(std::string(16, '\0'));
+    found = 0;
+    processTag(fits, "<Command>", value2.chars(), value2.size(), &found);
+    EXPECT_STREQ("Register", value2.chars());
+}
+
+TEST(XmlsubsLookAhead, FindXmlValueStopsAtTheEndOfTheText)
+{
+    const char * texts[] = { "<name", "<name x", "<name>", "<name>Al" };
+    const char * values[] = { "", "", "", "Al" };
+    for (size_t i = 0; i < sizeof(texts) / sizeof(texts[0]); i++)
+    {
+        ExactTail t(std::string(texts[i]) + std::string(1, '\0'));
+        char result[16] = { 'X', 0 };
+        findXmlValue(t.chars(), "name", result, sizeof(result));
+        EXPECT_STREQ(values[i], result) << texts[i];
+    }
+}
+
+TEST(XmlsubsLookAhead, RemoveVarNameOfALongerEndTagDoesNotReadBeforeTheName)
+{
+    // the end tag is longer than the whole name, so there is nothing to compare;
+    // IBM's code compared from before the start of xmlVarName (a heap read before
+    // the block, which AddressSanitizer reports and the guard allocator cannot see)
+    std::vector<char> name(2, '\0');
+    name[0] = 'a';
+    char endTag[] = "/abcdef";
+    EXPECT_EQ(1, removeVarName(name.data(), endTag));
+    EXPECT_STREQ("a", name.data());
+
+    char path[] = "root.abc";
+    char tag[] = "/abc";
+    EXPECT_EQ(0, removeVarName(path, tag));
+    EXPECT_STREQ("root", path);
+}

@@ -25,8 +25,14 @@ http://www.apache.org/licenses/LICENSE-2.0
 //
 // Deliberate differences from DataArea, all to stay within buffers:
 // - the data and every buffer the formatters allocate are followed by
-//   kLookAheadPad zero bytes, because xmlsubs.cpp compares up to 18 bytes ahead
-//   without checking the remaining length (DataArea's data has 2 zero bytes);
+//   kLookAheadPad zero bytes, because the moved methods read a few bytes past
+//   the end of their data without checking the remaining length (DataArea's data
+//   has 2 zero bytes). For example, findcrlf reads the byte after its last
+//   character (two after a DBCS lead byte), the character view's EDI option
+//   compares segment tags of up to 3 bytes and reads a UNA's delimiters 6 and 8
+//   bytes on, and the XML and parsed views compare 9-byte CDATA markers; CJsonParse
+//   reads the byte after a backslash. xmlsubs.cpp does not need it: it checks the
+//   remaining length (tools/port/port-parser-fixes.pl);
 // - the both view allocates 65 bytes per 16 bytes of data; DataArea allocates
 //   4 per byte plus 65, and writes past the end for messages over 1040 bytes;
 // - the fixed view indexes its display table with an unsigned byte;
@@ -51,7 +57,8 @@ http://www.apache.org/licenses/LICENSE-2.0
 #include "rfh_codepage.h"
 #include "rfh_platform.h"
 
-// Zero bytes the formatters may read after their data and their work buffers.
+// Zero bytes after the data and after each work buffer, which the moved methods
+// may read past the end of their data (see the list above).
 const unsigned int kLookAheadPad = 32;
 
 // Size of the file name buffers in the moved code that build a conversion table
