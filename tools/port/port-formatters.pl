@@ -54,6 +54,7 @@ my @rewrites = (
 	['LPCWSTR casts', 4, sub { $_[0] =~ s/\(LPCWSTR\)/(const RFH_UCS2 *)/g }],
 	['WideCharToMultiByte', 7, sub { $_[0] =~ s/\bWideCharToMultiByte\(/rfh_WideCharToMultiByte(/g }],
 	['MultiByteToWideChar', 2, sub { $_[0] =~ s/\bMultiByteToWideChar\(/rfh_MultiByteToWideChar(/g }],
+	['no Unicode character view output (IBM disabled the view)', 1, sub { $_[0] =~ s/^[ \t]*m_data_ascii_UCS = FALSE;[ \t]*\n//mg }],
 	['CP_ACP is the display ANSI code page', 1, sub { $_[0] =~ s/\bCP_ACP\b/app->ansi/g }],
 	['CP_OEMCP is the display OEM code page', 1, sub { $_[0] =~ s/\bCP_OEMCP\b/app->oem/g }],
 	['C-locale wcstombs', 2, sub { $_[0] =~ s/wcstombs\(\(char \*\)newData, (\(const RFH_UCS2 \*\)\([^)]*\)), /rfh_ucs2_to_c_locale($1, (char *)newData, /g }],

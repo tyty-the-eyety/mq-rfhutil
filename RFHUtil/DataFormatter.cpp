@@ -49,7 +49,6 @@ DataFormatter::DataFormatter()
 	app = &display;
 
 	m_data_ascii = NULL;
-	m_data_ascii_UCS = NULL;
 	m_data_hex = NULL;
 	m_data_both = NULL;
 	m_data_xml = NULL;
@@ -72,7 +71,6 @@ DataFormatter::DataFormatter()
 	saveFixFormat = CHAR_ASCII;
 	saveIndentOn = FALSE;
 
-	// see DataFormatter.h: built here rather than in the first character view
 	memset(xmlVarName, 0, sizeof(xmlVarName));
 	memset(tempVarValue, 0, sizeof(tempVarValue));
 	memset(tempVarName, 0, sizeof(tempVarName));
@@ -80,6 +78,7 @@ DataFormatter::DataFormatter()
 	memset(tempVarAttr, 0, sizeof(tempVarAttr));
 	memset(xmlAttrStr, 0, sizeof(xmlAttrStr));
 
+	// see DataFormatter.h: built here rather than in the first character view
 	buildInvalidCharTable(invalidCharTable);
 	invalidCharTableNotBuilt = FALSE;
 
@@ -101,10 +100,6 @@ DataFormatter::~DataFormatter()
 		{
 			rfhFree(buffer);
 		}
-	}
-	if (m_data_ascii_UCS != NULL)
-	{
-		rfhFree(m_data_ascii_UCS);
 	}
 	if (MQUcsPtr != NULL)
 	{
@@ -382,7 +377,6 @@ void DataFormatter::getCharacterData(const int charFormat, const int crlf, const
 
 		rfhFree(m_data_ascii);
 		m_data_ascii = NULL;
-		m_data_ascii_UCS = FALSE;
 	}
 
 	// remember the type of display data

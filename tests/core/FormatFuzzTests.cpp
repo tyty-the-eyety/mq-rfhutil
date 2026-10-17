@@ -9,13 +9,12 @@
 
 #include <gtest/gtest.h>
 
-#include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <string>
 
+#include "copybook_file.h"
 #include "rfh_format.h"
 
 using namespace rfh;
@@ -68,40 +67,6 @@ namespace
         "           05  C   PIC 9(3)V9.\n",
         // not a copy book at all
         "<?xml version=\"1.0\"?>\n<root><a x=\"1\">text</a></root>\n" };
-
-    // A copy book file named for the test and the process, since ctest runs
-    // processes in parallel and under memcheck; removed when the test ends.
-    class CopybookFile
-    {
-    public:
-        CopybookFile()
-        {
-            const testing::TestInfo * test = testing::UnitTest::GetInstance()->current_test_info();
-            path_ = testing::TempDir() + "rfhutil_" + test->test_suite_name() + "." + test->name() + "."
-                + std::to_string((long)getpid()) + ".cpy";
-        }
-
-        ~CopybookFile()
-        {
-            remove(path_.c_str());
-        }
-
-        CopybookFile(const CopybookFile &) = delete;
-        CopybookFile & operator=(const CopybookFile &) = delete;
-
-        void write(const char * text)
-        {
-            FILE * f = fopen(path_.c_str(), "wb");
-            ASSERT_NE(nullptr, f) << path_;
-            fwrite(text, 1, strlen(text), f);
-            fclose(f);
-        }
-
-        const std::string & path() const { return path_; }
-
-    private:
-        std::string path_;
-    };
 }
 
 TEST(FormatFuzz, NoViewFailsOnArbitraryData)

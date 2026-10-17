@@ -10,12 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
-#include <unistd.h>
 
 #include <string>
 #include <vector>
 
 #include "comsubs.h"
+#include "copybook_file.h"
 #include "mq_layout.h"
 #include "rfh_format.h"
 
@@ -394,41 +394,6 @@ TEST(Format_Fixed, EbcdicAccentedLettersAreShown)
 
 namespace
 {
-    // A copy book in a file of its own, removed when the test ends. ctest runs each
-    // test in a process of its own, in parallel, and memcheck.Format runs them again,
-    // so the name has the test's name and the process.
-    class CopybookFile
-    {
-    public:
-        explicit CopybookFile(const std::string & text)
-        {
-            static int sequence = 0;
-            const testing::TestInfo * test = testing::UnitTest::GetInstance()->current_test_info();
-            path_ = testing::TempDir() + "rfhutil_" + test->test_suite_name() + "." + test->name() + "."
-                + std::to_string((long)getpid()) + "." + std::to_string(++sequence) + ".cpy";
-            FILE * f = fopen(path_.c_str(), "wb");
-            EXPECT_NE(nullptr, f) << path_;
-            if (f != nullptr)
-            {
-                fwrite(text.data(), 1, text.size(), f);
-                fclose(f);
-            }
-        }
-
-        ~CopybookFile()
-        {
-            remove(path_.c_str());
-        }
-
-        CopybookFile(const CopybookFile &) = delete;
-        CopybookFile & operator=(const CopybookFile &) = delete;
-
-        const std::string & path() const { return path_; }
-
-    private:
-        std::string path_;
-    };
-
     Result renderCobol(const std::string & copybook, const std::string & body, RenderOptions o, std::string & out)
     {
         CopybookFile file(copybook);
@@ -914,6 +879,13 @@ TEST(Format_CobolIbm, AnEmptyBodyShowsNothing)
 {
     EXPECT_EQ("", cobol("       01  R.\n"
                         "           05  A  PIC X(2).\n", ""));
+}
+
+TEST(Format_Character, EdiTrailingBlanksStopAtTheEndOfTheData)
+{
+    RenderOptions o = options();
+    o.edi = true;
+    EXPECT_NO_FATAL_FAILURE(render(message("UNA:+.? '   "), View::Character, o));
 }
 
 // --- size limit -----------------------------------------------------------------

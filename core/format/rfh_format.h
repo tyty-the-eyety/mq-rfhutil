@@ -66,13 +66,8 @@ namespace rfh
 		// The Data tab's settings: the message's formats and the user's choices. A UI
 		// calls apply after each get or read, which replaces the formats and keeps the
 		// user's other choices.
-		struct RenderOptions
+		struct RenderOptions : DataFormats
 		{
-			int ccsid = 0;						// code page of the body (DataArea::fileCcsid)
-			int intFormat = NUMERIC_PC;			// integer encoding of the body (DataArea::fileIntFormat)
-			int charFormat = CHAR_ASCII;		// CHAR_* the body is shown as
-			int numericFormat = NUMERIC_PC;		// COBOL view: binary integers
-			int pdNumericFormat = NUMERIC_PC;	// COBOL view: packed decimal
 			bool crlf = false;					// character view: start a line after each CR LF
 			bool edi = false;					// character view: a line per EDI segment
 			bool bom = false;					// character and both views: honour a byte order mark
@@ -82,14 +77,10 @@ namespace rfh
 			std::string conversionTableDir;		// MQ's conversion tables; empty for none
 			std::string copybookPath;			// COBOL view: the copy book file
 
-			// Copies the five formats and nothing else.
+			// Copies the formats and nothing else.
 			void apply(const DataFormats & f)
 			{
-				ccsid = f.ccsid;
-				intFormat = f.intFormat;
-				charFormat = f.charFormat;
-				numericFormat = f.numericFormat;
-				pdNumericFormat = f.pdNumericFormat;
+				static_cast<DataFormats &>(*this) = f;
 			}
 		};
 

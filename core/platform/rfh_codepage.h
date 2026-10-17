@@ -52,6 +52,9 @@ BOOL rfh_is_codepage_installed(int ccsid);
 // page cannot represent becomes '.'. Windows WideCharToMultiByte may instead choose a
 // "best fit" character (for example 1252 A-grave to 437 'A'), where Linux gives '.'.
 // output must be non-NULL: there is no size-query mode.
+// Difference from Windows: a toCcsid of 1208 or 65001 converts on Linux, whereas
+// Windows rejects the default character ('.') that this passes for CP_UTF8 and
+// returns 0.
 int rfh_convert_char(int fromCcsid, int toCcsid, const char * input, char * output, int outputMax);
 
 // NUL-terminated UCS-2 (host byte order) to single-byte text, with the semantics of
@@ -98,12 +101,16 @@ int rfh_WideCharToMultiByte(int codepage, unsigned int flags, const RFH_UCS2 * i
 // available or the output does not fit in outChars. flags must be 0 (or, on Linux,
 // MB_PRECOMPOSED; other flags give 0). On Linux bytes 0x81, 0x8D, 0x8F, 0x90 and
 // 0x9D of code page 1252 map to the C1 controls of the same value, as on Windows (and
-// the reverse in rfh_WideCharToMultiByte). An incomplete or invalid sequence ends the
-// conversion, and the code units converted before it are returned.
+// the reverse in rfh_WideCharToMultiByte). Difference from Windows: on Linux an
+// invalid byte or sequence, or a lead byte with no trail byte, ends the conversion,
+// and the code units converted before it are returned; Windows maps it to a default
+// character and carries on.
 int rfh_MultiByteToWideChar(int codepage, unsigned int flags, const char * in, int inBytes,
 	RFH_UCS2 * out, int outChars);
 
 // _mbclen: the length (1 or 2) of the multibyte character at text in the ANSI code
 // page. Linux: 2 for a lead byte of a double-byte ANSI code page (932, 936, 949 or
-// 950), otherwise 1.
+// 950), otherwise 1. Difference from Windows: Linux returns 2 for a lead byte at
+// the end of the text too (the next byte is the terminator), where the Windows CRT
+// returns 1; a caller that steps by the result must check for the end itself.
 int rfh_mbclen(const unsigned char * text);

@@ -10,8 +10,8 @@ http://www.apache.org/licenses/LICENSE-2.0
 // the Windows application and the portable core share one implementation. The
 // members keep DataArea's names, so the method bodies are DataArea's own.
 //
-// Give it the data with setData and set the other inputs, call one get...Data
-// method, then read its output member. Each
+// Give it the data with setData and the display code pages with setDisplay, set
+// the other inputs, call one get...Data method, then read its output member. Each
 // output is a NUL-terminated buffer in the display code page (app->ansi), owned by
 // the formatter and freed by its destructor. A formatter keeps its outputs, so a
 // second call for the same view and settings returns at once, as in DataArea.
@@ -109,7 +109,6 @@ public:
 
 	// Outputs.
 	unsigned char *	m_data_ascii;
-	RFH_UCS2 *		m_data_ascii_UCS;	// unused: IBM disabled the Unicode character view
 	unsigned char *	m_data_hex;
 	unsigned char *	m_data_both;
 	unsigned char *	m_data_xml;

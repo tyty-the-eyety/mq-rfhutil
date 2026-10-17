@@ -197,7 +197,10 @@ TEST(GuardMalloc, ForeignPointersAbortLoudly)
     REQUIRE_GUARDED();
     EXPECT_EXIT({
         static char foreign[256];
-        free(foreign + 128);
+        // through a volatile pointer, so the compiler does not warn that this is
+        // not a heap pointer: that is what the test is about
+        void * volatile notFromMalloc = foreign + 128;
+        free(notFromMalloc);
         _exit(0);
     }, ::testing::KilledBySignal(SIGABRT), "guardmalloc");
 }
