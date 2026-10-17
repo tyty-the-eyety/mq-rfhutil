@@ -392,86 +392,6 @@ TEST(Format_Fixed, EbcdicAccentedLettersAreShown)
 
 namespace
 {
-    // a copy book with display, character, packed decimal and binary fields
-    std::string writeCopybook()
-    {
-        std::string path = testing::TempDir() + "rfhutil_customer.cpy";
-        FILE * f = fopen(path.c_str(), "w");
-        EXPECT_NE(nullptr, f);
-        fputs("       01  CUSTOMER-RECORD.\n"
-              "           05  CUST-ID          PIC 9(5).\n"
-              "           05  CUST-NAME        PIC X(10).\n"
-              "           05  BALANCE          PIC S9(5)V99 COMP-3.\n"
-              "           05  TXN-COUNT        PIC S9(4) COMP.\n", f);
-        fclose(f);
-        return path;
-    }
-
-    RenderOptions cobolOptions(int numericFormat)
-    {
-        RenderOptions o = options();
-        o.numericFormat = numericFormat;
-        o.pdNumericFormat = NUMERIC_HOST;
-        o.copybookPath = writeCopybook();
-        return o;
-    }
-
-    const std::string kCustomer = std::string("00042SMITH     ") + std::string("\x01\x23\x45\x6C", 4);
-}
-
-TEST(Format_Cobol, FieldsAreListedWithTheirOffsetsAndValues)
-{
-    EXPECT_EQ("Level  Ofs  Len Type  Occ Variable Name                  Value\r\n"
-              "01     0    21           CUSTOMER-RECORD\r\n"
-              "05     0     5 NUMB      CUST-ID                        00042\r\n"
-              "05     5    10 CHAR      CUST-NAME                      SMITH     \r\n"
-              "05    15     4 PD        BALANCE                        0123456\r\n"
-              "05    19     2 INT       TXN-COUNT                      0007\r\n"
-              "Copy book size 21, Data area size 21",
-              render(message(kCustomer + std::string("\x00\x07", 2)), View::Cobol, cobolOptions(NUMERIC_HOST)));
-}
-
-TEST(Format_Cobol, BinaryFieldsFollowTheIntegerEncoding)
-{
-    std::string out = render(message(kCustomer + std::string("\x07\x00", 2)), View::Cobol, cobolOptions(NUMERIC_PC));
-    EXPECT_NE(std::string::npos, out.find("TXN-COUNT                      0007\r\n"));
-}
-
-TEST(Format_Cobol, IndentShiftsTheLowerLevels)
-{
-    RenderOptions o = cobolOptions(NUMERIC_HOST);
-    o.indent = true;
-    std::string out = render(message(kCustomer + std::string("\x00\x07", 2)), View::Cobol, o);
-    EXPECT_NE(std::string::npos, out.find("\r\n01     0    21           CUSTOMER-RECORD\r\n 05     0     5 NUMB"));
-}
-
-TEST(Format_Cobol, WithoutACopybookTheViewFails)
-{
-    std::string out;
-    Result r = format::render(message(kCustomer), View::Cobol, options(), out);
-    EXPECT_FALSE(r.ok());
-    EXPECT_EQ("the COBOL view needs a copy book file", r.text);
-}
-
-TEST(Format_Cobol, AnUnreadableCopybookFails)
-{
-    RenderOptions o = options();
-    o.copybookPath = testing::TempDir() + "rfhutil_no_such_copybook.cpy";
-    std::string out;
-    Result r = format::render(message(kCustomer), View::Cobol, o, out);
-    EXPECT_FALSE(r.ok());
-    EXPECT_EQ(0u, r.text.find("copy book file " + o.copybookPath + " could not be read"));
-}
-
-// --- COBOL view: IBM's copy book parser ---------------------------------------
-//
-// tools/port/harden-copybook.pl keeps IBM's parser within its buffers on malformed
-// copy books and data; these are the reviewer's reproducers. Each crashed or wrote
-// past a buffer before (under the guard allocator or a sanitizer); now each gives
-// the view, with the defined text pinned where it is short.
-
-namespace
-{
     // A copy book in a file of its own, removed when the test ends. ctest runs each
     // test in a process of its own, in parallel, and memcheck.Format runs them again,
     // so the name has the test's name and the process.
@@ -532,7 +452,136 @@ namespace
 
     const std::string kHeading = "Level  Ofs  Len Type  Occ Variable Name                  Value\r\n";
     const std::string kMismatch = "\r\n***** RFHUtil error - Data length does not match copybook";
+
+    // a copy book with display, character, packed decimal and binary fields
+    const std::string kCustomerCopybook =
+        "       01  CUSTOMER-RECORD.\n"
+        "           05  CUST-ID          PIC 9(5).\n"
+        "           05  CUST-NAME        PIC X(10).\n"
+        "           05  BALANCE          PIC S9(5)V99 COMP-3.\n"
+        "           05  TXN-COUNT        PIC S9(4) COMP.\n";
+
+    RenderOptions cobolOptions(int numericFormat)
+    {
+        RenderOptions o = options();
+        o.numericFormat = numericFormat;
+        o.pdNumericFormat = NUMERIC_HOST;
+        return o;
+    }
+
+    const std::string kCustomer = std::string("00042SMITH     ") + std::string("\x01\x23\x45\x6C", 4);
 }
+
+TEST(Format_Cobol, FieldsAreListedWithTheirOffsetsAndValues)
+{
+    EXPECT_EQ("Level  Ofs  Len Type  Occ Variable Name                  Value\r\n"
+              "01     0    21           CUSTOMER-RECORD\r\n"
+              "05     0     5 NUMB      CUST-ID                        00042\r\n"
+              "05     5    10 CHAR      CUST-NAME                      SMITH     \r\n"
+              "05    15     4 PD        BALANCE                        0123456\r\n"
+              "05    19     2 INT       TXN-COUNT                      0007\r\n"
+              "Copy book size 21, Data area size 21",
+              cobol(kCustomerCopybook, kCustomer + std::string("\x00\x07", 2), cobolOptions(NUMERIC_HOST)));
+}
+
+TEST(Format_Cobol, BinaryFieldsFollowTheIntegerEncoding)
+{
+    std::string out = cobol(kCustomerCopybook, kCustomer + std::string("\x07\x00", 2), cobolOptions(NUMERIC_PC));
+    EXPECT_NE(std::string::npos, out.find("TXN-COUNT                      0007\r\n"));
+}
+
+TEST(Format_Cobol, IndentShiftsTheLowerLevels)
+{
+    RenderOptions o = cobolOptions(NUMERIC_HOST);
+    o.indent = true;
+    std::string out = cobol(kCustomerCopybook, kCustomer + std::string("\x00\x07", 2), o);
+    EXPECT_NE(std::string::npos, out.find("\r\n01     0    21           CUSTOMER-RECORD\r\n 05     0     5 NUMB"));
+}
+
+TEST(Format_Cobol, WithoutACopybookTheViewFails)
+{
+    std::string out;
+    Result r = format::render(message(kCustomer), View::Cobol, options(), out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("the COBOL view needs a copy book file", r.text);
+}
+
+TEST(Format_Cobol, ACopybookThatCannotBeOpenedFails)
+{
+    RenderOptions o = options();
+    o.copybookPath = testing::TempDir() + "rfhutil_no_such_copybook.cpy";
+    std::string out;
+    Result r = format::render(message(kCustomer), View::Cobol, o, out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("copy book file " + o.copybookPath + " could not be opened", r.text);
+}
+
+// Windows ignores parseCopyBook's errors and shows the copy book as far as it was
+// parsed, without its offsets.
+TEST(Format_Cobol, ARedefinitionOfAnUndefinedFieldFails)
+{
+    std::string out;
+    CopybookFile file("       01 R.\n"
+                      "         05 A PIC X(4).\n"
+                      "         05 B REDEFINES NOPE PIC 9(4).\n");
+    RenderOptions o = options();
+    o.copybookPath = file.path();
+    Result r = format::render(message("1234"), View::Cobol, o, out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("copy book file " + file.path() + " redefines a field that it does not define (99)", r.text);
+    EXPECT_EQ("", out);
+}
+
+TEST(Format_Cobol, ALevelOutsideItsRecordFails)
+{
+    std::string out;
+    CopybookFile file("       05 A.\n"
+                      "         10 B PIC X.\n"
+                      "       03 C PIC X.\n");
+    RenderOptions o = options();
+    o.copybookPath = file.path();
+    Result r = format::render(message("12"), View::Cobol, o, out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("copy book file " + file.path() + " has a level that is outside its record's hierarchy (97)", r.text);
+}
+
+TEST(Format_Cobol, ACopybookThatNeedsMoreThanTheLimitFails)
+{
+    // 2000 * 2000 * 1000 lines overflowed the int buffer size; getMaxLines saturates
+    // at MAX_COBOL_LINES, (2147475328 - 65536) / 128
+    std::string out;
+    CopybookFile file("       01 R.\n"
+                      "         05 A OCCURS 2000 TIMES.\n"
+                      "           10 B OCCURS 2000 TIMES.\n"
+                      "             15 C OCCURS 1000 TIMES.\n"
+                      "               20 V PIC X.\n");
+    RenderOptions o = options();
+    o.copybookPath = file.path();
+    Result r = format::render(message("12"), View::Cobol, o, out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("copy book file " + file.path() + " needs a buffer of 2147475328 bytes,"
+              " more than the COBOL view's limit of 268435456", r.text);
+    EXPECT_EQ("", out);
+}
+
+TEST(Format_Cobol, ACopybookWhoseLineCountWrapsFails)
+{
+    // 99999 * 99999 wrapped to a small count, and the view looped for its occurrences
+    std::string out;
+    Result r = renderCobol("       01 R.\n"
+                           "         05 A OCCURS 99999 TIMES.\n"
+                           "           10 B OCCURS 99999 TIMES.\n"
+                           "               20 V PIC X.\n", "12", options(), out);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find(" more than the COBOL view's limit of 268435456"));
+}
+
+// --- COBOL view: IBM's copy book parser ---------------------------------------
+//
+// tools/port/harden-copybook.pl keeps IBM's parser within its buffers on malformed
+// copy books and data; these are the reviewer's reproducers. Each crashed or wrote
+// past a buffer before (under the guard allocator or a sanitizer); now each gives
+// the view, with the defined text pinned where it is short.
 
 TEST(Format_CobolMalformed, AGroupOccursDependingOnWithoutAMaximumShowsTheOccurrencesInTheData)
 {
@@ -727,7 +776,8 @@ TEST(Format_CobolMalformed, CheckingANumberShorterThanItsFieldReadsOnlyTheData)
 
 TEST(Format_CobolMalformed, AGroupOccursStopsAfterTheEndOfTheData)
 {
-    // 1000 * 1000 occurrences and 100 bytes: one occurrence past the end is shown
+    // 1000 * 1000 occurrences and 100 bytes: one occurrence past the end is shown.
+    // The copy book's 2001001 lines are within the COBOL view's limit.
     std::string out = cobol("       01 R.\n"
                             "         05 A OCCURS 1000 TIMES.\n"
                             "            10 B OCCURS 1000 TIMES.\n"

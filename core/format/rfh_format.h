@@ -7,10 +7,21 @@
 //
 // Differences from Windows RFHUtil:
 // - the COBOL view reads the copy book named by options.copybookPath instead of
-//   asking for one, and fails when it cannot be read (Windows shows an empty
+//   asking for one, and fails when it cannot be opened (Windows shows an empty
 //   view);
+// - the COBOL view also fails when IBM's parser reports an error in the copy book
+//   (a level outside its record's hierarchy, or a REDEFINES of a field it does not
+//   define), where Windows ignores the error and shows the partly parsed copy book,
+//   and when the copy book needs a buffer larger than kMaxCobolBuffer (Windows
+//   tries to allocate any size, up to the 2 GB at which getMaxLines saturates);
 // - see DataFormatter.h for the differences in the views themselves.
+//
+// The COBOL view finds whole multibyte characters with rfh_mbclen, which uses the
+// process ANSI code page (rfh_get_acp), as _mbclen does on Windows, and not
+// options.display.
 #pragma once
+
+#include <stdint.h>
 
 #include <string>
 #include <vector>
@@ -82,9 +93,15 @@ namespace rfh
 		// The settings after reading a message file (the formats ReadResult reports).
 		DataFormats defaultsFor(const fileio::ReadResult & read);
 
+		// The largest buffer the COBOL view allocates: 256 MB, about two million lines
+		// at Windows' 128 bytes a line. The output stops earlier, as on Windows, with
+		// "***** Exceeded memory buffer" when the lines are longer.
+		const int64_t kMaxCobolBuffer = 256 * 1024 * 1024;
+
 		// Renders message.body (the headers are not shown, as on Windows) into out.
-		// Each call makes a new formatter and caches nothing, so a UI that renders
-		// large messages often should keep the result.
+		// Each call makes a new formatter and caches nothing (the COBOL view parses
+		// its copy book again each time), so a UI that renders large messages often
+		// should keep the result.
 		// Returns a failure only when the view cannot be produced; problems Windows
 		// reports in the status line are warnings.
 		Result render(const Message & message, View view, const RenderOptions & options, std::string & out);
