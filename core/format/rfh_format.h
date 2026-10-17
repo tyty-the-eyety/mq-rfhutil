@@ -19,6 +19,8 @@
 //   larger than what it redefines), and an OCCURS DEPENDING ON without a maximum
 //   lists only the occurrences that fit in the data; Windows lists them with
 //   empty values (tools/port/harden-copybook.pl);
+// - every view fails for a body larger than kMaxRenderBody, where Windows' buffer
+//   sizes overflow (the character view's above about 178 MB);
 // - see DataFormatter.h for the differences in the views themselves.
 //
 // The COBOL view finds whole multibyte characters with rfh_mbclen, which uses the
@@ -26,6 +28,7 @@
 // options.display.
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <string>
@@ -103,12 +106,21 @@ namespace rfh
 		// "***** Exceeded memory buffer" when the lines are longer.
 		const int64_t kMaxCobolBuffer = 256 * 1024 * 1024;
 
+		// The largest body render shows: 100 MB (104,857,600 bytes), MQ's maximum
+		// message length. The formatters size their buffers with int and unsigned int
+		// arithmetic of up to 16 bytes a byte of data (the JSON view), which stays
+		// below 2^31 at this size but overflows not far above it (the character view's
+		// fileLength * 12 + 45 at about 178 MB). render fails for a larger body before
+		// copying it.
+		const size_t kMaxRenderBody = 100 * 1024 * 1024;
+
 		// Renders message.body (the headers are not shown, as on Windows) into out.
 		// Each call makes a new formatter and caches nothing (the COBOL view parses
 		// its copy book again each time), so a UI that renders large messages often
 		// should keep the result.
-		// Returns a failure only when the view cannot be produced; problems Windows
-		// reports in the status line are warnings.
+		// Returns a failure only when the view cannot be produced (including a body
+		// over kMaxRenderBody); problems Windows reports in the status line are
+		// warnings.
 		Result render(const Message & message, View view, const RenderOptions & options, std::string & out);
 	}
 }

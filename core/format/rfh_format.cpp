@@ -142,6 +142,14 @@ namespace rfh
 		{
 			out.clear();
 
+			// before anything is copied: larger sizes overflow the formatters' arithmetic
+			if (message.body.size() > kMaxRenderBody)
+			{
+				return Result::failure("the message body is " + std::to_string(message.body.size())
+					+ " bytes, more than the Data tab's limit of " + std::to_string(kMaxRenderBody)
+					+ " bytes (MQ's maximum message length)");
+			}
+
 			// on the heap: its XML work areas are about 125 KB
 			std::unique_ptr<DataFormatter> owned(new DataFormatter());
 			DataFormatter & formatter = *owned;

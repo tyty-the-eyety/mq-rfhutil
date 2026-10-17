@@ -8,6 +8,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include <string>
@@ -912,4 +913,40 @@ TEST(Format_CobolIbm, AnEmptyBodyShowsNothing)
 {
     EXPECT_EQ("", cobol("       01  R.\n"
                         "           05  A  PIC X(2).\n", ""));
+}
+
+// --- size limit -----------------------------------------------------------------
+
+namespace
+{
+    // the process's peak resident memory so far, in bytes
+    long long peakResidentBytes()
+    {
+        struct rusage usage;
+        getrusage(RUSAGE_SELF, &usage);
+        return (long long)usage.ru_maxrss * 1024;
+    }
+}
+
+TEST(Format_Limit, BodyOverMQsMaximumMessageLengthFailsBeforeItIsCopied)
+{
+    Message m = message("");
+    m.body.assign(kMaxRenderBody + 1, 'x');
+    long long before = peakResidentBytes();
+
+    for (View view : { View::Character, View::Hex, View::Json, View::Cobol })
+    {
+        std::string out = "stale";
+        RenderOptions o = options();
+        o.copybookPath = "unused.cpy";
+        Result r = format::render(m, view, o, out);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ("the message body is 104857601 bytes, more than the Data tab's limit of 104857600 bytes"
+                  " (MQ's maximum message length)", r.text);
+        EXPECT_TRUE(out.empty()) << out.size() << " bytes of output";
+    }
+
+    // a copy of the body would raise the peak by 100 MB; the peak only grows, so a
+    // larger peak from earlier in the process cannot make this fail
+    EXPECT_LT(peakResidentBytes() - before, 16LL * 1024 * 1024);
 }
