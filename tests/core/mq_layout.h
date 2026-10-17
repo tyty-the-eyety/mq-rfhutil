@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <initializer_list>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -81,18 +83,34 @@ namespace mq_layout
         return b;
     }
 
+    // One character in EBCDIC code page 500 (the code points of 037 and 1047 that
+    // agree with it): letters, digits, blank and the punctuation . , : - ' / _
+    // Anything else throws, because a silent wrong byte would corrupt a golden file.
+    inline unsigned char ebcdicByte(char c)
+    {
+        static const char * const punctuation = " .,:-'/_";
+        static const unsigned char punctuationCodes[] = { 0x40, 0x4B, 0x6B, 0x7A, 0x60, 0x7D, 0x61, 0x6D };
+        if (c >= 'A' && c <= 'I') return (unsigned char)(0xC1 + (c - 'A'));
+        if (c >= 'J' && c <= 'R') return (unsigned char)(0xD1 + (c - 'J'));
+        if (c >= 'S' && c <= 'Z') return (unsigned char)(0xE2 + (c - 'S'));
+        if (c >= 'a' && c <= 'i') return (unsigned char)(0x81 + (c - 'a'));
+        if (c >= 'j' && c <= 'r') return (unsigned char)(0x91 + (c - 'j'));
+        if (c >= 's' && c <= 'z') return (unsigned char)(0xA2 + (c - 's'));
+        if (c >= '0' && c <= '9') return (unsigned char)(0xF0 + (c - '0'));
+        const char * found = (c != 0) ? strchr(punctuation, c) : nullptr;
+        if (found == nullptr)
+        {
+            throw std::out_of_range(std::string("no EBCDIC code point for '") + c + "'");
+        }
+        return punctuationCodes[found - punctuation];
+    }
+
     inline std::vector<unsigned char> ebcdic(const std::string & ascii)
     {
-        // the subset needed for structure ids and format names
-        static const char * letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
-        static const unsigned char codes[] = {
-            0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xD1, 0xD2, 0xD3, 0xD4,
-            0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9,
-            0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0x40 };
         std::vector<unsigned char> out;
         for (char c : ascii)
         {
-            out.push_back(codes[strchr(letters, c) - letters]);
+            out.push_back(ebcdicByte(c));
         }
         return out;
     }

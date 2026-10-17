@@ -51,6 +51,24 @@ endif()
 target_link_libraries(rfhutil_core_tests PRIVATE rfhcore GTest::gtest_main ${CMAKE_DL_LIBS})
 gtest_discover_tests(rfhutil_core_tests)
 
+# The golden message files (tests/core/golden/) are written by tools/golden/make_goldens.cpp,
+# which uses only tests/core/mq_layout.h and deliberately does not link rfhcore: the files
+# must not depend on the code they test. The tests read them through the core.
+add_executable(rfh_make_goldens ../tools/golden/make_goldens.cpp)
+target_include_directories(rfh_make_goldens PRIVATE core)
+if(NOT MSVC)
+    target_compile_options(rfh_make_goldens PRIVATE -Wall -Wextra)
+endif()
+
+add_executable(rfhutil_golden_tests core/GoldenFileTests.cpp)
+target_link_libraries(rfhutil_golden_tests PRIVATE rfhcore GTest::gtest_main)
+target_compile_definitions(rfhutil_golden_tests PRIVATE
+    RFH_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/golden"
+    RFH_MAKE_GOLDENS="$<TARGET_FILE:rfh_make_goldens>"
+    RFH_COMPARE_SCRIPT="${PROJECT_SOURCE_DIR}/tools/golden/compare-windows-output.sh")
+add_dependencies(rfhutil_golden_tests rfh_make_goldens)
+gtest_discover_tests(rfhutil_golden_tests)
+
 add_executable(rfhutil_loader_tests core/MqLoaderTests.cpp)
 target_link_libraries(rfhutil_loader_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_loader_tests PROPERTIES LABELS mq)

@@ -1,0 +1,4 @@
+# The golden message files are exact bytes: no line-end conversion, no whitespace check
+# (plain-crlf.txt ends its lines with CR LF on purpose).
+tests/core/golden/*.bin binary
+tests/core/golden/*.txt -text -whitespace
