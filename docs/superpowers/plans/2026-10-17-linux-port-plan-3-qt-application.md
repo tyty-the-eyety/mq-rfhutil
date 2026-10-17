@@ -1139,18 +1139,18 @@ The set (each file is deterministic; the generator takes the output directory as
 | `binary-all-bytes.bin` | Bytes 0x00–0xFF twice, no MQMD | Binary data survives |
 | `ebcdic-500.bin` | EBCDIC text (CCSID 500), no MQMD | EBCDIC detection |
 | `mqmd-v2-text.bin` | 364-byte MQMD v2 (little endian, CCSID 1208, Format MQSTR) + text | The MQMD path |
-| `mqmd-ebcdic-host.bin` | MQMD (encoding 785, CCSID 500) + EBCDIC text | Host-endian data with an MQMD |
+| `mqmd-ebcdic-host.bin` | MQMD (encoding 785, CCSID 500) + EBCDIC text | Host-endian data with an MQMD. Known difference: the float part of the encoding is not read from the file, so 785 is written back as 529 (the core and, by the source, Windows) |
 | `mqmd-rfh2-text.bin` | MQMD + RFH2 (with name/value data) + text | The header chain |
 | `rfh2-only.bin` | RFH2 + text, no MQMD | A leading header without an MQMD |
 | `mqmd-dlh-rfh2-text.bin` | MQMD + DLH naming RFH2 + RFH2 + text | A two-header chain |
-| `mqmd-bigendian.bin` | Big-endian MQMD (encoding 273) + text | Known difference: Windows reverses the ids (the core keeps them) |
+| `mqmd-bigendian.bin` | Big-endian MQMD (encoding 273) + text | Known difference: Windows swaps the bytes inside each 4-byte word of the ids and the accounting token (the core keeps them) |
 | `mqmd-mqmde-text.bin` | MQMD + MQMDE + text | Known difference: Windows reads the MQMDE at the wrong offset |
 
 - [ ] **Step 1: Write the failing tests** (`GoldenFileTests.cpp`; the table of expectations is written by hand from the layouts, not copied from a read): for every file, `Golden.<name>ReadsAsExpected` (`hadMqmd`, the header types in order, the body bytes, `fileCcsid`, `charFormat`, `fileIntFormat`), `Golden.<name>RoundTripsByteForByte` (read with the default options, write with `includeMqmd = hadMqmd`, compare the bytes; for the two known-difference files the test asserts the core's documented behaviour instead and says so in a comment), `Golden.<name>MatchesItsManifestHash` (the SHA-256 in `MANIFEST.md`, so a changed file is noticed), and for the plain text files the Character, Hex and Both views as text the implementer derives by hand from the layout rules (32 characters or 16 bytes a line, 8-digit decimal offsets, CR LF line ends; see `Format_*` tests), asserted exactly. Add `GoldenGenerator.RegeneratesIdenticalFiles`, a CTest that runs the built `rfh_make_goldens` into a temporary directory and compares it with `tests/core/golden/`.
 - [ ] **Step 2: Run them:** the build fails (`rfh_make_goldens` and the files do not exist).
 - [ ] **Step 3: Write the generator, run it into `tests/core/golden/`,** record the SHA-256 of each file in `MANIFEST.md` together with a one-line description of what each byte range is (so a human can check the layout), and add the targets to `tests/CMakeLists.txt`.
 - [ ] **Step 4: Write the comparison tools and the procedure.** `MANIFEST.md` has, per file, the exact steps to produce the Windows counterpart in RFHUtil on Windows (Read menu options, Write menu options, `Include MQMD` on or off, `Save File`), because Windows' defaults decide whether the output has an MQMD. `compare-windows-output.sh DIR` (and the `.ps1` twin using `fc /b` or `Compare-Object` on bytes) compares each file of `DIR` with the golden of the same name, prints `same`, `DIFFERENT (expected: <reason>)` for the two known-difference files, or `DIFFERENT` for any other, and exits non-zero on an unexpected difference. A test (`Golden.CompareScriptReportsDifferences`, run through `bash`) checks the script on a temporary directory with one identical, one modified and one known-difference file.
-- [ ] **Step 5: Run all tests;** report the count. Confirm `git diff --check` is clean and that no file under `tests/core/golden/` is larger than 4 KB.
+- [ ] **Step 5: Run all tests;** report the count. Confirm `git diff --check` is clean and that no golden message file (`MANIFEST.md` excluded) is larger than 4 KB.
 - [ ] **Step 6: Commit:** `test(core): add the golden message files, their generator and the Windows comparison`. The commit message says the files are not yet confirmed by Windows.
 
 ---
