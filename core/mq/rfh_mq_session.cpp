@@ -11,7 +11,9 @@
 
 #include <cmqcfc.h>
 
+#include "rfh_connect_security.h"
 #include "rfh_header_chain.h"
+#include "rfh_trace.h"
 #include "rfh_pcf_queues.h"
 #include "mqsubs.h"
 
@@ -146,6 +148,12 @@ namespace rfh
 		browseCursor = 0;
 	}
 
+	void ConnectOptions::wipePassword()
+	{
+		detail::secureZero(&password[0], password.size());
+		password.clear();
+	}
+
 	Result MqSession::connect(const ConnectOptions & options)
 	{
 		if (isConnected())
@@ -189,6 +197,7 @@ namespace rfh
 		MQCNO cno = { MQCNO_DEFAULT };
 		MQCD cd = { MQCD_CLIENT_CONN_DEFAULT };
 		MQCSP csp = { MQCSP_DEFAULT };
+		MQSCO sco = { MQSCO_DEFAULT };
 		cno.Version = MQCNO_VERSION_6;	// SecurityParmsPtr (v5) and CCDTUrlPtr (v6)
 		// Handles are not tied to the creating thread, and a second session on the same
 		// thread gets its own connection instead of MQRC_ALREADY_CONNECTED.
@@ -227,20 +236,32 @@ namespace rfh
 			}
 		}
 
-		// IDPWOS rule: attach credentials only when a password is supplied
-		if (!options.password.empty())
+		// TLS, security exit, local address and credentials (rfh_connect_security.h); nothing reaches MQ if a value is refused
+		std::vector<std::string> securityWarnings;
+		Result secured = detail::applyConnectSecurity(options, cno, (cno.ClientConnPtr != nullptr) ? &cd : nullptr, sco, csp,
+		                                              passwordScratch, securityWarnings);
+		if (!secured.ok())
 		{
-			csp.AuthenticationType = MQCSP_AUTH_USER_ID_AND_PWD;
-			csp.CSPUserIdPtr = const_cast<char *>(options.userId.c_str());
-			csp.CSPUserIdLength = (MQLONG)options.userId.size();
-			csp.CSPPasswordPtr = const_cast<char *>(options.password.c_str());
-			csp.CSPPasswordLength = (MQLONG)options.password.size();
-			cno.SecurityParmsPtr = &csp;
+			return secured;
+		}
+
+		RfhTrace * trace = rfhGetTrace();
+		if (trace->isTraceEnabled())
+		{
+			trace->logTraceEntry(detail::describeConnect(options).c_str());
 		}
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
 		api.connx(qmName, &cno, &hConn, &cc, &rc);
+
+		// MQ has what it needs: no readable copy of the password stays with the session
+		detail::secureZero(passwordScratch.data(), passwordScratch.size());
+
+		if (trace->isTraceEnabled())
+		{
+			trace->logTraceEntry(("MQCONNX cc=" + std::to_string(cc) + " rc=" + std::to_string(rc)).c_str());
+		}
 
 		if (cc == MQCC_FAILED)
 		{
@@ -249,6 +270,7 @@ namespace rfh
 
 		Result result = Result::fromMq("MQCONNX", cc, rc);
 		result.warnings.insert(result.warnings.end(), loaded.warnings.begin(), loaded.warnings.end());
+		result.warnings.insert(result.warnings.end(), securityWarnings.begin(), securityWarnings.end());
 
 		if (cc != MQCC_FAILED)
 		{

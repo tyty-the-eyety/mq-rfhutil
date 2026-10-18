@@ -77,6 +77,27 @@ namespace rfh_test
         MQBYTE24 groupId = {0};      // MQMD.GroupId as sent (a version 2 descriptor)
     };
 
+    // One MQCONNX as the fake saw it (Task 16). The structures are copied byte for byte at the time of the call,
+    // with the strings their pointers address, because the caller's buffers do not outlive the call (and a
+    // session may wipe them). passwordPtr is the address MQCSP.CSPPasswordPtr held: a test may read it after
+    // the call only when it knows the session still owns that memory. Nothing here is a real credential.
+    struct ConnxRecord
+    {
+        std::string qmName;          // the queue manager name argument, trimmed
+        MQCNO cno = {MQCNO_DEFAULT};
+        bool hasClientConn = false;  // MQCNO.ClientConnPtr was set; cd is then a copy of the MQCD
+        MQCD cd = {MQCD_CLIENT_CONN_DEFAULT};
+        bool hasSslConfig = false;   // MQCNO.SSLConfigPtr was set; sco is then a copy of the MQSCO
+        MQSCO sco = {MQSCO_DEFAULT};
+        bool hasSecurityParms = false;   // MQCNO.SecurityParmsPtr was set; csp is then a copy of the MQCSP
+        MQCSP csp = {MQCSP_DEFAULT};
+        std::string userId;          // CSPUserIdLength bytes at CSPUserIdPtr
+        std::vector<char> password;  // CSPPasswordLength bytes at CSPPasswordPtr
+        const void * passwordPtr = nullptr;
+        std::string sslPeerName;     // SSLPeerNameLength bytes at MQCD.SSLPeerNamePtr
+        std::string ccdtUrl;         // CCDTUrlLength bytes at MQCNO.CCDTUrlPtr
+    };
+
     struct CloseRecord
     {
         std::string queue;           // the queue the handle referred to
@@ -98,6 +119,8 @@ namespace rfh_test
         MQLONG closeRc = MQRC_NONE;
         MQLONG discRc = MQRC_NONE;
         MQLONG putRc = MQRC_NONE;
+        MQLONG connxRc = MQRC_NONE;   // MQCONNX answers with this reason, completion code connxCc (Task 16)
+        MQLONG connxCc = MQCC_FAILED;
         MQLONG cmitRc = MQRC_NONE;    // MQCMIT answers with this reason (Task 14)
         MQLONG cmitCc = MQCC_FAILED;  // ... and this completion code when cmitRc is not MQRC_NONE (a test may ask for MQCC_WARNING)
         MQLONG platform = MQPL_UNIX;
@@ -139,6 +162,7 @@ namespace rfh_test
         std::vector<OpenRecord> openLog;       // opens of queues
         std::vector<OpenRecord> qmgrOpenLog;   // opens of the queue manager object
         std::vector<GetRecord> getLog;
+        std::vector<ConnxRecord> connxLog;     // one per MQCONNX (Task 16)
         std::vector<CloseRecord> closeLog;
         std::vector<PutRecord> putLog;
         std::vector<std::string> deletedQueues;      // dynamic queues removed by a close with MQCO_DELETE_PURGE
@@ -188,11 +212,62 @@ namespace rfh_test
             return (it == fake.handleNames.end()) ? nullptr : fake.find(it->second);
         }
 
-        inline void fakeConnx(PMQCHAR, PMQCNO, PMQHCONN hConn, PMQLONG cc, PMQLONG rc)
+        inline void fakeConnx(PMQCHAR qmName, PMQCNO cno, PMQHCONN hConn, PMQLONG cc, PMQLONG rc)
         {
-            fakeMq().connxCalls++;
+            FakeMq & fake = fakeMq();
+            fake.connxCalls++;
+
+            ConnxRecord record;
+            if (qmName != nullptr)
+            {
+                record.qmName = trimmed(qmName, 48);
+            }
+            if (cno != nullptr)
+            {
+                record.cno = *cno;
+                if (cno->ClientConnPtr != nullptr)
+                {
+                    record.hasClientConn = true;
+                    memcpy(&record.cd, cno->ClientConnPtr, sizeof(MQCD));
+                    const MQCD * cd = static_cast<const MQCD *>(cno->ClientConnPtr);
+                    if ((cd->SSLPeerNamePtr != nullptr) && (cd->SSLPeerNameLength > 0))
+                    {
+                        record.sslPeerName.assign(static_cast<const char *>(cd->SSLPeerNamePtr), (size_t)cd->SSLPeerNameLength);
+                    }
+                }
+                if (cno->SSLConfigPtr != nullptr)
+                {
+                    record.hasSslConfig = true;
+                    memcpy(&record.sco, cno->SSLConfigPtr, sizeof(MQSCO));
+                }
+                if (cno->SecurityParmsPtr != nullptr)
+                {
+                    record.hasSecurityParms = true;
+                    memcpy(&record.csp, cno->SecurityParmsPtr, sizeof(MQCSP));
+                    if ((record.csp.CSPUserIdPtr != nullptr) && (record.csp.CSPUserIdLength > 0))
+                    {
+                        record.userId.assign(static_cast<const char *>(record.csp.CSPUserIdPtr), (size_t)record.csp.CSPUserIdLength);
+                    }
+                    if ((record.csp.CSPPasswordPtr != nullptr) && (record.csp.CSPPasswordLength > 0))
+                    {
+                        const char * password = static_cast<const char *>(record.csp.CSPPasswordPtr);
+                        record.password.assign(password, password + record.csp.CSPPasswordLength);
+                        record.passwordPtr = record.csp.CSPPasswordPtr;
+                    }
+                }
+                if ((cno->CCDTUrlPtr != nullptr) && (cno->CCDTUrlLength > 0))
+                {
+                    record.ccdtUrl.assign(static_cast<const char *>(cno->CCDTUrlPtr), (size_t)cno->CCDTUrlLength);
+                }
+            }
+            fake.connxLog.push_back(record);
+
             *hConn = 1;
-            report(MQRC_NONE, cc, rc);
+            report(fake.connxRc, cc, rc);
+            if (fake.connxRc != MQRC_NONE)
+            {
+                *cc = fake.connxCc;
+            }
         }
 
         inline void fakeDisc(PMQHCONN, PMQLONG cc, PMQLONG rc)

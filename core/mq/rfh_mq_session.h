@@ -37,12 +37,42 @@ namespace rfh
 		MQLONG heartbeat = 60;		// seconds; client channel definitions only
 		MQLONG keepAlive = MQKAI_AUTO;
 
-		// Credentials are sent only when a password is given (the IDPWOS rule).
-		// MqSession does not copy or trace the password; it is referenced only during
-		// MQCONNX. The caller owns the string and should clear it when done (a future
-		// reconnect option will need the caller to supply credentials again).
+		// Credentials are sent only when a password is given and a user id with it (the IDPWOS rule; Windows
+		// connect2QM 10753-10789). A user id without a password, or a password without a user id, is not sent and
+		// a warning says so; Windows drops both silently. Limits are the Windows dialog's (ConnUser.cpp 59-62):
+		// user id 255, password 1024 bytes; longer values fail the connect without a call to MQ.
+		//
+		// PASSWORDS LIVE ONLY IN MEMORY. connect() copies the password into a buffer of its own for MQCSP, wipes
+		// that buffer as soon as MQCONNX returns, and never writes the password to a trace, a warning, an error or
+		// Result::text. The caller's string is the caller's: call wipePassword() when the connect is done.
+		// MQ may keep its own copy (a client library keeps credentials for an automatic reconnect, which this
+		// session does not request); that copy is not reachable from here.
 		std::string userId;
 		std::string password;
+
+		// Overwrites the bytes of `password` with zeros and empties it.
+		void wipePassword();
+
+		// TLS (Windows connect2QM 10867-10951; General::OnSetConnUser 2347-2412; ConnUser.cpp 59-79). Client mode
+		// only: a bindings connection ignores every field of this group and says so in a warning when one is set.
+		// Nothing below is used unless sslEnabled is true. With a channel (channel/connName), the channel
+		// definition carries the cipher spec, peer name and client authentication; with only a CCDT or MQSERVER
+		// those come from there, a cipher spec given here is rejected (it would be ignored and the connection
+		// could silently be unencrypted), and a peer name, client validation, security exit or local address
+		// given here is ignored with a warning. Where Windows silently cuts a value, this rejects it.
+		bool sslEnabled = false;				// Windows m_use_ssl; Windows also requires a cipher spec, see cipherSpec
+		std::string cipherSpec;					// MQCD.SSLCipherSpec, at most 32 characters (Windows cuts at 31); required with a channel
+		std::string keyRepository;				// MQSCO.KeyRepository, at most 255 characters (Windows ignores longer ones); empty keeps MQ's default
+		std::string sslPeerName;				// MQCD.SSLPeerNamePtr/Length, at most 1024 bytes
+		bool sslClientValidation = false;		// MQCD.SSLClientAuth REQUIRED when true, OPTIONAL when false (Windows m_ssl_validate)
+		bool fipsRequired = false;				// MQSCO.FipsRequired = MQSSL_FIPS_YES (MQSCO version 2)
+		int sslResetCount = 0;					// MQSCO.KeyResetCount, 0 to 999999999
+		std::string certificateLabel;			// MQSCO.CertificateLabel (version 5), at most 64 characters. Not in Windows.
+
+		// Client mode with a channel only.
+		std::string securityExit;				// MQCD.SecurityExit, at most 128 characters
+		std::string securityData;				// MQCD.SecurityUserData, at most 32; ignored, with a warning, without securityExit (as Windows, silently)
+		std::string localAddress;				// MQCD.LocalAddress, at most 48 characters (Windows cuts)
 	};
 
 	enum class BindOption { AsQueueDefinition, OnOpen, NotFixed, OnGroup };
@@ -303,6 +333,7 @@ namespace rfh
 		std::string openSelector;		// the selector the open queue handle was opened with
 		std::string openAlternateUser;	// the alternate user id it was opened with, cut to 12 characters
 		QueueManagerInfo qmInfo;
+		std::vector<char> passwordScratch;	// the password as MQCSP sees it during MQCONNX; zeroed (not freed) afterwards
 		long browseCursor = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
 	};
 }

@@ -85,7 +85,7 @@ add_executable(rfhutil_mq_tests core/MqSessionTests.cpp)
 target_link_libraries(rfhutil_mq_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_tests PROPERTIES LABELS mq RUN_SERIAL TRUE)
 
-add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp core/ListQueuesTests.cpp core/GetOptionsTests.cpp)
+add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp core/ListQueuesTests.cpp core/GetOptionsTests.cpp core/ConnectSecurityTests.cpp)
 target_link_libraries(rfhutil_mq_fake_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_fake_tests)
 
@@ -116,6 +116,7 @@ rfh_add_memcheck_test(memcheck.ListQueues rfhutil_mq_fake_tests "ListQueues.*:Pc
 
 # The connection string parser reads caller text of any shape; run it on exact-size strings under the guard allocator.
 rfh_add_memcheck_test(memcheck.ConnectString rfhutil_core_tests "ConnectString.*")
+rfh_add_memcheck_test(memcheck.ConnectSecurity rfhutil_mq_fake_tests "ConnectSecurityTest.*:ConnectOptionsWipe.*")
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
 rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")
