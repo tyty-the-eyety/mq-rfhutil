@@ -890,3 +890,224 @@ TEST_F(MqSessionFakeTest, PurgeOfTheBrowsedQueueResetsThePosition)
     EXPECT_EQ(fake.openCalls, fake.closeCalls);
     EXPECT_TRUE(fake.liveHandles.empty());
 }
+
+// ---- put options and commit (Windows: putMessage 6290-6351, openQ 11973-11991, commitUOW 12558) ----
+
+namespace
+{
+    Message putText()
+    {
+        Message m;
+        m.body.assign({'a', 'b'});
+        return m;
+    }
+}
+
+TEST_F(MqSessionFakeTest, PutDefaultsAreUnchanged)
+{
+    connect();
+    Message m = putText();
+    ASSERT_TRUE(session.put("Q", m, PutOptions()).ok());
+
+    // the options the put used before Task 14: no syncpoint, no logical order, no alternate user
+    EXPECT_EQ((MQLONG)(MQPMO_NO_SYNCPOINT | MQPMO_FAIL_IF_QUIESCING | MQPMO_NEW_MSG_ID), fake.lastPmoOptions);
+    EXPECT_EQ(MQPMO_VERSION_1, fake.lastPmoVersion);
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_EQ((MQLONG)(MQOO_OUTPUT | MQOO_FAIL_IF_QUIESCING), fake.openLog[0].options);
+    EXPECT_EQ("", fake.openLog[0].alternateUser);
+    EXPECT_EQ(0, fake.commitCalls);
+}
+
+TEST_F(MqSessionFakeTest, PutLogicalOrderSetsItsFlag)
+{
+    connect();
+    PutOptions options;
+    options.logicalOrder = true;
+    Message m = putText();
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+
+    EXPECT_NE(0, fake.lastPmoOptions & MQPMO_LOGICAL_ORDER);
+    EXPECT_NE(0, fake.lastPmoOptions & MQPMO_NO_SYNCPOINT) << "logical order does not imply syncpoint (Windows 6342-6351 decides that from the group and segment flags)";
+    EXPECT_EQ(MQPMO_VERSION_2, fake.lastPmoVersion) << "Windows 6293 sets version 2";
+}
+
+TEST_F(MqSessionFakeTest, PutSyncpointReplacesNoSyncpoint)
+{
+    connect();
+    PutOptions options;
+    options.syncpoint = true;
+    Message m = putText();
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+
+    EXPECT_NE(0, fake.lastPmoOptions & MQPMO_SYNCPOINT);
+    EXPECT_EQ(0, fake.lastPmoOptions & MQPMO_NO_SYNCPOINT);
+    EXPECT_NE(0, fake.lastPmoOptions & MQPMO_FAIL_IF_QUIESCING);
+    EXPECT_EQ(0, fake.commitCalls) << "a put never commits by itself";
+}
+
+TEST_F(MqSessionFakeTest, PutAlternateUserIsPassedAtOpen)
+{
+    connect();
+    PutOptions options;
+    options.alternateUser = "ALTUSER";
+    Message m = putText();
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_NE(0, fake.openLog[0].options & MQOO_ALTERNATE_USER_AUTHORITY);
+    EXPECT_NE(0, fake.openLog[0].options & MQOO_OUTPUT);
+    EXPECT_EQ("ALTUSER", fake.openLog[0].alternateUser);
+}
+
+TEST_F(MqSessionFakeTest, PutAlternateUserLongerThan12CharactersIsCutAndSaid)
+{
+    connect();
+    PutOptions options;
+    options.alternateUser = "ABCDEFGHIJKLMNOP";
+    Message m = putText();
+    Result r = session.put("Q", m, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_EQ("ABCDEFGHIJKL", fake.openLog[0].alternateUser) << "openQ 11978-11990 cuts to MQ_USER_ID_LENGTH";
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_NE(std::string::npos, r.warnings[0].find("cut to 12 characters")) << r.warnings[0];
+}
+
+TEST_F(MqSessionFakeTest, PutReopensWhenTheAlternateUserChanges)
+{
+    connect();
+    Message m = putText();
+    PutOptions plain;
+    ASSERT_TRUE(session.put("Q", m, plain).ok());
+    ASSERT_TRUE(session.put("Q", m, plain).ok());
+    EXPECT_EQ(1, fake.openCalls) << "the same options reuse the handle";
+
+    PutOptions alt;
+    alt.alternateUser = "OTHER";
+    ASSERT_TRUE(session.put("Q", m, alt).ok());
+    EXPECT_EQ(2, fake.openCalls);
+    EXPECT_EQ(1, fake.closeCalls) << "the earlier handle is closed, not leaked";
+    ASSERT_TRUE(session.put("Q", m, alt).ok());
+    EXPECT_EQ(2, fake.openCalls);
+
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PutSyncpointDoesNotChangeTheOpenHandle)
+{
+    connect();
+    Message m = putText();
+    PutOptions options;
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+    options.syncpoint = true;
+    options.logicalOrder = true;
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+    EXPECT_EQ(1, fake.openCalls) << "syncpoint and logical order are put options, not open options";
+}
+
+TEST_F(MqSessionFakeTest, CommitCallsMqcmit)
+{
+    connect();
+    Result r = session.commit();
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc);
+    EXPECT_EQ(1, fake.commitCalls);
+    EXPECT_TRUE(session.isConnected());
+}
+
+TEST_F(MqSessionFakeTest, CommitWithNothingPendingSucceeds)
+{
+    connect();
+    ASSERT_TRUE(session.commit().ok());
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(2, fake.commitCalls) << "MQ decides that there is nothing to commit; the session does not track a unit of work";
+    EXPECT_EQ(0, fake.putCalls);
+}
+
+TEST_F(MqSessionFakeTest, CommitAfterSyncpointPutsKeepsTheQueueHandle)
+{
+    connect();
+    Message m = putText();
+    PutOptions options;
+    options.syncpoint = true;
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(1, fake.commitCalls);
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+    EXPECT_EQ(1, fake.openCalls) << "a commit does not close the queue";
+
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, CommitWithoutAConnectionFails)
+{
+    Result r = session.commit();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Not connected to a queue manager", r.text);
+    EXPECT_EQ(0, fake.commitCalls) << "MQCMIT is not called without a connection handle";
+}
+
+TEST_F(MqSessionFakeTest, CommitFailureIsReportedAndKeepsTheConnection)
+{
+    connect();
+    fake.cmitRc = MQRC_SYNCPOINT_NOT_AVAILABLE;
+    Result r = session.commit();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_EQ(MQRC_SYNCPOINT_NOT_AVAILABLE, r.rc);
+    EXPECT_NE(std::string::npos, r.text.find("MQCMIT")) << r.text;
+    EXPECT_TRUE(session.isConnected()) << "the session does not disconnect on its own; Windows' discQM (12587) is the caller's flow";
+    EXPECT_EQ(0, fake.discCalls);
+}
+
+TEST_F(MqSessionFakeTest, CommitWarningIsASuccessWithItsReason)
+{
+    connect();
+    fake.cmitRc = MQRC_OUTCOME_MIXED;
+    fake.cmitCc = MQCC_WARNING;
+    Result r = session.commit();
+    EXPECT_TRUE(r.ok()) << "Windows 12573 treats any cc but OK as a failure; here the cc and rc are for the caller to read";
+    EXPECT_EQ(MQCC_WARNING, r.cc);
+    EXPECT_EQ(MQRC_OUTCOME_MIXED, r.rc);
+    EXPECT_TRUE(session.isConnected());
+}
+
+TEST_F(MqSessionFakeTest, CommitOnALostConnectionReleasesTheSession)
+{
+    connect();
+    Message m = putText();
+    PutOptions options;
+    options.syncpoint = true;
+    ASSERT_TRUE(session.put("Q", m, options).ok());
+
+    fake.cmitRc = MQRC_CONNECTION_BROKEN;
+    Result r = session.commit();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(1, fake.discCalls);
+    EXPECT_TRUE(fake.liveHandles.empty()) << "the queue handle went with the connection";
+
+    Result again = session.commit();
+    EXPECT_FALSE(again.ok());
+    EXPECT_EQ(1, fake.commitCalls) << "no second MQCMIT on a dead connection";
+}
+
+TEST(MqSessionFakeApi, ApiWithoutACommitEntryIsRejected)
+{
+    fake.reset();
+    MqApi api = fakeApi();
+    api.cmit = nullptr;
+    MqSession session(api);
+
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    Result r = session.connect(options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Injected MQ API is incomplete", r.text);
+    EXPECT_EQ(0, fake.connxCalls);
+}

@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 
+#include <dlfcn.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1217,6 +1218,251 @@ TEST_F(MqBindingsTest, InputSharedLetsASecondSessionOpenAQueueWhoseDefaultIsExcl
 
     ASSERT_TRUE(other.disconnect().ok());
     ASSERT_TRUE(session.closeQueue().ok());
+}
+
+// ---- put options, syncpoint and commit (Task 14) ----
+
+namespace
+{
+    // MQBACK is not in MqApi (Windows' rollbackUOW is not part of this task), so the test resolves it from the
+    // library the session loaded. The library is already in the process; RTLD_NOLOAD never loads another one.
+    bool backOut(MQHCONN connection, MQLONG & cc, MQLONG & rc)
+    {
+        MqApi api;
+        if (!MqLoader::load(api).ok())
+        {
+            return false;
+        }
+        void * library = dlopen(api.libraryPath.c_str(), RTLD_NOW | RTLD_NOLOAD);
+        if (library == nullptr)
+        {
+            return false;
+        }
+        decltype(&::MQBACK) back = reinterpret_cast<decltype(&::MQBACK)>(dlsym(library, "MQBACK"));
+        if (back == nullptr)
+        {
+            return false;
+        }
+        back(connection, &cc, &rc);
+        return true;
+    }
+
+    MQLONG depthOf(MqSession & s, const char * queue)
+    {
+        MQLONG count = -1;
+        Result r = s.depth(queue, count);
+        EXPECT_TRUE(r.ok()) << r.text;
+        return count;
+    }
+}
+
+TEST_F(MqBindingsTest, SyncpointPutsAreInvisibleToAnotherSessionUntilTheyAreCommitted)
+{
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession other;
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+
+    PutOptions options;
+    options.syncpoint = true;
+    Message one = textMessage("one");
+    Message two = textMessage("two");
+    ASSERT_TRUE(session.put(kQueue, one, options).ok());
+    ASSERT_TRUE(session.put(kQueue, two, options).ok());
+
+    // MQ counts uncommitted puts in the current depth, so the depth shows them to every connection ...
+    EXPECT_EQ(2, depthOf(other, kQueue)) << "CURDEPTH includes uncommitted puts";
+    // ... while the messages themselves are not visible to another connection until the commit
+    Message seen;
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, seen, browse).rc);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, seen, GetOptions()).rc);
+
+    Result committed = session.commit();
+    ASSERT_TRUE(committed.ok()) << committed.text;
+    EXPECT_EQ(2, depthOf(other, kQueue));
+    ASSERT_TRUE(other.get(kQueue, seen, browse).ok()) << "visible after the commit";
+
+    Message in;
+    ASSERT_TRUE(other.get(kQueue, in, GetOptions()).ok());
+    EXPECT_EQ("one", bodyText(in));
+    ASSERT_TRUE(other.get(kQueue, in, GetOptions()).ok());
+    EXPECT_EQ("two", bodyText(in));
+    ASSERT_TRUE(other.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, ASyncpointPutThatIsBackedOutNeverBecomesVisible)
+{
+    // MqSession has no back-out and does not expose its connection handle, so the test makes a connection of
+    // its own with the loaded entry points, puts under syncpoint exactly as MqSession::put does, and backs out.
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession other;
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+
+    MqApi api;
+    ASSERT_TRUE(MqLoader::load(api).ok());
+    MQHCONN raw = MQHC_UNUSABLE_HCONN;
+    MQCNO cno = { MQCNO_DEFAULT };
+    cno.Options = MQCNO_STANDARD_BINDING;
+    MQLONG cc = MQCC_OK;
+    MQLONG rc = MQRC_NONE;
+    std::string qmName = bindingsQm();
+    api.connx(const_cast<char *>(qmName.c_str()), &cno, &raw, &cc, &rc);
+    ASSERT_EQ(MQCC_OK, cc) << rc;
+
+    MQOD od = { MQOD_DEFAULT };
+    strncpy(od.ObjectName, kQueue, sizeof(od.ObjectName));
+    MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
+    api.open(raw, &od, MQOO_OUTPUT | MQOO_FAIL_IF_QUIESCING, &obj, &cc, &rc);
+    ASSERT_EQ(MQCC_OK, cc) << rc;
+    MQMD md = { MQMD_DEFAULT };
+    MQPMO pmo = { MQPMO_DEFAULT };
+    pmo.Options = MQPMO_SYNCPOINT | MQPMO_NEW_MSG_ID;
+    char text[] = "backed out";
+    api.put(raw, obj, &md, &pmo, (MQLONG)strlen(text), text, &cc, &rc);
+    ASSERT_EQ(MQCC_OK, cc) << rc;
+    EXPECT_EQ(1, depthOf(other, kQueue)) << "the uncommitted put is counted";
+    ASSERT_TRUE(backOut(raw, cc, rc));
+    EXPECT_EQ(MQCC_OK, cc) << rc;
+    api.close(raw, &obj, MQCO_NONE, &cc, &rc);
+    api.disc(&raw, &cc, &rc);
+
+    EXPECT_EQ(0, depthOf(other, kQueue));
+    Message in;
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, in, GetOptions()).rc);
+    ASSERT_TRUE(other.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, ADisconnectWithoutACommitCommitsTheSyncpointPuts)
+{
+    // MQDISC commits what the connection left pending. Windows' closeQ rolls back only when unitOfWorkActive
+    // is set, and a put never sets it, so the Windows flow depends on this too (Task 23 decides what to do).
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession other;
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+
+    PutOptions options;
+    options.syncpoint = true;
+    Message one = textMessage("left pending");
+    ASSERT_TRUE(session.put(kQueue, one, options).ok());
+    Message seen;
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, seen, GetOptions()).rc);
+
+    ASSERT_TRUE(session.disconnect().ok());
+    Result r = other.get(kQueue, seen, GetOptions());
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("left pending", bodyText(seen));
+    ASSERT_TRUE(other.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, CommitWithNothingPendingSucceedsAndLeavesTheQueueAlone)
+{
+    Message one = textMessage("now");
+    ASSERT_TRUE(session.put(kQueue, one, PutOptions()).ok());
+    Result r = session.commit();
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc);
+    EXPECT_EQ(1, depthOf(session, kQueue));
+    EXPECT_TRUE(session.isConnected());
+}
+
+TEST_F(MqBindingsTest, ACommitCoversTheGetsOfTheSessionToo)
+{
+    Message one = textMessage("kept");
+    ASSERT_TRUE(session.put(kQueue, one, PutOptions()).ok());
+    // a destructive get is not under syncpoint here (the core's gets use MQGMO_NO_SYNCPOINT), so the commit
+    // changes nothing and the message is gone for good
+    Message in;
+    ASSERT_TRUE(session.get(kQueue, in, GetOptions()).ok());
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(0, depthOf(session, kQueue));
+}
+
+TEST_F(MqBindingsTest, ALogicalOrderGroupPutUnderSyncpointCommitsAsOneGroup)
+{
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession other;
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+
+    PutOptions options;
+    options.logicalOrder = true;
+    options.syncpoint = true;
+    Message first = textMessage("g1");
+    first.mqmd.MsgFlags = MQMF_MSG_IN_GROUP;
+    Result r = session.put(kQueue, first, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    Message last = textMessage("g2");
+    last.mqmd.MsgFlags = MQMF_LAST_MSG_IN_GROUP;
+    r = session.put(kQueue, last, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(0, memcmp(first.mqmd.GroupId, last.mqmd.GroupId, sizeof(first.mqmd.GroupId))) << "the queue manager gave both messages one group id";
+    EXPECT_NE(0, memcmp(first.mqmd.GroupId, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 24));
+
+    Message seen;
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, seen, browse).rc) << "no part of the group is visible before the commit";
+    ASSERT_TRUE(session.commit().ok());
+    ASSERT_TRUE(other.get(kQueue, seen, browse).ok());
+    EXPECT_EQ("g1", bodyText(seen));
+    browse.mode = GetMode::BrowseNext;
+    ASSERT_TRUE(other.get(kQueue, seen, browse).ok());
+    EXPECT_EQ("g2", bodyText(seen));
+    ASSERT_TRUE(other.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, ALogicalOrderPutWithoutTheGroupFlagsIsAcceptedAsAPlainMessage)
+{
+    PutOptions options;
+    options.logicalOrder = true;
+    Message plain = textMessage("plain");
+    Result r = session.put(kQueue, plain, options);
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(1, depthOf(session, kQueue));
+}
+
+TEST_F(MqBindingsTest, APutAlternateUserWithoutAuthorityIsRefusedAndTheSessionGoesOn)
+{
+    PutOptions options;
+    options.alternateUser = "nosuchusr";
+    Message one = textMessage("x");
+    Result r = session.put(kQueue, one, options);
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_EQ(MQRC_NOT_AUTHORIZED, r.rc) << r.text;
+    EXPECT_TRUE(session.isConnected());
+    EXPECT_EQ(0, depthOf(session, kQueue));
+
+    options.alternateUser.clear();
+    r = session.put(kQueue, one, options);
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(1, depthOf(session, kQueue));
+}
+
+TEST_F(MqBindingsTest, APutAlternateUserWithAuthorityPutsTheMessage)
+{
+    const char * user = getenv("USER");
+    if (user == nullptr || user[0] == 0)
+    {
+        GTEST_SKIP() << "USER is not set";
+    }
+
+    PutOptions options;
+    options.alternateUser = user;
+    Message one = textMessage("as me");
+    Result r = session.put(kQueue, one, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(1, depthOf(session, kQueue));
+    Message in;
+    ASSERT_TRUE(session.get(kQueue, in, GetOptions()).ok());
+    EXPECT_EQ("as me", bodyText(in));
 }
 
 TEST(MqClient, PutThenGetOverClientChannel)

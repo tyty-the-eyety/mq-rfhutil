@@ -128,7 +128,8 @@ namespace rfh
 				      resolve(h, "MQCLOSE", found.close, missing) &&
 				      resolve(h, "MQPUT", found.put, missing) &&
 				      resolve(h, "MQGET", found.get, missing) &&
-				      resolve(h, "MQINQ", found.inq, missing)))
+				      resolve(h, "MQINQ", found.inq, missing) &&
+				      resolve(h, "MQCMIT", found.cmit, missing)))
 				{
 					// keep the handle open: the library may already be initialised.
 					// Do not try another library: two MQ libraries must not share a process.

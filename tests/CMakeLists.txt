@@ -72,6 +72,13 @@ gtest_discover_tests(rfhutil_golden_tests)
 
 add_executable(rfhutil_loader_tests core/MqLoaderTests.cpp)
 target_link_libraries(rfhutil_loader_tests PRIVATE rfhcore GTest::gtest_main)
+# A library without MQCMIT, for the loader's missing-entry-point test (Linux only: it is loaded with dlopen).
+if(UNIX)
+    add_library(rfh_stub_mqm_no_cmit SHARED core/stub_mqm_no_cmit.cpp)
+    set_target_properties(rfh_stub_mqm_no_cmit PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+    add_dependencies(rfhutil_loader_tests rfh_stub_mqm_no_cmit)
+    target_compile_definitions(rfhutil_loader_tests PRIVATE RFH_STUB_NO_CMIT="$<TARGET_FILE:rfh_stub_mqm_no_cmit>")
+endif()
 gtest_discover_tests(rfhutil_loader_tests PROPERTIES LABELS mq)
 
 add_executable(rfhutil_mq_tests core/MqSessionTests.cpp)

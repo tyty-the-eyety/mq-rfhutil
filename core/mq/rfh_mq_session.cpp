@@ -158,7 +158,7 @@ namespace rfh
 		qmInfo = QueueManagerInfo();
 
 		if (apiInjected && ((api.connx == nullptr) || (api.disc == nullptr) || (api.open == nullptr) ||
-		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr)))
+		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr) || (api.cmit == nullptr)))
 		{
 			return Result::failure("Injected MQ API is incomplete");
 		}
@@ -538,14 +538,27 @@ namespace rfh
 			openOpts |= MQOO_SET_IDENTITY_CONTEXT;
 		}
 
-		Result opened = ensureOpen(queue, options.remoteQm, openOpts);
+		std::vector<std::string> notes;
+		OpenExtras extras;
+		extras.alternateUser = alternateUserOf(options.alternateUser);
+		if (extras.alternateUser.size() < options.alternateUser.size())
+		{
+			notes.push_back("The alternate user id was cut to " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
+		}
+
+		Result opened = ensureOpen(queue, options.remoteQm, openOpts, extras);
 		if (!opened.ok())
 		{
 			return opened;
 		}
 
 		MQPMO pmo = { MQPMO_DEFAULT };
-		pmo.Options = MQPMO_NO_SYNCPOINT | MQPMO_FAIL_IF_QUIESCING;
+		pmo.Options = (options.syncpoint ? MQPMO_SYNCPOINT : MQPMO_NO_SYNCPOINT) | MQPMO_FAIL_IF_QUIESCING;
+		if (options.logicalOrder)
+		{
+			pmo.Version = MQPMO_VERSION_2;
+			pmo.Options |= MQPMO_LOGICAL_ORDER;
+		}
 		if (options.newMsgId)
 		{
 			pmo.Options |= MQPMO_NEW_MSG_ID;
@@ -585,11 +598,26 @@ namespace rfh
 		dropIfBroken(rc);
 
 		Result r = Result::fromMq("MQPUT", cc, rc);
+		r.warnings.insert(r.warnings.end(), notes.begin(), notes.end());
 		if (r.ok() && !message.headers.empty() && (splitAt != message.headers.size()))
 		{
 			r.warnings.push_back("headers do not match the MQMD format chain; a get splits them differently");
 		}
 		return r;
+	}
+
+	Result MqSession::commit()
+	{
+		if (!isConnected())
+		{
+			return notConnected();
+		}
+
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		api.cmit(hConn, &cc, &rc);
+		dropIfBroken(rc);
+		return Result::fromMq("MQCMIT", cc, rc);
 	}
 
 	Result MqSession::getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs)

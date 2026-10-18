@@ -31,6 +31,7 @@ namespace rfh
 		decltype(&::MQPUT) put = nullptr;
 		decltype(&::MQGET) get = nullptr;
 		decltype(&::MQINQ) inq = nullptr;
+		decltype(&::MQCMIT) cmit = nullptr;		// both mqm and mqic export it; a library without it is unusable
 
 		bool serverLibrary = false;		// the library can make local connections (mqm); false for the client library
 		// A local queue manager can be reached: serverLibrary and, on Linux,

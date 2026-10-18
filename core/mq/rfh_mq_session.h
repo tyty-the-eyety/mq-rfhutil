@@ -56,6 +56,16 @@ namespace rfh
 		bool newCorrelId = false;
 		bool setIdentityContext = false;	// put the context fields from the MQMD as given
 		bool setAllContext = false;
+		// Added in Task 14 (Windows: DataArea::putMessage 6299-6351, openQ 11973-11991).
+		bool logicalOrder = false;			// MQPMO_LOGICAL_ORDER (and a version 2 MQPMO, as Windows sets)
+		// MQPMO_SYNCPOINT instead of MQPMO_NO_SYNCPOINT. Windows has no such choice: it puts under syncpoint
+		// exactly when the MQMD tab marks a group or segment message (6342-6351), so the caller sets this
+		// from those flags. The put never commits; see MqSession::commit.
+		bool syncpoint = false;
+		// MQOO_ALTERNATE_USER_AUTHORITY with this user id at open; empty means none. At most 12 characters are
+		// used, as in Windows, and a warning says so. It belongs to the queue handle: a put with another id
+		// closes the open handle and opens a new one.
+		std::string alternateUser;
 	};
 
 	enum class GetMode { Destructive, BrowseFirst, BrowseNext, BrowsePrevious };
@@ -147,7 +157,7 @@ namespace rfh
 
 		// For tests and embedding: use the given entry points instead of loading the
 		// IBM MQ library with MqLoader. Every entry point (connx, disc, open, close, put,
-		// get, inq) must be set; connect() fails otherwise.
+		// get, inq, cmit) must be set; connect() fails otherwise.
 		explicit MqSession(const MqApi & injectedApi) : api(injectedApi), apiInjected(true) {}
 		~MqSession();
 
@@ -235,6 +245,15 @@ namespace rfh
 		// Removes every message from queue with destructive gets; count receives how many.
 		Result purge(const std::string & queue, MQLONG & count);
 
+		// MQCMIT on the connection: commits the puts and gets this connection made under syncpoint. With
+		// nothing pending MQ succeeds and so does this; the session keeps no unit-of-work state of its own
+		// (Windows' unitOfWorkActive is set only by MQBEGIN, never by a put). Fails without a connection, where
+		// Windows (commitUOW 12566) does nothing and says nothing. A failure is the MQCMIT reason in the Result
+		// and the connection stays, except a lost one, which releases the session like any other call. Windows
+		// disconnects after any cc other than OK (12584-12588) and treats a warning as that failure; here a
+		// warning is ok() with its rc, and what to do after a failure is the caller's flow. The queue handle
+		// stays open.
+		Result commit();
 		// Closes the open queue handle, if any.
 		Result closeQueue(CloseOption option = CloseOption::None);
 

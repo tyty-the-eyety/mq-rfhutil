@@ -88,6 +88,7 @@ namespace rfh_test
         std::string queue;
         FakeMessage message;
         MQLONG pmoOptions = 0;
+        MQLONG pmoVersion = 0;       // MQPMO.Version as sent (Task 14)
     };
 
     struct FakeMq
@@ -97,6 +98,8 @@ namespace rfh_test
         MQLONG closeRc = MQRC_NONE;
         MQLONG discRc = MQRC_NONE;
         MQLONG putRc = MQRC_NONE;
+        MQLONG cmitRc = MQRC_NONE;    // MQCMIT answers with this reason (Task 14)
+        MQLONG cmitCc = MQCC_FAILED;  // ... and this completion code when cmitRc is not MQRC_NONE (a test may ask for MQCC_WARNING)
         MQLONG platform = MQPL_UNIX;
         MQLONG commandLevel = 940;
         MQLONG qmgrMaxMsgLength = 4194304;   // answered for MQIA_MAX_MSG_LENGTH on the queue manager object (Task 13)
@@ -126,6 +129,7 @@ namespace rfh_test
         int qmgrInqCalls = 0;
         int qmgrCloseCalls = 0;
         MQLONG lastPmoOptions = 0;
+        MQLONG lastPmoVersion = 0;
         MQLONG lastGmoOptions = 0;
         MQLONG lastGmoWaitInterval = 0;
         MQLONG lastGmoMatchOptions = 0;
@@ -317,6 +321,7 @@ namespace rfh_test
             if (pmo != nullptr)
             {
                 fake.lastPmoOptions = static_cast<const MQPMO *>(pmo)->Options;
+                fake.lastPmoVersion = static_cast<const MQPMO *>(pmo)->Version;
             }
 
             FakeQueue * q = queueOf(hObj);
@@ -338,6 +343,7 @@ namespace rfh_test
                 record.queue = (named == fake.handleNames.end()) ? std::string() : named->second;
                 record.message = m;
                 record.pmoOptions = (pmo != nullptr) ? static_cast<const MQPMO *>(pmo)->Options : 0;
+                record.pmoVersion = (pmo != nullptr) ? static_cast<const MQPMO *>(pmo)->Version : 0;
                 fake.putLog.push_back(record);
 
                 if (q != nullptr)
@@ -556,12 +562,16 @@ namespace rfh_test
         }
     }
 
-    // MQCMIT is not in MqApi yet; Task 14 adds it. The entry point exists so that a
-    // test can drive the count, and the API member can be wired to it later.
+    // MQCMIT (Task 14): counted in commitCalls; answers with cmitRc (cmitCc when that is not MQRC_NONE).
     inline void fakeCmit(MQHCONN, PMQLONG cc, PMQLONG rc)
     {
-        fakeMq().commitCalls++;
-        fake_detail::report(MQRC_NONE, cc, rc);
+        FakeMq & fake = fakeMq();
+        fake.commitCalls++;
+        fake_detail::report(fake.cmitRc, cc, rc);
+        if (fake.cmitRc != MQRC_NONE)
+        {
+            *cc = fake.cmitCc;
+        }
     }
 
     inline rfh::MqApi fakeApi()
@@ -574,6 +584,7 @@ namespace rfh_test
         api.put = fake_detail::fakePut;
         api.get = fake_detail::fakeGet;
         api.inq = fake_detail::fakeInq;
+        api.cmit = fakeCmit;
         api.serverLibrary = true;
         api.bindingsAvailable = true;
         api.libraryPath = "fake";
