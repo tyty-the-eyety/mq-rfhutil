@@ -50,6 +50,11 @@ namespace rfhqt
 		rfh::PutOptions put;							// newMsgId, newCorrelId, bind (all four), logicalOrder. remoteQm, the contexts, syncpoint and alternateUser are derived
 		rfh::GetOptions get;							// matchMsgId/matchCorrelId/matchGroupId (applied only for a non-zero id on the MQMD tab), convert, waitMs, selector, properties, logicalOrder, completeMsg, allAvailable
 		rfh::CloseOption closeOption = rfh::CloseOption::None;
+		int fileCodePage = 0;							// Main tab File Code Page; 0 = decide (the MQMD tab, then the system). Replaces read.fileCcsid
+		rfh::fileio::ReadOptions read;					// Read menu; fileCcsid is ignored (see fileCodePage)
+		rfh::fileio::WriteOptions write;				// Write menu
+
+		MainOptions() { write.includeMqmd = true; }		// Write > Include MQMD is on by default (DataArea.cpp:373)
 	};
 
 	// Asks the user. The only question Windows asks is the purge confirmation (General.cpp:900, MB_YESNO).
@@ -89,6 +94,13 @@ namespace rfhqt
 		void browseNext();				// browseNext (DataArea.cpp:8459)
 		void browsePrev();				// browsePrev (DataArea.cpp:8895)
 		void endBrowse();				// endBrowse: depth, close, disconnect, "Browse operation ended" (DataArea.cpp:8425)
+
+		// ---- files, clearing and purging (Main tab) -------------------------------------------------------------------
+		void openFile(const QString & path);	// ReadFileData through fileio::read, on the worker (DataArea.cpp:994)
+		void saveFile(const QString & path);	// WriteFile through fileio::write, with the MQMD of the tab (DataArea.cpp:1778)
+		void clearData();						// clearFileData: the body only (DataArea.cpp:10597)
+		void clearAll();						// DeleteContents: headers, MQMD, file name, depth (DataArea.cpp:1996)
+		void purgeQ();							// OnPurgeQ: depth, confirmation, purgeQueue (General.cpp:866)
 
 		// Stops the running job that polls the cancel flag (a waiting get, a purge, a Browse Prev walk).
 		void cancelGet();
@@ -130,6 +142,7 @@ namespace rfhqt
 		Env capture(bool mayConnect) const;
 		rfh::GetOptions buildGet(rfh::GetMode mode, bool useMatch, MQLONG hostEncoding, bool wait) const;
 		void queueGet(GetKind kind);
+		void startPurge(const QString & queue);
 		void acceptMessage(const rfh::Message & message, const std::string & source, QStringList & warnings);
 		void clearAfterGet(bool clearFileName);
 		QString depthText() const;

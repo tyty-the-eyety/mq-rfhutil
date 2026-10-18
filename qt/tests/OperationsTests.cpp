@@ -12,6 +12,9 @@
 
 #include <QtTest>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -24,6 +27,7 @@
 #include "Operations.h"
 #include "SessionController.h"
 #include "StatusLog.h"
+#include "rfh_format.h"
 #include "rfh_platform.h"
 #include "rfh_trace.h"
 
@@ -105,8 +109,13 @@ namespace
         bool confirm(const QString & text) override
         {
             asked << text;
+            if (onAsk)
+            {
+                onAsk();
+            }
             return answer;
         }
+        std::function<void()> onAsk;
         bool answer = true;
         QStringList asked;
     };
@@ -175,6 +184,71 @@ namespace
     std::string bodyOf(const rfh::Message & m)
     {
         return std::string(m.body.begin(), m.body.end());
+    }
+
+    rfh::Message bodyMessage(const std::string & body, const std::vector<unsigned char> & headers = std::vector<unsigned char>())
+    {
+        rfh::Message m;
+        m.headers = headers;
+        m.body.assign(body.begin(), body.end());
+        return m;
+    }
+
+    void fillQueue(int count, bool persistent = false)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            rfh_test::FakeMessage m = fakeMessage("m" + std::to_string(i));
+            m.md.Persistence = persistent ? MQPER_PERSISTENT : MQPER_NOT_PERSISTENT;
+            enqueue(m);
+        }
+    }
+
+
+    // ---- files ----------------------------------------------------------------------------------------------------
+
+    QByteArray golden(const char * name)
+    {
+        QFile f(QString(RFH_GOLDEN_DIR) + "/" + name);
+        if (!f.open(QIODevice::ReadOnly))
+        {
+            return QByteArray();
+        }
+        return f.readAll();
+    }
+
+    QString goldenPath(const char * name)
+    {
+        return QString(RFH_GOLDEN_DIR) + "/" + name;
+    }
+
+    QByteArray readAll(const QString & path)
+    {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray("<unreadable>");
+    }
+
+    // A document with a message from a queue, to see what a failed file operation leaves alone.
+    void fillDocument(AppDocument & doc)
+    {
+        rfh::Message m;
+        m.body = {'k', 'e', 'p', 't'};
+        rfh::MqmdFields f;
+        f.format = "MQSTR";
+        f.priority = "6";
+        doc.setMqmd(f);
+        doc.setMessage(std::move(m), "Message Data (4) from SOME.QUEUE", true);
+        doc.setFilePath("/tmp/previous.msg");
+    }
+
+    void expectDocumentUntouched(const AppDocument & doc)
+    {
+        QCOMPARE(std::string(doc.message().body.begin(), doc.message().body.end()), std::string("kept"));
+        QCOMPARE(doc.dataSource(), std::string("Message Data (4) from SOME.QUEUE"));
+        QCOMPARE(doc.mqmd().format, std::string("MQSTR"));
+        QCOMPARE(doc.mqmd().priority, std::string("6"));
+        QCOMPARE(doc.filePath(), QString("/tmp/previous.msg"));
+        QVERIFY(doc.dirty());
     }
 
     struct Harness
@@ -1758,14 +1832,6 @@ private slots:
     // Write Q (putMessage DA 6166; General::OnWriteq GEN 334)
     // ======================================================================================================
 
-    static rfh::Message bodyMessage(const std::string & body, const std::vector<unsigned char> & headers = std::vector<unsigned char>())
-    {
-        rfh::Message m;
-        m.headers = headers;
-        m.body.assign(body.begin(), body.end());
-        return m;
-    }
-
     void writeQPutsTheDataWithTheMqmdOfTheTabAndSaysMessageSent()
     {
         Watchdog dog(60);
@@ -2239,6 +2305,738 @@ private slots:
         QCOMPARE(put.message.data.size(), size_t(40));
         QCOMPARE(std::string(put.message.md.Format, 8), std::string("MQHRF2  "));
         QCOMPARE(put.message.md.CodedCharSetId, (MQLONG)1208);
+    }
+
+    // ======================================================================================================
+    // Open File, Save File (ReadDataFile DA 928, ReadFileData DA 994, WriteDataFile DA 1703, WriteFile DA 1778)
+    // The work is fileio's; Operations calls it with the Main options, off the GUI thread, and applies the result.
+    // ======================================================================================================
+
+    void mainOptionsDefaultToWindowsFileSettings()
+    {
+        MainOptions o;
+        QVERIFY2(o.write.includeMqmd, "Write > Include MQMD is on by default (DataArea.cpp:373)");
+        QVERIFY(!o.write.dataOnly);
+        QVERIFY(!o.read.removeCrLf && !o.read.unixLineEnds && !o.read.ignoreHeaders);
+        QCOMPARE(o.fileCodePage, 0);
+    }
+
+    void openFileReadsAPlainFileIntoTheDocument()
+    {
+        Watchdog dog(60);
+        Harness h;
+        const QString path = goldenPath("plain-crlf.txt");
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QCOMPARE(h.lastFlow(), QString("openFile"));
+        QCOMPARE(QByteArray((const char *)h.doc.message().body.data(), (int)h.doc.message().body.size()), golden("plain-crlf.txt"));
+        QCOMPARE(h.doc.dataSource(), std::string("Message Data (56) from ") + path.toStdString());
+        QCOMPARE(h.doc.filePath(), path);
+        QVERIFY(!h.doc.dirty());
+        QCOMPARE(h.entries(), QStringList() << QString("56 bytes read from file %1").arg(path));
+        QCOMPARE(h.doc.render().charFormat, (int)CHAR_ASCII);
+        QVERIFY(h.doc.message().headers.empty());
+        QCOMPARE(fake.connxCalls, 0);			// a file needs no queue manager
+    }
+
+    void openFileTakesTheMqmdTheHeadersAndTheFormatsFromTheFile()
+    {
+        Watchdog dog(60);
+        Harness h;
+        const QString path = goldenPath("mqmd-rfh2-text.bin");
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QCOMPARE(h.doc.mqmd().format, std::string("MQHRF2"));
+        QVERIFY(!h.doc.message().headers.empty());
+        QCOMPARE(h.doc.render().ccsid, h.doc.message().mqmd.CodedCharSetId);
+        QCOMPARE(h.entries().size(), 1);
+        QVERIFY2(h.newest().contains("bytes read (data 9 dlq 0 rfh1 0, rfh2 92 cics 0 ims 0) from file"), qPrintable(h.newest()));	// ReadFileData's breakdown of the headers found
+        QVERIFY(h.doc.hasFile());
+    }
+
+    void openFileUsesTheCodePageAndTheReadOptionsOfTheMainTab()
+    {
+        Watchdog dog(60);
+        {
+            Harness h;
+            MainOptions o;
+            o.fileCodePage = 500;
+            h.ops.setOptions(o);
+            QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("ebcdic-500.bin")); }));
+            QCOMPARE(h.doc.render().ccsid, 500);
+            QCOMPARE(h.doc.render().charFormat, (int)CHAR_EBCDIC);
+        }
+        {
+            Harness h;
+            MainOptions o;
+            o.read.removeCrLf = true;
+            h.ops.setOptions(o);
+            QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("plain-crlf.txt")); }));
+            const QByteArray body((const char *)h.doc.message().body.data(), (int)h.doc.message().body.size());
+            QVERIFY(!body.contains('\r') && !body.contains('\n'));
+        }
+        {
+            Harness h;
+            MainOptions o;
+            o.read.unixLineEnds = true;
+            h.ops.setOptions(o);
+            QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("plain-lf.txt")); }));
+            const QByteArray body((const char *)h.doc.message().body.data(), (int)h.doc.message().body.size());
+            QVERIFY(body.contains("\r\n"));
+            QVERIFY(!body.contains("\n\n"));
+        }
+        {
+            Harness h;
+            MainOptions o;
+            o.read.ignoreHeaders = true;
+            h.ops.setOptions(o);
+            QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("rfh2-only.bin")); }));
+            QVERIFY(h.doc.message().headers.empty());
+            QCOMPARE((int)h.doc.message().body.size(), 127);
+        }
+    }
+
+    void openFileOfAMissingOrUnreadableFileShowsTheWindowsTextAndKeepsTheDocument()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString missing = dir.filePath("nothing.msg");
+        const QString directory = dir.path();
+        for (const QString & path : { missing, directory })
+        {
+            Harness h;
+            fillDocument(h.doc);
+            QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+            QCOMPARE(h.entries(), QStringList() << QString("Could not open file %1").arg(path));		// DA 1046
+            expectDocumentUntouched(h.doc);
+        }
+        if (geteuid() != 0)
+        {
+            const QString locked = dir.filePath("locked.msg");
+            QFile f(locked);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("secret");
+            f.close();
+            QVERIFY(chmod(locked.toLocal8Bit().constData(), 0) == 0);
+            Harness h;
+            fillDocument(h.doc);
+            QVERIFY(h.run([&]() { h.ops.openFile(locked); }));
+            QCOMPARE(h.entries(), QStringList() << QString("Could not open file %1").arg(locked));
+            expectDocumentUntouched(h.doc);
+        }
+    }
+
+    void openFileOfAFileOverTheMessageLimitIsRefusedBeforeItIsReadAndKeepsTheDocument()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString big = dir.filePath("big.msg");
+        QFile f(big);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QVERIFY(f.resize((qint64)rfh::format::kMaxRenderBody + 1));		// sparse: costs no disk
+        f.close();
+        Harness h;
+        fillDocument(h.doc);
+        QVERIFY(h.run([&]() { h.ops.openFile(big); }));
+        QCOMPARE(h.entries(), QStringList() << QString("File %1 is too large: 104857601 bytes, the limit is 104857600 bytes (the largest MQ message)").arg(big));		// NEW
+        expectDocumentUntouched(h.doc);
+        QVERIFY(!h.controller.busy());
+    }
+
+    void openFileOfAFileAtTheLimitIsAccepted()
+    {
+        // the limit is the largest message the Data tab can show; a file of exactly that size is read
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString big = dir.filePath("limit.msg");
+        QFile f(big);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QVERIFY(f.resize((qint64)rfh::format::kMaxRenderBody));
+        f.close();
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.openFile(big); }));
+        QCOMPARE((qint64)h.doc.message().body.size(), (qint64)rfh::format::kMaxRenderBody);
+        QVERIFY(h.newest().contains("bytes read from file"));
+    }
+
+    void openFileOfAnEmptyFileSucceedsWithAnEmptyBody()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        const QString path = dir.filePath("empty.msg");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.close();
+        Harness h;
+        fillDocument(h.doc);
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QCOMPARE(h.entries(), QStringList() << QString("0 bytes read from file %1").arg(path));
+        QVERIFY(h.doc.message().body.empty());
+        QCOMPARE(h.doc.filePath(), path);
+    }
+
+    void openFileOfAShortMqmdIsReadAsData()
+    {
+        // ReadFileData recognises an MQMD only when enough bytes were read for one (DA 1106); 10 bytes are data
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        const QString path = dir.filePath("short.msg");
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("MD  \x02\x00\x00\x00 ab", 10);
+        f.close();
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QCOMPARE((int)h.doc.message().body.size(), 10);
+        QVERIFY(h.doc.message().headers.empty());
+        QVERIFY2(h.newest().startsWith("10 bytes read from file"), qPrintable(h.newest()));
+    }
+
+    void openFileKeepsTheNameInTheStatusWhenItIsLong()
+    {
+        Watchdog dog(60);
+        Harness h;
+        const QString path = goldenPath("plain-lf.txt");
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QVERIFY(h.newest().contains(path));
+    }
+
+    void openFileReturnsAtOnceAndReadsOnTheWorker()
+    {
+        Watchdog dog(60);
+        Harness h;
+        h.finished.clear();
+        h.ops.openFile(goldenPath("plain-crlf.txt"));
+        QCOMPARE(h.finished.count(), 0);			// the GUI thread was not held for the read
+        QVERIFY(h.controller.busy());
+        QVERIFY(h.doc.shell().busy);
+        QVERIFY(h.finished.wait(5000));
+        QVERIFY(h.doc.hasData());
+        QVERIFY(!h.controller.busy());
+    }
+
+    void openFileIsRefusedWhileBusyAndWhileBrowsing()
+    {
+        Watchdog dog(60);
+        Harness h;
+        enqueue(fakeMessage("x"));
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("plain-crlf.txt")); }));
+        QVERIFY(h.log.text().isEmpty());			// OnUpdateOpen: disabled while browsing
+        QVERIFY(!h.doc.hasFile());
+
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));
+        h.log.clear();
+        std::atomic<bool> release{false};
+        QVERIFY(h.controller.submit("block", [&](rfh::MqSession &)
+        {
+            while (!release.load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return JobResult();
+        }));
+        QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("plain-crlf.txt")); }));
+        QCOMPARE(h.entries(), QStringList() << "Another operation is still running");
+        QVERIFY(!h.doc.hasFile());
+        release = true;
+        QSignalSpy done(&h.controller, &SessionController::finished);
+        QVERIFY(done.count() > 0 || done.wait(5000));
+    }
+
+    void goldenFilesRoundTripByteForByteThroughOpenAndSave()
+    {
+        Watchdog dog(60);
+        const char * files[] = {
+            "plain-crlf.txt", "plain-lf.txt", "binary-all-bytes.bin", "ebcdic-500.bin", "mqmd-v2-text.bin",
+            "mqmd-rfh2-text.bin", "mqmd-dlh-rfh2-text.bin", "rfh2-only.bin"
+        };
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        for (const char * name : files)
+        {
+            QByteArray original = golden(name);
+            QVERIFY2(!original.isEmpty(), name);
+            Harness h;
+            MainOptions o;
+            o.write.includeMqmd = original.startsWith("MD  ");		// the file had an MQMD: write one (DA 1822)
+            h.ops.setOptions(o);
+            QVERIFY2(h.run([&]() { h.ops.openFile(goldenPath(name)); }), name);
+            QVERIFY2(h.newest().contains("bytes read"), name);
+            const QString out = dir.filePath(QString("out-") + name);
+            QVERIFY2(h.run([&]() { h.ops.saveFile(out); }), name);
+            QVERIFY2(h.newest().contains("written to file"), qPrintable(h.newest()));
+            QCOMPARE(readAll(out), original);
+            QCOMPARE(h.doc.filePath(), out);
+            QVERIFY(!h.doc.dirty());
+        }
+    }
+
+    void saveFileWritesTheMqmdOfTheTabWithTheDataAndSaysSo()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        Harness h;
+        enqueue(fakeMessage("payload"));
+        QVERIFY(h.run([&]() { h.ops.readQ(); }));
+        // edit the tab: the file gets the tab's descriptor, not the one MQ returned (buildMQMD, DA 1807)
+        rfh::MqmdFields f = h.doc.mqmd();
+        f.priority = "7";
+        h.doc.setMqmd(f);
+        const QString out = dir.filePath("saved.msg");
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        const QByteArray bytes = readAll(out);
+        QCOMPARE(bytes.size(), 364 + 7);
+        QVERIFY(bytes.startsWith("MD  "));
+        MQMD2 md;
+        memcpy(&md, bytes.constData(), sizeof(md));
+        QCOMPARE(md.Priority, (MQLONG)7);
+        QCOMPARE(md.CodedCharSetId, (MQLONG)1208);
+        QCOMPARE(bytes.mid(364), QByteArray("payload"));
+        QCOMPARE(h.entries(), QStringList() << QString("371 bytes (data 7 mqmd 364) written to file %1").arg(out));
+        QCOMPARE(h.doc.filePath(), out);
+        QVERIFY(!h.doc.dirty());
+    }
+
+    void saveFileDataOnlyWritesNoMqmdAndNoHeaders()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        Harness h;
+        MainOptions o;
+        o.write.includeMqmd = false;
+        o.write.dataOnly = true;
+        h.ops.setOptions(o);
+        enqueue(fakeMessage("data", MQFMT_RF_HEADER_2, 1208, 0x11, rfh2Header()));
+        QVERIFY(h.run([&]() { h.ops.readQ(); }));
+        const QString out = dir.filePath("data.msg");
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        QCOMPARE(readAll(out), QByteArray("data"));
+    }
+
+    void saveFileToAnUnwritablePathShowsTheCoreTextAndChangesNothing()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        Harness h;
+        fillDocument(h.doc);
+        const QString out = dir.filePath("no/such/dir/out.msg");
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        QCOMPARE(h.entries().size(), 1);
+        QVERIFY2(h.newest().startsWith("Unable to open output file"), qPrintable(h.newest()));
+        expectDocumentUntouched(h.doc);
+    }
+
+    void saveFileIsRefusedWhileBusy()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        Harness h;
+        std::atomic<bool> release{false};
+        QVERIFY(h.controller.submit("block", [&](rfh::MqSession &)
+        {
+            while (!release.load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return JobResult();
+        }));
+        const QString out = dir.filePath("never.msg");
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        QCOMPARE(h.entries(), QStringList() << "Another operation is still running");
+        QVERIFY(!QFileInfo::exists(out));
+        release = true;
+        QSignalSpy done(&h.controller, &SessionController::finished);
+        QVERIFY(done.count() > 0 || done.wait(5000));
+    }
+
+    void saveFileIsAllowedWhileBrowsing()
+    {
+        // OnWriteFile is never disabled (General.cpp UpdatePageData leaves it on)
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        Harness h;
+        enqueue(fakeMessage("browsed"));
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        const QString out = dir.filePath("browsed.msg");
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        QVERIFY(QFileInfo::exists(out));
+        QVERIFY(h.doc.browse().active);
+    }
+
+    void fileDirectoriesAreRememberedOnSuccessOnly()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("rfhutil.conf"));
+        Harness h;
+        h.ops.setSettings(&settings);
+        QVERIFY(h.run([&]() { h.ops.openFile(dir.filePath("missing.msg")); }));
+        QVERIFY(settings.lastDirectory("open").isEmpty());
+        QVERIFY(h.run([&]() { h.ops.openFile(goldenPath("plain-crlf.txt")); }));
+        QCOMPARE(settings.lastDirectory("open"), QString(RFH_GOLDEN_DIR));
+        const QString out = dir.filePath("out.msg");
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        QCOMPARE(settings.lastDirectory("save"), dir.path());
+    }
+
+    // ======================================================================================================
+    // Clear Data, Clear All (OnClearData GEN 636 -> clearFileData DA 10597; OnClearAll -> DeleteContents DA 1996)
+    // ======================================================================================================
+
+    void clearDataEmptiesOnlyTheBodyAndKeepsTheLog()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillDocument(h.doc);
+        h.log.add("an earlier entry");
+        QVERIFY(h.run([&]() { h.ops.clearData(); }));
+        QCOMPARE(h.lastFlow(), QString("clearData"));
+        QVERIFY(h.doc.message().body.empty());
+        QCOMPARE(h.doc.dataSource(), std::string(AppDocument::EmptySource));
+        QCOMPARE(h.doc.mqmd().format, std::string("MQSTR"));		// the MQMD tab and the file name stay
+        QCOMPARE(h.doc.filePath(), QString("/tmp/previous.msg"));
+        QCOMPARE(h.entries(), QStringList() << "an earlier entry");	// the status log is not cleared (inventory 3.2)
+    }
+
+    void clearAllEmptiesEverythingButTheLogAndTheConnection()
+    {
+        Watchdog dog(60);
+        Harness h;
+        h.connected();
+        fillDocument(h.doc);
+        rfh::QueueInfo info;
+        info.depth = 12;
+        h.doc.setQueueInfo(info);
+        h.log.add("an earlier entry");
+        QVERIFY(h.run([&]() { h.ops.clearAll(); }));
+        QVERIFY(h.doc.message().body.empty());
+        QVERIFY(!h.doc.hasFile());
+        QCOMPARE(h.doc.mqmd().format, std::string());
+        QCOMPARE(h.doc.queueInfo().depth, (MQLONG)0);				// m_q_depth = 0
+        QVERIFY(h.doc.connected());
+        QCOMPARE(h.entries(), QStringList() << "an earlier entry");
+        QCOMPARE(fake.discCalls, 0);
+    }
+
+    void clearDataAndClearAllNeedNoConfirmation()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillDocument(h.doc);
+        QVERIFY(h.run([&]() { h.ops.clearAll(); }));
+        QVERIFY(h.prompter.asked.isEmpty());			// Windows asks only before a purge (General.cpp:900)
+    }
+
+    void clearIsDisabledWhileBrowsingAndRefusedWhileBusy()
+    {
+        Watchdog dog(60);
+        Harness h;
+        enqueue(fakeMessage("x"));
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        const std::string before = bodyOf(h.doc.message());
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.clearData(); }));
+        QVERIFY(h.run([&]() { h.ops.clearAll(); }));
+        QCOMPARE(bodyOf(h.doc.message()), before);
+        QVERIFY(h.log.text().isEmpty());
+
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));
+        h.log.clear();
+        std::atomic<bool> release{false};
+        QVERIFY(h.controller.submit("block", [&](rfh::MqSession &)
+        {
+            while (!release.load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return JobResult();
+        }));
+        QVERIFY(h.run([&]() { h.ops.clearAll(); }));
+        QCOMPARE(h.entries(), QStringList() << "Another operation is still running");
+        QCOMPARE(bodyOf(h.doc.message()), before);
+        release = true;
+        QSignalSpy done(&h.controller, &SessionController::finished);
+        QVERIFY(done.count() > 0 || done.wait(5000));
+    }
+
+    // ======================================================================================================
+    // Purge Q (OnPurgeQ GEN 866, getQueueDepth DA 10246, purgeQueue DA 10065)
+    // ======================================================================================================
+
+    void purgeAsksOnceAfterConnectingThenPurgesAndCounts()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(3);
+        ShellState shell = h.doc.shell();
+        shell.setIdentity = true;
+        h.doc.setShell(shell);
+        int connectsWhenAsked = -1;
+        h.prompter.onAsk = [&]() { connectsWhenAsked = fake.connxCalls; };
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.lastFlow(), QString("purgeQ"));
+        QCOMPARE(h.prompter.asked, QStringList() << "Purge all messages from queue RFHUTIL.TEST.OPS?");		// General.cpp:911
+        QCOMPARE(connectsWhenAsked, 1);						// getQueueDepth connected first
+        QVERIFY(fake.queue(kQueue).messages.empty());
+        QCOMPARE(h.entries(), QStringList() << "3 messages purged from RFHUTIL.TEST.OPS");		// DA 10199
+        QCOMPARE(h.doc.queueInfo().depth, (MQLONG)0);
+        QVERIFY(!h.doc.shell().setIdentity);					// OnPurgeQ clears Set Iden Context
+        QVERIFY(h.doc.connected());
+        QVERIFY(fake.getLog.back().options & MQGMO_SYNCPOINT_IF_PERSISTENT);	// gmo.Options (DA 10117)
+        QVERIFY(fake.getLog.back().options & MQGMO_ACCEPT_TRUNCATED_MSG);
+    }
+
+    void purgeAnsweredNoDoesNothingButClearSetIdentity()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(3);
+        h.prompter.answer = false;
+        ShellState shell = h.doc.shell();
+        shell.setIdentity = true;
+        h.doc.setShell(shell);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.prompter.asked.size(), 1);
+        QCOMPARE(fake.getCalls, 0);
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(3));
+        QVERIFY(h.log.text().isEmpty());
+        QVERIFY(!h.doc.shell().setIdentity);
+        QCOMPARE(h.doc.queueInfo().depth, (MQLONG)3);			// the depth query before the question stays
+    }
+
+    void purgeOfAnEmptyQueueSaysQueueEmpty()
+    {
+        Watchdog dog(60);
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.entries(), QStringList() << "Queue empty - no messages purged from RFHUTIL.TEST.OPS");	// DA 10208
+    }
+
+    void purgeWithoutAQueueNameDoesNotAskAndKeepsSetIdentity()
+    {
+        Watchdog dog(60);
+        Harness h;
+        h.doc.setQueueName("");
+        ShellState shell = h.doc.shell();
+        shell.setIdentity = true;
+        h.doc.setShell(shell);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.entries(), QStringList() << "*Queue Name required");		// OnPurgeQ 880: no stars after, no blank
+        QVERIFY(h.prompter.asked.isEmpty());
+        QCOMPARE(fake.connxCalls, 0);
+        QVERIFY(h.doc.shell().setIdentity);					// the handler returned before the clean-up
+    }
+
+    void purgeDoesNotAskWhenTheConnectionCannotBeMade()
+    {
+        // Windows asks anyway and fails again inside purgeQueue; here the failure is shown once and nothing is asked
+        Watchdog dog(60);
+        fake.connxRc = MQRC_Q_MGR_NOT_AVAILABLE;
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.entries(), QStringList() << "2059 Queue manager not available (Connect) - may not be started");
+        QVERIFY(h.prompter.asked.isEmpty());
+    }
+
+    void purgeDoesNotAskForAMissingQueue()
+    {
+        Watchdog dog(60);
+        fake.openRcByName[kQueue] = MQRC_UNKNOWN_OBJECT_NAME;
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.entries(), QStringList() << "2085 No such queue");
+        QVERIFY(h.prompter.asked.isEmpty());
+    }
+
+    void purgeWithoutAPrompterIsNotStarted()
+    {
+        Watchdog dog(60);
+        Harness h;
+        h.ops.setPrompter(nullptr);
+        fillQueue(2);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(fake.getCalls, 0);
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(2));
+        QCOMPARE(h.entries(), QStringList() << "Purge was not started: there is no way to ask for the confirmation");		// NEW
+    }
+
+    void purgeUsesTheSelectorOfTheMainTab()
+    {
+        Watchdog dog(60);
+        Harness h;
+        MainOptions o;
+        o.get.selector = "color = 'red'";
+        h.ops.setOptions(o);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        bool seen = false;
+        for (const rfh_test::OpenRecord & open : fake.openLog)
+        {
+            seen = seen || (open.selector == "color = 'red'");
+        }
+        QVERIFY(seen);
+    }
+
+    void aPurgeThatFailsMidwayShowsTheReasonTheCountAndTheCodesInTheRightOrder()
+    {
+        // purgeQueue 10218 prints "rc=%d cc=%d" with cc and rc swapped; the owner approved fixing it
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(5);
+        fake.failGetsAfter = 2;
+        fake.failGetsRc = MQRC_NOT_AUTHORIZED;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        const QStringList lines = h.newest().split("\r\n");
+        QCOMPARE(lines.at(0), QString("2035 Not authorized (Get)"));						// setErrorMsg(cc, rc, "Get") DA 10172
+        QCOMPARE(lines.at(1), QString("2 messages purged from RFHUTIL.TEST.OPS before error rc=2035 cc=2"));
+        QVERIFY2(lines.size() >= 3 && lines.at(2).contains("after 2 messages"), qPrintable(h.newest()));	// the core's own text, verbatim
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(3));
+        QVERIFY(h.doc.connected());
+    }
+
+    void aPurgeBackedOutByTheQueueManagerSaysTheLogMayBeTooSmall()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(6, true);
+        fake.failGetsAfter = 4;
+        fake.failGetsRc = MQRC_BACKED_OUT;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QVERIFY2(h.newest().contains("Commit failed (rc=2003) - the MQ log may be too small"), qPrintable(h.newest()));	// DA 10212
+        QVERIFY(h.doc.connected());
+    }
+
+    void aPurgeWhoseOutcomeIsUnknownSaysSoVerbatimAndNeverThatMessagesRemain()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(10, true);
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = MQRC_Q_MGR_QUIESCING;
+        fake.backRc = MQRC_CONNECTION_BROKEN;
+        MainOptions o;
+        h.ops.setOptions(o);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        const QString text = h.newest();
+        QVERIFY2(text.contains("unknown outcome"), qPrintable(text));
+        QVERIFY2(text.contains("the queue manager may or may not have removed them"), qPrintable(text));
+        QVERIFY2(!text.contains("remain on the queue"), qPrintable(text));
+        QVERIFY(!h.doc.connected());
+    }
+
+    void aPurgeBackedOutByAQuiescingQueueManagerSaysWhichMessagesRemain()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(10, true);
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = MQRC_Q_MGR_QUIESCING;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QVERIFY2(h.newest().contains("remain on the queue"), qPrintable(h.newest()));		// the core knows: MQBACK worked
+        QVERIFY(!h.doc.connected());
+        QVERIFY2(h.newest().contains("2161 Queue manager is quiescing"), qPrintable(h.newest()));
+    }
+
+    void aPurgeThatLosesTheConnectionRunsTheCleanup()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(4);
+        fake.failGetsAfter = 1;
+        fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QVERIFY2(h.newest().contains("2009 Connection to QM has been lost - Q closed"), qPrintable(h.newest()));
+        QVERIFY(!h.doc.connected());
+        QVERIFY(!h.doc.queueOpen());
+    }
+
+    void aPurgeCanBeCancelledAndSaysHowFarItGot()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(50);
+        bool cancellable = false;
+        fake.onGet = [&](int n)
+        {
+            if (n == 10)
+            {
+                cancellable = h.doc.shell().cancellable;		// read on the worker: the shell is only written by the GUI thread
+                const_cast<std::atomic<bool> *>(h.controller.cancelFlag())->store(true);
+            }
+        };
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        fake.onGet = nullptr;
+        QVERIFY(cancellable);
+        QVERIFY2(h.newest().contains("Purge cancelled after"), qPrintable(h.newest()));
+        QVERIFY(h.doc.connected());
+        const size_t left = fake.queue(kQueue).messages.size();
+        QVERIFY(left > 0 && left < 50);
+        QVERIFY(!h.doc.shell().cancellable);
+    }
+
+    void aPurgeIsRefusedWhileAGroupPutWaitsForItsCommit()
+    {
+        // The core's syncpoint purge would commit the whole connection, publishing the unfinished group
+        Watchdog dog(60);
+        Harness h;
+        rfh::MqmdFields f;
+        f.groupYes = true;
+        h.doc.setMqmd(f);
+        QVERIFY(h.run([&]() { h.ops.writeQ(); }));
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QVERIFY(h.prompter.asked.isEmpty());
+        QCOMPARE(fake.getCalls, 0);
+        QCOMPARE(fake.commitCalls, 0);
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+        QCOMPARE(h.entries(), QStringList() << "Purge was not started: a group or segment put is waiting for its commit. Write its last message, or use Close Q to back it out");	// NEW
+    }
+
+    void purgeIsRefusedWhileBusyAndWhileBrowsing()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(2);
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QVERIFY(h.log.text().isEmpty());
+        QVERIFY(h.prompter.asked.isEmpty());
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));
+        h.log.clear();
+        std::atomic<bool> release{false};
+        QVERIFY(h.controller.submit("block", [&](rfh::MqSession &)
+        {
+            while (!release.load())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            return JobResult();
+        }));
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(h.entries(), QStringList() << "Another operation is still running");
+        QVERIFY(h.prompter.asked.isEmpty());
+        release = true;
+        QSignalSpy done(&h.controller, &SessionController::finished);
+        QVERIFY(done.count() > 0 || done.wait(5000));
+    }
+
+    void purgeRemembersTheQueueAndAnnouncesTheTitle()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        AppSettings settings(dir.filePath("rfhutil.conf"));
+        Harness h;
+        h.ops.setSettings(&settings);
+        QSignalSpy title(&h.ops, &Operations::titleChanged);
+        fillQueue(1);
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(settings.recentQueues(kQm), QStringList() << kQueue);
+        QVERIFY(title.count() >= 1);
     }
 };
 

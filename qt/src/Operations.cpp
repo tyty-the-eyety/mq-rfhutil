@@ -1,5 +1,6 @@
 #include "Operations.h"
 
+#include <QDir>
 #include <QFileInfo>
 
 #include <utility>
@@ -1080,5 +1081,258 @@ namespace rfhqt
 			addStatus(lines);
 			finishFlow(flow);
 		});
+	}
+
+	// ---- files ----------------------------------------------------------------------------------------------------
+
+	void Operations::openFile(const QString & path)
+	{
+		const QString flow = QStringLiteral("openFile");
+		if (!admit(flow, doc.enables().openFile))
+		{
+			return;
+		}
+		trace(QStringLiteral("Entering Operations::openFile %1").arg(path));
+		// A file larger than the largest message cannot be shown (render fails above it) or put: refuse it before
+		// it is read, so the document is not replaced by something unusable.
+		const QFileInfo info(path);
+		if (info.isFile() && (info.size() > (qint64)rfh::format::kMaxRenderBody))
+		{
+			addStatus(QStringList() << QStringLiteral("File %1 is too large: %2 bytes, the limit is %3 bytes (the largest MQ message)")
+				.arg(path).arg(info.size()).arg((qint64)rfh::format::kMaxRenderBody));
+			finishFlow(flow);
+			return;
+		}
+		rfh::fileio::ReadOptions readOptions = options.read;
+		readOptions.fileCcsid = options.fileCodePage;
+		const rfh::MqmdFields fields = doc.mqmd();				// the MQMD tab supplies the defaults, as in Windows
+		const std::string name = path.toStdString();
+		const Env env = capture(false);
+		submitFlow(flow, env, false, [name, readOptions, fields](rfh::MqSession &)
+		{
+			JobResult r;
+			auto read = std::make_shared<rfh::fileio::ReadResult>();
+			auto tab = std::make_shared<rfh::MqmdFields>(fields);
+			const rfh::Result res = rfh::fileio::read(name, readOptions, *tab, *read);
+			addStep(r, "Read", res);
+			if (res.ok())
+			{
+				r.fileRead = read;
+				r.fileFields = tab;
+			}
+			return r;
+		}, [this, flow, path](const JobResult & r)
+		{
+			QStringList lines;
+			if (r.fileRead)
+			{
+				// The ReadResult belongs to this flow alone: its message moves into the document without a copy.
+				rfh::fileio::ReadResult & read = *r.fileRead;
+				rfh::format::RenderOptions render = doc.render();
+				render.apply(rfh::format::defaultsFor(read));
+				doc.setMqmd(*r.fileFields);
+				doc.setRender(render);
+				doc.setMessage(std::move(read.message), read.dataSource, false);
+				doc.markSaved(path);
+				if (settings != nullptr)
+				{
+					settings->setLastDirectory(QStringLiteral("open"), QFileInfo(path).absolutePath());
+				}
+			}
+			// Windows prefixes the header warnings to the status text (rfh_message_file.h)
+			const rfh::Result & res = r.result;
+			for (const std::string & warning : res.warnings)
+			{
+				lines << trimmedLine(warning);
+			}
+			lines << QString::fromStdString(res.text);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::saveFile(const QString & path)
+	{
+		const QString flow = QStringLiteral("saveFile");
+		if (!admit(flow, doc.enables().saveFile))
+		{
+			return;
+		}
+		trace(QStringLiteral("Entering Operations::saveFile %1").arg(path));
+		// The MQMD written is the tab's (buildMQMD, DataArea.cpp:1807), not the one MQ returned
+		rfh::Message message;
+		message.mqmd = MQMD2 { MQMD2_DEFAULT };
+		rfh::mqmd_fields::toMqmd(doc.mqmd(), message.mqmd);
+		message.headers = doc.message().headers;
+		message.body = doc.message().body;
+		const rfh::fileio::WriteOptions writeOptions = options.write;
+		const std::string name = path.toStdString();
+		const Env env = capture(false);
+		submitFlow(flow, env, false, [name, message, writeOptions](rfh::MqSession &)
+		{
+			JobResult r;
+			addStep(r, "Write", rfh::fileio::write(name, message, writeOptions));
+			return r;
+		}, [this, flow, path](const JobResult & r)
+		{
+			if (r.result.ok())
+			{
+				doc.markSaved(path);			// WriteFile sets fileName; the data is saved
+				if (settings != nullptr)
+				{
+					settings->setLastDirectory(QStringLiteral("save"), QFileInfo(path).absolutePath());
+				}
+			}
+			QStringList lines;
+			for (const std::string & warning : r.result.warnings)
+			{
+				lines << trimmedLine(warning);
+			}
+			lines << QString::fromStdString(r.result.text);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::clearData()
+	{
+		const QString flow = QStringLiteral("clearData");
+		if (!admit(flow, doc.enables().clearData))
+		{
+			return;
+		}
+		doc.clearData();
+		finishFlow(flow);
+	}
+
+	void Operations::clearAll()
+	{
+		const QString flow = QStringLiteral("clearAll");
+		if (!admit(flow, doc.enables().clearAll))
+		{
+			return;
+		}
+		doc.clearAll();
+		finishFlow(flow);
+	}
+
+	// ---- Purge Q -----------------------------------------------------------------------------------------------------
+
+	void Operations::purgeQ()
+	{
+		const QString flow = QStringLiteral("purgeQ");
+		if (!admit(flow, doc.enables().purgeQ))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::purgeQ QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required"));		// OnPurgeQ 880: no stars after, no blank
+			finishFlow(flow);
+			return;
+		}
+		if (pendingUnit)
+		{
+			// the syncpoint purge commits the connection's whole unit of work, which would publish the unfinished group
+			addStatus(QStringList() << QStringLiteral("Purge was not started: a group or segment put is waiting for its commit. Write its last message, or use Close Q to back it out"));
+			finishFlow(flow);
+			return;
+		}
+		if (prompter == nullptr)
+		{
+			addStatus(QStringList() << QStringLiteral("Purge was not started: there is no way to ask for the confirmation"));
+			finishFlow(flow);
+			return;
+		}
+		// getQueueDepth: connect on demand and read the depth, then ask
+		const Env env = capture(true);
+		submitFlow(flow, env, false, [env](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				r.hasQueueInfo = true;
+				record(s, r, "Open", s.queueInfo(env.queue, r.queue));
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			logResolvedName(r);
+			if (!r.result.ok())
+			{
+				addStatus(describe(r));
+				clearAfterGet(false);
+				finishFlow(flow);
+				return;
+			}
+			if (!prompter->confirm(AppDocument::purgeConfirmation(queue)))
+			{
+				clearAfterGet(false);
+				finishFlow(flow);
+				return;
+			}
+			startPurge(queue);
+		});
+	}
+
+	void Operations::startPurge(const QString & queue)
+	{
+		const QString flow = QStringLiteral("purgeQ");
+		rfh::PurgeOptions purge;
+		purge.selector = options.get.selector;
+		purge.syncpoint = true;						// MQGMO_SYNCPOINT_IF_PERSISTENT, always (DA 10117)
+		running = Running();
+		running.name = QStringLiteral("purge");
+		running.qm = doc.queueManager();
+		running.checked = false;
+		running.cancellable = true;
+		userCancelled = false;
+		running.done = [this, flow, queue](const JobResult & r)
+		{
+			QStringList lines;
+			if (r.result.ok())
+			{
+				if (r.count > 0)
+				{
+					lines << QStringLiteral("%1 messages purged from %2").arg(r.count).arg(queue);			// DA 10199
+				}
+				else
+				{
+					lines << QStringLiteral("Queue empty - no messages purged from %1").arg(queue);		// DA 10208
+				}
+			}
+			else if (r.result.rc == MQRC_BACKED_OUT)
+			{
+				lines << QStringLiteral("Commit failed (rc=2003) - the MQ log may be too small");		// DA 10212
+			}
+			else if (r.result.rc != MQRC_NONE)
+			{
+				JobStep step;
+				step.operation = "Get";
+				step.result = r.result;
+				lines += describeStep(step, false);
+				// DA 10218 prints cc where it says rc and the reverse; the owner approved the right order
+				lines << QStringLiteral("%1 messages purged from %2 before error rc=%3 cc=%4").arg(r.count).arg(queue).arg(r.result.rc).arg(r.result.cc);
+				// the core's own text carries what became of the unit of work, verbatim
+				lines << QString::fromStdString(r.result.text);
+			}
+			else
+			{
+				lines << QString::fromStdString(r.result.text);		// a failure of the core's own, such as a cancel, with the count
+			}
+			rememberQueue(queue);
+			emit titleChanged(queue);
+			clearAfterGet(false);
+			addStatus(lines);
+			finishFlow(flow);
+		};
+		if (!controller.purge(queue.toStdString(), purge))
+		{
+			running = Running();
+			addStatus(QStringList() << QStringLiteral("Another operation is still running"));
+			finishFlow(flow);
+		}
 	}
 }
