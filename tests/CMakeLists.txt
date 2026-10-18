@@ -120,6 +120,7 @@ rfh_add_memcheck_test(memcheck.ConnectSecurity rfhutil_mq_fake_tests "ConnectSec
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
 rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")
+rfh_add_memcheck_test(memcheck.Locate rfhutil_core_tests "Locate.*:-Locate.SixteenMegabytesIsFast")
 rfh_add_memcheck_test(memcheck.FormatFuzz rfhutil_core_tests "FormatFuzz.*" FORMAT_FUZZ_ITERATIONS=3000)
 
 # The core must not mention a UI toolkit, an MFC call or a process exit (tests/core/CoreHasNoUiTests.cmake).

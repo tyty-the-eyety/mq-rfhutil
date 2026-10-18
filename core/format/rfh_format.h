@@ -34,6 +34,7 @@
 #include <stdint.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "rfh_codepage.h"
@@ -115,5 +116,44 @@ namespace rfh
 		// over kMaxRenderBody); problems Windows reports in the status line are
 		// warnings.
 		Result render(const Message & message, View view, const RenderOptions & options, std::string & out);
+
+		// A position in the text render produces, as the Data tab selects it.
+		struct TextPos
+		{
+			int line = 0;		// zero-based line (lines end in CR LF)
+			int column = 0;		// zero-based byte index in that line of the rendered text
+			int length = 0;		// bytes to select: 2 for a byte in the Hex view, 0 for a byte the view does not show, otherwise 1
+		};
+
+		// Where byte `offset` of message.body is in the text render(message, view, options)
+		// produces: Go To and the highlight of a Find hit (Windows getLineNumber,
+		// getLineOffset and MSGDATA::moveDisplay). Supported views: Character, Hex, Both.
+		// Returns false, leaving pos alone, for another view, an empty body, an offset
+		// outside the body, or text that does not have the layout of the view.
+		//
+		// The formatter owns the layout, so locate reads the line each byte is on from
+		// the offset label each rendered line starts with (the offset, in the shown data,
+		// of its first byte) and only adds the position within the line.
+		//
+		// Differences from Windows (all of them places where its formulas select the
+		// wrong text):
+		// - the Both view selects the byte's character in the text part (column 45 and
+		//   on), where Windows' ofs % 16 + 9 lands in the hex digits;
+		// - the byte order mark that the BOM option hides (Character and Both) is not
+		//   counted, so later bytes move one back; the mark itself is at line 0, column
+		//   0, length 0 (Windows ignores the option and selects a byte too far on);
+		// - a double-byte character is one of the 32 on its line, so the offsets after
+		//   it are on the line the view shows them on (Windows divides by 32 bytes);
+		// - with CR/LF on, the line is the line the view shows the byte on (Windows
+		//   counts LF bytes, which is wrong after a blank line); with EDI on it is the
+		//   segment line (Windows always says line 0). As on Windows, the column is 0
+		//   (the first digit of the offset label) when either option is on;
+		// - a label wider than 8 digits (a body over 99,999,999 bytes) moves the columns
+		//   right, which Windows' formulas do not allow for.
+		bool locate(View view, const RenderOptions & options, const Message & message, size_t offset, TextPos & pos);
+
+		// The same, for a UI that already holds the text of render(message, view, options):
+		// nothing is rendered again and the work is one pass over the lines.
+		bool locate(View view, const RenderOptions & options, const Message & message, std::string_view text, size_t offset, TextPos & pos);
 	}
 }

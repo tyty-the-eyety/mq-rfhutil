@@ -207,5 +207,164 @@ namespace rfh
 			}
 			return result;
 		}
+
+		namespace
+		{
+			// the offset label of a rendered line: digits and a blank ("%8.8d ")
+			struct Label
+			{
+				int64_t value = 0;
+				size_t prefix = 0;	// characters before the data: the digits and the blank
+			};
+
+			bool readLabel(std::string_view line, Label & label)
+			{
+				size_t i = 0;
+				int64_t value = 0;
+				while (i < line.size() && line[i] >= '0' && line[i] <= '9')
+				{
+					if (i >= 18)
+					{
+						return false;
+					}
+					value = value * 10 + (line[i] - '0');
+					i++;
+				}
+				if (i == 0 || i >= line.size() || line[i] != ' ')
+				{
+					return false;
+				}
+				label.value = value;
+				label.prefix = i + 1;
+				return true;
+			}
+		}
+
+		bool locate(View view, const RenderOptions & options, const Message & message, std::string_view text, size_t offset, TextPos & pos)
+		{
+			if ((view != View::Character && view != View::Hex && view != View::Both) || offset >= message.body.size())
+			{
+				return false;
+			}
+
+			// DataFormatter drops a leading FE byte from the Character and Both views when asked to
+			int64_t shown = (int64_t)offset;
+			if (view != View::Hex && options.bom && message.body[0] == 0xFE)
+			{
+				shown--;
+				if (shown < 0)
+				{
+					pos.line = 0;
+					pos.column = 0;
+					pos.length = 0;
+					return true;
+				}
+			}
+
+			// the last line whose first byte is at or before the shown byte
+			bool found = false;
+			int line = 0;
+			Label label;
+			std::string_view lineText;
+			size_t start = 0;
+			for (int number = 0; start <= text.size() && !text.empty(); number++)
+			{
+				size_t end = text.find('\n', start);
+				size_t next = (end == std::string_view::npos) ? text.size() : end + 1;
+				if (end == std::string_view::npos)
+				{
+					end = text.size();
+				}
+				else if (end > start && text[end - 1] == '\r')
+				{
+					end--;
+				}
+				std::string_view current = text.substr(start, end - start);
+				Label candidate;
+				if (!readLabel(current, candidate))
+				{
+					return false;
+				}
+				if (candidate.value > shown)
+				{
+					break;
+				}
+				found = true;
+				line = number;
+				label = candidate;
+				lineText = current;
+				if (next >= text.size())
+				{
+					break;
+				}
+				start = next;
+			}
+
+			int column = 0;
+			int length = 1;
+			if (view == View::Character && (options.crlf || options.edi))
+			{
+				// Windows' column rule: the line, from its start. CR LF and EDI lines can begin
+				// after bytes that are not shown, so the first line may start past the offset
+				if (!found)
+				{
+					line = 0;
+				}
+			}
+			else
+			{
+				if (!found)
+				{
+					return false;
+				}
+				int64_t k = shown - label.value;
+				size_t col;
+				switch (view)
+				{
+				case View::Hex:
+					if (k > 15)
+					{
+						return false;
+					}
+					col = label.prefix + (size_t)(2 * k + k / 4);
+					length = 2;
+					break;
+				case View::Both:
+					if (k > 15)
+					{
+						return false;
+					}
+					col = label.prefix + 4 * 9 + (size_t)(k + k / 8);
+					break;
+				default:
+					col = label.prefix + (size_t)k;
+					break;
+				}
+				if (col + (size_t)length > lineText.size())
+				{
+					return false;
+				}
+				column = (int)col;
+			}
+
+			pos.line = line;
+			pos.column = column;
+			pos.length = length;
+			return true;
+		}
+
+		bool locate(View view, const RenderOptions & options, const Message & message, size_t offset, TextPos & pos)
+		{
+			if ((view != View::Character && view != View::Hex && view != View::Both) || offset >= message.body.size())
+			{
+				return false;
+			}
+			std::string text;
+			if (!render(message, view, options, text).ok())
+			{
+				return false;
+			}
+			return locate(view, options, message, std::string_view(text), offset, pos);
+		}
 	}
 }

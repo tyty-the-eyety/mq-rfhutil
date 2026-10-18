@@ -11,6 +11,10 @@
 #include <string.h>
 #include <sys/resource.h>
 
+#include <chrono>
+#include <memory>
+#include <string_view>
+
 #include <string>
 #include <vector>
 
@@ -989,4 +993,437 @@ TEST(Format_Character, BytesTheDisplayCodePageDoesNotShowAreDots)
     EXPECT_EQ(932, rfh_get_acp());
     unsetenv("RFHUTIL_ACP");
     EXPECT_EQ(1252, rfh_get_acp());
+}
+
+// --- locate -------------------------------------------------------------------
+//
+// Expected positions are worked out by hand from the Windows layouts (DataFormatter
+// getHexData / getCharacterData / getBothData: a 9-character offset label, then 32
+// characters, or 16 bytes as hex digits with a blank after every 4 bytes, or the hex
+// followed by 16 characters with a blank after every 8) and from the Windows
+// formulas getLineNumber and getLineOffset (DataArea.cpp:12793, 12872).
+
+namespace
+{
+    struct Spot
+    {
+        int line;
+        int column;
+        int length;
+    };
+
+    bool where(View view, const RenderOptions & o, const Message & m, size_t offset, Spot & spot)
+    {
+        TextPos pos;
+        pos.line = pos.column = pos.length = -7;
+        bool found = locate(view, o, m, offset, pos);
+        spot = { pos.line, pos.column, pos.length };
+        return found;
+    }
+
+    std::string lineOf(const std::string & text, int line)
+    {
+        size_t start = 0;
+        for (int i = 0; i < line; i++)
+        {
+            start = text.find("\r\n", start);
+            if (start == std::string::npos)
+            {
+                return "";
+            }
+            start += 2;
+        }
+        size_t end = text.find("\r\n", start);
+        return text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    }
+
+    std::string letters(size_t n)
+    {
+        std::string s;
+        for (size_t i = 0; i < n; i++)
+        {
+            s += (char)('A' + i % 26);
+        }
+        return s;
+    }
+
+    void expectSpot(View view, const RenderOptions & o, const Message & m, size_t offset, Spot want)
+    {
+        Spot got;
+        ASSERT_TRUE(where(view, o, m, offset, got)) << "offset " << offset;
+        EXPECT_EQ(want.line, got.line) << "offset " << offset;
+        EXPECT_EQ(want.column, got.column) << "offset " << offset;
+        EXPECT_EQ(want.length, got.length) << "offset " << offset;
+    }
+}
+
+TEST(Locate, CharacterViewIsThirtyTwoToALineAfterNineCharacters)
+{
+    // getLineNumber: ofs / 32; getLineOffset: ofs % 32 + 9
+    Message m = message(letters(100));
+    RenderOptions o = options();
+    expectSpot(View::Character, o, m, 0, { 0, 9, 1 });
+    expectSpot(View::Character, o, m, 31, { 0, 40, 1 });
+    expectSpot(View::Character, o, m, 32, { 1, 9, 1 });
+    expectSpot(View::Character, o, m, 33, { 1, 10, 1 });
+    expectSpot(View::Character, o, m, 47, { 1, 24, 1 });
+    expectSpot(View::Character, o, m, 48, { 1, 25, 1 });
+    expectSpot(View::Character, o, m, 99, { 3, 12, 1 });
+}
+
+TEST(Locate, HexViewSelectsTheTwoDigitsOfTheByte)
+{
+    // getLineOffset: d = (ofs % 16) * 2; column d + 9, + 10, + 11 or + 12 by quarter
+    Message m = message(letters(40));
+    RenderOptions o = options();
+    expectSpot(View::Hex, o, m, 0, { 0, 9, 2 });
+    expectSpot(View::Hex, o, m, 3, { 0, 15, 2 });
+    expectSpot(View::Hex, o, m, 4, { 0, 18, 2 });
+    expectSpot(View::Hex, o, m, 5, { 0, 20, 2 });
+    expectSpot(View::Hex, o, m, 8, { 0, 27, 2 });
+    expectSpot(View::Hex, o, m, 15, { 0, 42, 2 });
+    expectSpot(View::Hex, o, m, 16, { 1, 9, 2 });
+    expectSpot(View::Hex, o, m, 25, { 1, 29, 2 });
+    expectSpot(View::Hex, o, m, 39, { 2, 24, 2 });
+}
+
+TEST(Locate, BothViewPointsAtTheCharacterNotTheHexDigits)
+{
+    // Windows: ofs % 16 + 9 (+ 1 from 8 on), which is inside the hex digits and one
+    // byte-position early in the text; the text starts at column 9 + 36 = 45, with a
+    // blank after every 8 characters
+    Message m = message(letters(40));
+    RenderOptions o = options();
+    expectSpot(View::Both, o, m, 0, { 0, 45, 1 });
+    expectSpot(View::Both, o, m, 7, { 0, 52, 1 });
+    expectSpot(View::Both, o, m, 8, { 0, 54, 1 });
+    expectSpot(View::Both, o, m, 15, { 0, 61, 1 });
+    expectSpot(View::Both, o, m, 16, { 1, 45, 1 });
+    expectSpot(View::Both, o, m, 39, { 2, 52, 1 });
+}
+
+TEST(Locate, EveryOffsetPointsAtItsCharacterInTheCharacterView)
+{
+    for (size_t size : { 1, 31, 32, 33, 47, 48, 100 })
+    {
+        Message m = message(letters(size));
+        RenderOptions o = options();
+        std::string text = render(m, View::Character, o);
+        for (size_t i = 0; i < size; i++)
+        {
+            Spot s;
+            ASSERT_TRUE(where(View::Character, o, m, i, s)) << size << " " << i;
+            EXPECT_EQ(1, s.length);
+            EXPECT_EQ(m.body[i], (unsigned char)lineOf(text, s.line)[s.column]) << size << " " << i;
+        }
+    }
+}
+
+TEST(Locate, EveryOffsetPointsAtItsDigitsInTheHexView)
+{
+    for (size_t size : { 1, 15, 16, 17, 33, 100 })
+    {
+        Message m = message(std::string(size, 'x'));
+        for (size_t i = 0; i < size; i++)
+        {
+            m.body[i] = (unsigned char)(i * 7 + 3);
+        }
+        RenderOptions o = options();
+        std::string text = render(m, View::Hex, o);
+        char digits[3];
+        for (size_t i = 0; i < size; i++)
+        {
+            Spot s;
+            ASSERT_TRUE(where(View::Hex, o, m, i, s)) << size << " " << i;
+            snprintf(digits, sizeof(digits), "%02X", m.body[i]);
+            EXPECT_EQ(2, s.length);
+            EXPECT_EQ(std::string(digits), lineOf(text, s.line).substr(s.column, 2)) << size << " " << i;
+        }
+    }
+}
+
+TEST(Locate, EveryOffsetPointsAtItsCharacterInTheBothView)
+{
+    for (size_t size : { 1, 15, 16, 17, 33, 100 })
+    {
+        Message m = message(letters(size));
+        RenderOptions o = options();
+        std::string text = render(m, View::Both, o);
+        for (size_t i = 0; i < size; i++)
+        {
+            Spot s;
+            ASSERT_TRUE(where(View::Both, o, m, i, s)) << size << " " << i;
+            EXPECT_EQ(1, s.length);
+            EXPECT_EQ(m.body[i], (unsigned char)lineOf(text, s.line)[s.column]) << size << " " << i;
+        }
+    }
+}
+
+TEST(Locate, CrLfOnPutsTheOffsetOnItsLineAtColumnZero)
+{
+    // "00000000 line one" / "00000010 line two": Windows counts the LF bytes before the
+    // offset and uses column 0; the CR and the LF belong to the line they end
+    Message m = message("line one\r\nline two");
+    RenderOptions o = options();
+    o.crlf = true;
+    for (size_t i : { 0, 5, 7, 8, 9 })
+    {
+        expectSpot(View::Character, o, m, i, { 0, 0, 1 });
+    }
+    for (size_t i : { 10, 11, 17 })
+    {
+        expectSpot(View::Character, o, m, i, { 1, 0, 1 });
+    }
+}
+
+TEST(Locate, CrLfOnSkipsBlankLinesAsTheViewDoes)
+{
+    // the view drops every leading CR and LF of a line, so "a CR LF CR LF b" has two
+    // lines; Windows' count of LF bytes puts the b on line 2, which is not there
+    Message m = message("a\r\n\r\nb\nc");
+    RenderOptions o = options();
+    o.crlf = true;
+    EXPECT_EQ("00000000 a\r\n00000005 b\r\n00000007 c", render(m, View::Character, o));
+    expectSpot(View::Character, o, m, 0, { 0, 0, 1 });
+    expectSpot(View::Character, o, m, 5, { 1, 0, 1 });
+    expectSpot(View::Character, o, m, 7, { 2, 0, 1 });
+}
+
+TEST(Locate, EdiOnPutsTheOffsetOnItsSegmentLineAtColumnZero)
+{
+    // lines start at offsets 0, 9 and 22; Windows says line 0 for all of them
+    Message m = message("UNA:+.? 'UNB+UNOC:3+X'UNH+1'");
+    RenderOptions o = options();
+    o.edi = true;
+    expectSpot(View::Character, o, m, 0, { 0, 0, 1 });
+    expectSpot(View::Character, o, m, 8, { 0, 0, 1 });
+    expectSpot(View::Character, o, m, 9, { 1, 0, 1 });
+    expectSpot(View::Character, o, m, 25, { 2, 0, 1 });
+}
+
+TEST(Locate, EdiOnForDataThatIsNotEdiIsStillColumnZero)
+{
+    // the option decides the column, as in getLineOffset, but the line is the one shown
+    Message m = message(letters(70));
+    RenderOptions o = options();
+    o.edi = true;
+    expectSpot(View::Character, o, m, 40, { 1, 0, 1 });
+}
+
+TEST(Locate, ByteOrderMarkIsNotShownSoLaterOffsetsMoveBack)
+{
+    // Windows ignores the option: it puts 'a' (offset 2) at column 11, which is past the 'b'
+    Message m = message("\xfe\xff" "ab");
+    RenderOptions o = options();
+    o.bom = true;
+    expectSpot(View::Character, o, m, 0, { 0, 0, 0 });
+    expectSpot(View::Character, o, m, 1, { 0, 9, 1 });
+    expectSpot(View::Character, o, m, 2, { 0, 10, 1 });
+    expectSpot(View::Character, o, m, 3, { 0, 11, 1 });
+    expectSpot(View::Both, o, m, 0, { 0, 0, 0 });
+    expectSpot(View::Both, o, m, 3, { 0, 47, 1 });
+    // without the option the mark is shown
+    expectSpot(View::Character, options(), m, 2, { 0, 11, 1 });
+}
+
+TEST(Locate, ByteOrderMarkOptionDoesNotChangeTheHexView)
+{
+    Message m = message("\xfe\xff" "ab");
+    RenderOptions o = options();
+    o.bom = true;
+    expectSpot(View::Hex, o, m, 0, { 0, 9, 2 });
+    expectSpot(View::Hex, o, m, 2, { 0, 13, 2 });
+}
+
+TEST(Locate, OptionWithoutAMarkChangesNothing)
+{
+    Message m = message("abc");
+    RenderOptions o = options();
+    o.bom = true;
+    expectSpot(View::Character, o, m, 1, { 0, 10, 1 });
+}
+
+TEST(Locate, DoubleByteCharactersCountAsOneOfTheThirtyTwo)
+{
+    // 31 a, a double-byte character (offsets 31, 32), then b c: the view has
+    // "00000000 " + 31 a + 2 bytes and "00000033 bc". Windows' ofs / 32 and ofs % 32 + 9 put the b
+    // (offset 33) on the c
+    std::string body(31, 'a');
+    body += "\x82\xa0";
+    body += "bc";
+    Message m = message(body, 932);
+    RenderOptions o = options(932, CHAR_JAPANESE);
+    expectSpot(View::Character, o, m, 30, { 0, 39, 1 });
+    expectSpot(View::Character, o, m, 31, { 0, 40, 1 });
+    expectSpot(View::Character, o, m, 32, { 0, 41, 1 });
+    expectSpot(View::Character, o, m, 33, { 1, 9, 1 });
+    expectSpot(View::Character, o, m, 34, { 1, 10, 1 });
+}
+
+TEST(Locate, EbcdicDataHasTheSameLayout)
+{
+    Message m = message(ebcdic("Hello, world!"), 500, 785);
+    RenderOptions o = options(500, CHAR_EBCDIC);
+    expectSpot(View::Character, o, m, 7, { 0, 16, 1 });
+    expectSpot(View::Hex, o, m, 7, { 0, 24, 2 });
+}
+
+TEST(Locate, UnicodeDataIsPositionedByBytes)
+{
+    Message m = message(std::string("a\0b\0c\0", 6), 1200);
+    RenderOptions o = options(1200, CHAR_ASCII);
+    expectSpot(View::Character, o, m, 1, { 0, 10, 1 });
+    expectSpot(View::Character, o, m, 4, { 0, 13, 1 });
+}
+
+TEST(Locate, NulBytesTakeAColumnEach)
+{
+    Message m = message(std::string("a\0b\0c", 5));
+    RenderOptions o = options();
+    EXPECT_EQ("00000000 a.b.c", render(m, View::Character, o));
+    expectSpot(View::Character, o, m, 2, { 0, 11, 1 });
+    expectSpot(View::Character, o, m, 4, { 0, 13, 1 });
+}
+
+TEST(Locate, EmptyBodyHasNoPosition)
+{
+    Message m = message("");
+    Spot s;
+    for (View v : { View::Character, View::Hex, View::Both })
+    {
+        EXPECT_FALSE(where(v, options(), m, 0, s));
+    }
+}
+
+TEST(Locate, OutsideTheBodyIsFalseAndLeavesThePositionAlone)
+{
+    Message m = message(letters(20));
+    TextPos pos;
+    pos.line = 4;
+    pos.column = 5;
+    pos.length = 6;
+    EXPECT_FALSE(locate(View::Hex, options(), m, 20, pos));
+    EXPECT_FALSE(locate(View::Hex, options(), m, (size_t)-1, pos));
+    EXPECT_FALSE(locate(View::Character, options(), m, 21, pos));
+    EXPECT_EQ(4, pos.line);
+    EXPECT_EQ(5, pos.column);
+    EXPECT_EQ(6, pos.length);
+    EXPECT_TRUE(locate(View::Character, options(), m, 19, pos));
+}
+
+TEST(Locate, UnsupportedViewsAreFalse)
+{
+    Message m = message("<a>b</a>");
+    Spot s;
+    for (View v : { View::Xml, View::Parsed, View::Cobol, View::Json, View::Fixed })
+    {
+        EXPECT_FALSE(where(v, options(), m, 0, s));
+    }
+}
+
+TEST(Locate, TextRenderedEarlierGivesTheSamePosition)
+{
+    Message m = message(letters(70));
+    RenderOptions o = options();
+    for (View v : { View::Character, View::Hex, View::Both })
+    {
+        std::string text = render(m, v, o);
+        for (size_t i : { 0, 1, 31, 32, 69 })
+        {
+            TextPos a, b;
+            ASSERT_TRUE(locate(v, o, m, i, a));
+            ASSERT_TRUE(locate(v, o, m, text, i, b));
+            EXPECT_EQ(a.line, b.line);
+            EXPECT_EQ(a.column, b.column);
+            EXPECT_EQ(a.length, b.length);
+        }
+    }
+}
+
+TEST(Locate, TextThatIsNotTheViewIsFalseNotAGuess)
+{
+    Message m = message(letters(40));
+    RenderOptions o = options();
+    TextPos pos;
+    EXPECT_FALSE(locate(View::Character, o, m, "", 3, pos));
+    EXPECT_FALSE(locate(View::Character, o, m, "no label here", 3, pos));
+    EXPECT_FALSE(locate(View::Hex, o, m, "00000000 ", 3, pos));
+    // a label further on than the offset leaves no line holding it
+    EXPECT_FALSE(locate(View::Hex, o, m, "00000100 3031", 3, pos));
+    // a line too short for the byte
+    EXPECT_FALSE(locate(View::Character, o, m, "00000000 AB", 5, pos));
+    EXPECT_FALSE(locate(View::Hex, o, m, "00000000 3031", 5, pos));
+}
+
+TEST(Locate, LabelsOfNineDigitsAreReadAndShiftTheColumns)
+{
+    // the offset label is %8.8d, so a body over 99,999,999 bytes has longer labels and
+    // the text one column further right (Windows' formulas do not allow for it)
+    Message m = message("xy");
+    RenderOptions o = options();
+    TextPos pos;
+    ASSERT_TRUE(locate(View::Character, o, m, std::string_view("000000000 xy"), 1, pos));
+    EXPECT_EQ(0, pos.line);
+    EXPECT_EQ(11, pos.column);
+    ASSERT_TRUE(locate(View::Hex, o, m, std::string_view("000000000 7879"), 1, pos));
+    EXPECT_EQ(12, pos.column);
+}
+
+TEST(Locate, SixteenMegabytesIsFast)
+{
+    // linear in the text: one pass over the lines, nothing quadratic
+    const size_t size = 16u * 1024 * 1024;
+    Message m = message(std::string(size, 'x'));
+    RenderOptions o = options();
+    for (View v : { View::Character, View::Hex, View::Both })
+    {
+        std::string text = render(m, v, o);
+        auto start = std::chrono::steady_clock::now();
+        for (size_t i : { size - 1, size / 2, (size_t)0 })
+        {
+            TextPos pos;
+            ASSERT_TRUE(locate(v, o, m, text, i, pos));
+        }
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        EXPECT_LT(seconds, 2.0) << "view " << (int)v;
+    }
+    // and with the render folded in
+    TextPos pos;
+    auto start = std::chrono::steady_clock::now();
+    ASSERT_TRUE(locate(View::Character, o, m, size - 1, pos));
+    EXPECT_EQ((int)((size - 1) / 32), pos.line);
+    EXPECT_EQ((int)((size - 1) % 32 + 9), pos.column);
+    EXPECT_LT(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), 10.0);
+}
+
+TEST(Locate, ExactSizeBuffersAreNotReadPastTheirEnd)
+{
+    // memcheck.Locate runs this under the guard allocator: a read one byte past the
+    // end of an exact-size body or text faults
+    for (size_t size : { 1, 7, 16, 17, 33 })
+    {
+        Message m = message(letters(size));
+        m.body.shrink_to_fit();
+        for (View v : { View::Character, View::Hex, View::Both })
+        {
+            RenderOptions o = options();
+            std::string text = render(m, v, o);
+            std::unique_ptr<char[]> exact(new char[text.size()]);
+            memcpy(exact.get(), text.data(), text.size());
+            for (size_t i = 0; i < size; i++)
+            {
+                TextPos pos;
+                ASSERT_TRUE(locate(v, o, m, std::string_view(exact.get(), text.size()), i, pos));
+                ASSERT_LT((size_t)pos.line, text.size());
+            }
+            // and truncations of the text at every length
+            for (size_t cut = 0; cut <= text.size(); cut++)
+            {
+                std::unique_ptr<char[]> part(new char[cut ? cut : 1]);
+                memcpy(part.get(), text.data(), cut);
+                TextPos pos;
+                locate(v, o, m, std::string_view(part.get(), cut), size - 1, pos);
+            }
+        }
+    }
 }
