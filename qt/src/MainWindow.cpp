@@ -1,5 +1,7 @@
 #include "MainWindow.h"
 
+#include "AppDocument.h"
+
 #include <QLabel>
 #include <QTabWidget>
 
@@ -16,7 +18,13 @@ namespace rfhqt
 
 	bool MainWindow::isPhase1Tab(int index)
 	{
-		return (index == TabMain) || (index == TabData) || (index == TabMqmd);
+		// one owner: the enable rules (AppDocument::enablesFor)
+		static_assert((int)rfhqt::Tab::Conn == TabConn && (int)rfhqt::Tab::Count == TabCount && (int)rfhqt::Tab::Mqmd == TabMqmd, "MainWindow::Tab follows rfhqt::Tab");
+		if (index < 0 || index >= TabCount)
+		{
+			return false;
+		}
+		return AppDocument::enablesFor(EnableInputs()).tabEnabled((rfhqt::Tab)index);
 	}
 
 	MainWindow::MainWindow(QWidget * parent)

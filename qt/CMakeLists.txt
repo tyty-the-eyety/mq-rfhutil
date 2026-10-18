@@ -13,6 +13,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 
 add_library(rfhqt STATIC
+    src/AppDocument.cpp
     src/AppSettings.cpp
     src/FileTrace.cpp
     src/MainWindow.cpp
