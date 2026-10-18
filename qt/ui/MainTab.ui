@@ -91,7 +91,7 @@
               </item>
               <item>
                 <widget class="QPushButton" name="browseNextButton">
-                  <property name="text"><string>Browse &amp;Next</string></property>
+                  <property name="text"><string>Browse Next</string></property>
                   <property name="toolTip"><string>Read next message in queue using current browse operation</string></property>
                   <property name="accessibleName"><string>Browse Next</string></property>
                 </widget>

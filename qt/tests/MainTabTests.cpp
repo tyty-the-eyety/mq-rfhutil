@@ -204,7 +204,7 @@ namespace
     // The captions of rfhutil.rc:297-380, verbatim with their '&'.
     const Row kButtons[] = {
         { "readQButton", "Read &Q", 'q' }, { "writeQButton", "&Write Q", 'w' }, { "browseQButton", "&Browse Q", 'b' },
-        { "startBrowseButton", "S&tart Browse", 't' }, { "browseNextButton", "Browse &Next", 'n' },
+        { "startBrowseButton", "S&tart Browse", 't' }, { "browseNextButton", "Browse Next", 0 },
         { "browsePrevButton", "Browse P&rev", 'r' }, { "endBrowseButton", "End Browse", 0 }, { "closeQButton", "Close Q", 0 },
         { "saveQButton", "Save Q", 0 }, { "loadQButton", "&Load Q", 'l' }, { "moveQButton", "Move Q", 0 },
         { "purgeQButton", "Purg&e Q", 'e' }, { "displayQButton", "&Display Q", 'd' }, { "openFileButton", "&Open File", 'o' },
