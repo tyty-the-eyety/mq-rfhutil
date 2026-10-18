@@ -15,6 +15,7 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 add_library(rfhqt STATIC
     src/MainWindow.cpp
     src/ProcessSetup.cpp
+    src/SessionController.cpp
 )
 target_include_directories(rfhqt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rfhqt PUBLIC Qt6::Widgets rfhcore)
