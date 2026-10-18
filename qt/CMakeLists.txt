@@ -19,6 +19,8 @@ add_library(rfhqt STATIC
     src/FileTrace.cpp
     src/MainTab.cpp
     src/MainWindow.cpp
+    src/MqmdTab.cpp
+    src/IdEdit.h
     src/Operations.cpp
     src/ProcessSetup.cpp
     src/SessionController.cpp

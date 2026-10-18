@@ -1,0 +1,1271 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>MqmdTab</class>
+  <widget class="QWidget" name="MqmdTab">
+    <property name="windowTitle">
+      <string>MQMD</string>
+    </property>
+    <layout class="QHBoxLayout" name="rootLayout" stretch="3,3,3">
+      <item>
+        <layout class="QVBoxLayout" name="leftColumn">
+          <item>
+            <layout class="QFormLayout" name="leftForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="formatComboLabel">
+                  <property name="text">
+                    <string>MQ Message Format</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>formatCombo</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QComboBox" name="formatCombo">
+                  <property name="toolTip">
+                    <string>Format field in the MQ message descriptor (8 chars)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Format field in the MQ message descriptor</string>
+                  </property>
+                  <property name="editable">
+                    <bool>true</bool>
+                  </property>
+                  <property name="insertPolicy">
+                    <enum>QComboBox::NoInsert</enum>
+                  </property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="ccsidEditLabel">
+                  <property name="text">
+                    <string>Code Page</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>ccsidEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QLineEdit" name="ccsidEdit">
+                  <property name="toolTip">
+                    <string>Code page of either RFH if present or user data</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Code page of either RFH if present or user data</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>5</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="msgTypeComboLabel">
+                  <property name="text">
+                    <string>MsgType</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>msgTypeCombo</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QComboBox" name="msgTypeCombo">
+                  <property name="toolTip">
+                    <string>Type of system that created the message</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Type of system that created the message</string>
+                  </property>
+                  <property name="editable">
+                    <bool>true</bool>
+                  </property>
+                  <property name="insertPolicy">
+                    <enum>QComboBox::NoInsert</enum>
+                  </property>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="expiryEditLabel">
+                  <property name="text">
+                    <string>Expiry</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>expiryEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QLineEdit" name="expiryEdit">
+                  <property name="toolTip">
+                    <string>Time interval until message is considered expired</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Time interval until message is considered expired</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>9</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="4" column="0">
+                <widget class="QLabel" name="feedbackEditLabel">
+                  <property name="text">
+                    <string>Feedback</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>feedbackEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="4" column="1">
+                <widget class="QLineEdit" name="feedbackEdit">
+                  <property name="toolTip">
+                    <string>Feedback field from last MQ request</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Feedback field from last MQ request</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>8</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="5" column="0">
+                <widget class="QLabel" name="priorityEditLabel">
+                  <property name="text">
+                    <string>Priority</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>priorityEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="5" column="1">
+                <widget class="QLineEdit" name="priorityEdit">
+                  <property name="toolTip">
+                    <string>MQSeries message priority</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>MQSeries message priority</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>8</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="6" column="0">
+                <widget class="QLabel" name="backoutEditLabel">
+                  <property name="text">
+                    <string>Backout Count</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>backoutEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="6" column="1">
+                <widget class="QLineEdit" name="backoutEdit">
+                  <property name="toolTip">
+                    <string>Backout count from the last message read</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Backout count from the last message read</string>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="7" column="0">
+                <widget class="QLabel" name="seqNoEditLabel">
+                  <property name="text">
+                    <string>Seq No</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>seqNoEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="7" column="1">
+                <widget class="QLineEdit" name="seqNoEdit">
+                  <property name="toolTip">
+                    <string>Sequence number within group</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Sequence number within group</string>
+                  </property>
+                </widget>
+              </item>
+              <item row="8" column="0">
+                <widget class="QLabel" name="offsetEditLabel">
+                  <property name="text">
+                    <string>Offset</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>offsetEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="8" column="1">
+                <widget class="QLineEdit" name="offsetEdit">
+                  <property name="toolTip">
+                    <string>Offset of data segment within logical message</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Offset of data segment within logical message</string>
+                  </property>
+                </widget>
+              </item>
+              <item row="9" column="0">
+                <widget class="QLabel" name="origLenEditLabel">
+                  <property name="text">
+                    <string>Orig Len</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>origLenEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="9" column="1">
+                <widget class="QLineEdit" name="origLenEdit">
+                  <property name="toolTip">
+                    <string>Original length field in MQMD</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Original length field in MQMD</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>9</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="10" column="0">
+                <widget class="QLabel" name="replyQueueEditLabel">
+                  <property name="text">
+                    <string>Reply To Queue</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>replyQueueEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="10" column="1">
+                <widget class="QLineEdit" name="replyQueueEdit">
+                  <property name="toolTip">
+                    <string>Reply to queue name</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Reply to queue name</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>48</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="11" column="0">
+                <widget class="QLabel" name="replyQmEditLabel">
+                  <property name="text">
+                    <string>Reply To Queue Manager</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>replyQmEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="11" column="1">
+                <widget class="QLineEdit" name="replyQmEdit">
+                  <property name="toolTip">
+                    <string>Queue manager where reply to queue resides</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Queue manager where reply to queue resides</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>48</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="12" column="0">
+                <widget class="QLabel" name="userIdEditLabel">
+                  <property name="text">
+                    <string>User Id</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>userIdEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="12" column="1">
+                <widget class="QLineEdit" name="userIdEdit">
+                  <property name="toolTip">
+                    <string>User id field from the MQ message descriptor (12 chars)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>User id field from the MQ message descriptor</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>12</number>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="13" column="0">
+                <widget class="QLabel" name="accountTokenEditLabel">
+                  <property name="text">
+                    <string>Accounting Token</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>accountTokenEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="13" column="1">
+                <widget class="QLineEdit" name="accountTokenEdit">
+                  <property name="toolTip">
+                    <string>Accounting token field (system dependent)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Accounting token field</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>64</number>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="14" column="0">
+                <widget class="QLabel" name="applIdentityEditLabel">
+                  <property name="text">
+                    <string>Application Identity</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>applIdentityEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="14" column="1">
+                <widget class="QLineEdit" name="applIdentityEdit">
+                  <property name="toolTip">
+                    <string>Application identify field from MQ message descriptor</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Application identify field from MQ message descriptor</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>32</number>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="15" column="0">
+                <widget class="QLabel" name="applOriginEditLabel">
+                  <property name="text">
+                    <string>Appl Origin</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>applOriginEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="15" column="1">
+                <widget class="QLineEdit" name="applOriginEdit">
+                  <property name="toolTip">
+                    <string>Application origin field (4 characters)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Application origin field</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>4</number>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="16" column="0">
+                <widget class="QLabel" name="applNameEditLabel">
+                  <property name="text">
+                    <string>Put Application Name</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>applNameEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="16" column="1">
+                <widget class="QLineEdit" name="applNameEdit">
+                  <property name="toolTip">
+                    <string>Name of application that wrote the message</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Name of application that wrote the message</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>28</number>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item row="17" column="0">
+                <widget class="QLabel" name="applTypeComboLabel">
+                  <property name="text">
+                    <string>Appl Type</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>applTypeCombo</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="17" column="1">
+                <widget class="QComboBox" name="applTypeCombo">
+                  <property name="toolTip">
+                    <string>Application type field from MQ message descriptor</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Application type field from MQ message descriptor</string>
+                  </property>
+                  <property name="editable">
+                    <bool>true</bool>
+                  </property>
+                  <property name="insertPolicy">
+                    <enum>QComboBox::NoInsert</enum>
+                  </property>
+                </widget>
+              </item>
+              <item row="18" column="0">
+                <widget class="QLabel" name="dateTimeEditLabel">
+                  <property name="text">
+                    <string>Put Date/Time</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>dateTimeEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="18" column="1">
+                <widget class="QLineEdit" name="dateTimeEdit">
+                  <property name="toolTip">
+                    <string>Date and time the message was originally written</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>Date and time the message was originally written</string>
+                  </property>
+                  <property name="readOnly">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <spacer name="leftSpacer">
+              <property name="orientation">
+                <enum>Qt::Vertical</enum>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QVBoxLayout" name="middleColumn">
+          <item>
+            <layout class="QFormLayout" name="idForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="msgIdEditLabel">
+                  <property name="text">
+                    <string>Message ID</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>msgIdEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="rfhqt::IdEdit" name="msgIdEdit">
+                  <property name="toolTip">
+                    <string>MQ message id (24 bytes) of last message read</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>MQ message id</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>48</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="correlIdEditLabel">
+                  <property name="text">
+                    <string>Correl ID</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>correlIdEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="rfhqt::IdEdit" name="correlIdEdit">
+                  <property name="toolTip">
+                    <string>MQ correlation id (24 bytes)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>MQ correlation id</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>48</number>
+                  </property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="groupIdEditLabel">
+                  <property name="text">
+                    <string>Group Id</string>
+                  </property>
+                  <property name="buddy">
+                    <cstring>groupIdEdit</cstring>
+                  </property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="rfhqt::IdEdit" name="groupIdEdit">
+                  <property name="toolTip">
+                    <string>MQ group id (24 bytes)</string>
+                  </property>
+                  <property name="accessibleName">
+                    <string>MQ group id</string>
+                  </property>
+                  <property name="maxLength">
+                    <number>48</number>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="idDisplayBox">
+              <property name="title">
+                <string>Id Display</string>
+              </property>
+              <layout class="QHBoxLayout" name="idDisplayLayout">
+                <item>
+                  <widget class="QRadioButton" name="dispAsciiRadio">
+                    <property name="text">
+                      <string>Ascii</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Display id fields as ASCII characters</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Ascii</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="dispEbcdicRadio">
+                    <property name="text">
+                      <string>Ebcdic</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Display id fields as EBCDIC characters</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Ebcdic</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="dispHexRadio">
+                    <property name="text">
+                      <string>Hex</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Display id fields in hex</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Hex</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <layout class="QHBoxLayout" name="idButtons">
+              <item>
+                <widget class="QPushButton" name="resetIdsButton">
+                  <property name="text">
+                    <string>Reset Ids</string>
+                  </property>
+                  <property name="toolTip">
+                    <string>Reset the correlation, message and group ids to binary zeros (Alt + J)</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QPushButton" name="copyMsgIdButton">
+                  <property name="text">
+                    <string>Copy Msg Id to Correl Id</string>
+                  </property>
+                  <property name="toolTip">
+                    <string>Copy the message id to the correlation id (Alt + C)</string>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="intBox">
+              <property name="title">
+                <string>Int Fmt</string>
+              </property>
+              <layout class="QHBoxLayout" name="intBoxLayout">
+                <item>
+                  <widget class="QRadioButton" name="encPcRadio">
+                    <property name="text">
+                      <string>PC</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Integer values in PC (reversed) format</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>PC</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="encHostRadio">
+                    <property name="text">
+                      <string>Host</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Integer data is in host format</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Host</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="pdBox">
+              <property name="title">
+                <string>PD Fmt</string>
+              </property>
+              <layout class="QHBoxLayout" name="pdBoxLayout">
+                <item>
+                  <widget class="QRadioButton" name="pdPcRadio">
+                    <property name="text">
+                      <string>PC</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Format of decimal data is PC (reversed)</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>PC</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="pdHostRadio">
+                    <property name="text">
+                      <string>Host</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Format of decimal data is host</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Host</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="floatBox">
+              <property name="title">
+                <string>Float Fmt</string>
+              </property>
+              <layout class="QHBoxLayout" name="floatBoxLayout">
+                <item>
+                  <widget class="QRadioButton" name="floatPcRadio">
+                    <property name="text">
+                      <string>PC</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Floating point numbers are in PC (Intel) format</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>PC</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="floatUnixRadio">
+                    <property name="text">
+                      <string>Unix</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Floating point numbers are in Unix format (Big-Endian IEEE)</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Unix</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="float390Radio">
+                    <property name="text">
+                      <string>390</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Floating point numbers are in 390 format</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>390</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="floatTnsRadio">
+                    <property name="text">
+                      <string>TNS</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Floating point numbers are in TNS format</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>TNS</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="persistBox">
+              <property name="title">
+                <string>Persistent Msg</string>
+              </property>
+              <layout class="QHBoxLayout" name="persistBoxLayout">
+                <item>
+                  <widget class="QRadioButton" name="persistNoRadio">
+                    <property name="text">
+                      <string>No</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message is non-persistent</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>No</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="persistYesRadio">
+                    <property name="text">
+                      <string>Yes</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message is persistent</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Yes</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="persistAsQueueRadio">
+                    <property name="text">
+                      <string>As Queue</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message will be persistent or not based on queue default</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>As Queue</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="groupBox">
+              <property name="title">
+                <string>Group</string>
+              </property>
+              <layout class="QHBoxLayout" name="groupBoxLayout">
+                <item>
+                  <widget class="QCheckBox" name="groupYesCheck">
+                    <property name="text">
+                      <string>Yes</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message is in a group (not last)</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Yes</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="groupLastCheck">
+                    <property name="text">
+                      <string>Last</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Last message in a group</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Last</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="segmentBox">
+              <property name="title">
+                <string>Segment</string>
+              </property>
+              <layout class="QHBoxLayout" name="segmentBoxLayout">
+                <item>
+                  <widget class="QCheckBox" name="segmentYesCheck">
+                    <property name="text">
+                      <string>Yes</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message contains a segment of data</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Yes</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="segmentLastCheck">
+                    <property name="text">
+                      <string>Last</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Message contains last data segment</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Last</string>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="segmentAllowedCheck">
+                    <property name="text">
+                      <string>Allowed</string>
+                    </property>
+                    <property name="toolTip">
+                      <string>Segmentation of message by queue managers is allowed</string>
+                    </property>
+                    <property name="accessibleName">
+                      <string>Allowed</string>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <spacer name="middleSpacer">
+              <property name="orientation">
+                <enum>Qt::Vertical</enum>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QVBoxLayout" name="rightColumn">
+          <item>
+            <widget class="QGroupBox" name="reportBox">
+              <property name="title">
+                <string>Report Options</string>
+              </property>
+              <layout class="QVBoxLayout" name="reportLayout">
+                <item>
+                  <layout class="QGridLayout" name="reportGrid">
+                    <item row="0" column="0">
+                      <widget class="QLabel" name="reportExceptLabel">
+                        <property name="text">
+                          <string>Except</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="0" column="1">
+                      <widget class="QRadioButton" name="reportExceptNoneRadio">
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>No exception report message requested</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="0" column="2">
+                      <widget class="QRadioButton" name="reportExceptYesRadio">
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Request report message returned when exception occurs</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="0" column="3">
+                      <widget class="QRadioButton" name="reportExceptDataRadio">
+                        <property name="text">
+                          <string>Data</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with 100 bytes data when exception occurs</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Data</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="0" column="4">
+                      <widget class="QRadioButton" name="reportExceptFullRadio">
+                        <property name="text">
+                          <string>Full</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with all data returned when exception occurs</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Full</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="1" column="0">
+                      <widget class="QLabel" name="reportExpireLabel">
+                        <property name="text">
+                          <string>Expire</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="1" column="1">
+                      <widget class="QRadioButton" name="reportExpireNoneRadio">
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>No report message requested if message expires</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="1" column="2">
+                      <widget class="QRadioButton" name="reportExpireYesRadio">
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message requested if message expires</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="1" column="3">
+                      <widget class="QRadioButton" name="reportExpireDataRadio">
+                        <property name="text">
+                          <string>Data</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with 100 bytes requested if message expires</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Data</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="1" column="4">
+                      <widget class="QRadioButton" name="reportExpireFullRadio">
+                        <property name="text">
+                          <string>Full</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with all data requested if message expires</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Full</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="2" column="0">
+                      <widget class="QLabel" name="reportCoaLabel">
+                        <property name="text">
+                          <string>COA</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="2" column="1">
+                      <widget class="QRadioButton" name="reportCoaNoneRadio">
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>No report message upon message arrival at destination QM</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="2" column="2">
+                      <widget class="QRadioButton" name="reportCoaYesRadio">
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message only when message arrives at destination QM</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="2" column="3">
+                      <widget class="QRadioButton" name="reportCoaDataRadio">
+                        <property name="text">
+                          <string>Data</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with 100 bytes when message arrives at QM</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Data</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="2" column="4">
+                      <widget class="QRadioButton" name="reportCoaFullRadio">
+                        <property name="text">
+                          <string>Full</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with all data when message arrives at QM</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Full</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="3" column="0">
+                      <widget class="QLabel" name="reportCodLabel">
+                        <property name="text">
+                          <string>COD</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="3" column="1">
+                      <widget class="QRadioButton" name="reportCodNoneRadio">
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>No report message requested when message is processed</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="3" column="2">
+                      <widget class="QRadioButton" name="reportCodYesRadio">
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message requested when message is processed</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="3" column="3">
+                      <widget class="QRadioButton" name="reportCodDataRadio">
+                        <property name="text">
+                          <string>Data</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with 100 bytes when message is processed</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Data</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item row="3" column="4">
+                      <widget class="QRadioButton" name="reportCodFullRadio">
+                        <property name="text">
+                          <string>Full</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Report message with all data when message is processed</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Full</string>
+                        </property>
+                      </widget>
+                    </item>
+                  </layout>
+                </item>
+                <item>
+                  <layout class="QHBoxLayout" name="reportChecks1">
+                    <item>
+                      <widget class="QCheckBox" name="panCheck">
+                        <property name="text">
+                          <string>PAN</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Positive action notification report message requested</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>PAN</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QCheckBox" name="nanCheck">
+                        <property name="text">
+                          <string>NAN</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Negative action notification report message requested</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>NAN</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QCheckBox" name="activityCheck">
+                        <property name="text">
+                          <string>Activity</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Send report from each channel that handles this message</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Activity</string>
+                        </property>
+                      </widget>
+                    </item>
+                  </layout>
+                </item>
+                <item>
+                  <layout class="QHBoxLayout" name="reportChecks2">
+                    <item>
+                      <widget class="QCheckBox" name="passMsgIdCheck">
+                        <property name="text">
+                          <string>Pass MsgId</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Use original message ID from request in report message</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Pass MsgId</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QCheckBox" name="passCorrelCheck">
+                        <property name="text">
+                          <string>Pass Correl</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Include correlation id of input message on report message</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Pass Correl</string>
+                        </property>
+                      </widget>
+                    </item>
+                  </layout>
+                </item>
+                <item>
+                  <layout class="QHBoxLayout" name="reportChecks3">
+                    <item>
+                      <widget class="QCheckBox" name="discardCheck">
+                        <property name="text">
+                          <string>Discard</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Discard message when arrives at destination</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Discard</string>
+                        </property>
+                      </widget>
+                    </item>
+                    <item>
+                      <widget class="QCheckBox" name="expiryDiscardCheck">
+                        <property name="text">
+                          <string>Discard/Expiry</string>
+                        </property>
+                        <property name="toolTip">
+                          <string>Discard message upon arrival or expiry</string>
+                        </property>
+                        <property name="accessibleName">
+                          <string>Discard/Expiry</string>
+                        </property>
+                      </widget>
+                    </item>
+                  </layout>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <spacer name="rightSpacer">
+              <property name="orientation">
+                <enum>Qt::Vertical</enum>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+    </layout>
+  </widget>
+  <customwidgets>
+    <customwidget>
+      <class>rfhqt::IdEdit</class>
+      <extends>QLineEdit</extends>
+      <header>IdEdit.h</header>
+    </customwidget>
+  </customwidgets>
+  <resources/>
+  <connections/>
+</ui>
