@@ -281,6 +281,11 @@ namespace rfh
 		Result disconnect();
 		bool isConnected() const { return hConn != MQHC_UNUSABLE_HCONN; }
 
+		// Whether the session holds an open queue handle for put, get or browse (Windows DataArea::isQueueOpen).
+		// An inquiry (queueInfo, depth) and a purge use handles of their own and do not count. A disconnect, a
+		// lost connection and closeQueue() make it false.
+		bool isQueueOpen() const { return hObj != MQHO_UNUSABLE_HOBJ; }
+
 		// Platform, command level and maximum message length of the queue manager of the current
 		// connection; 0 for a fact that is not known: before connect(), after a disconnect or a lost
 		// connection, and when MQ refused the inquiry (connect() then warns).

@@ -126,6 +126,21 @@ private:
         return o;
     }
 
+
+    // Submits something and returns the result of the job that finishes.
+    template <class Submit>
+    static JobResult lastResultOf(SessionController &, QSignalSpy & spy, Submit submit)
+    {
+        spy.clear();
+        if (!submit() || !waitFinished(spy))
+        {
+            return JobResult();
+        }
+        JobResult r = lastResult(spy);
+        spy.clear();
+        return r;
+    }
+
 private slots:
     void init()
     {
@@ -632,6 +647,124 @@ private slots:
         JobResult r = lastResult(finished);
         QVERIFY(!r.result.ok());
         QVERIFY(r.count >= 4 && r.count < 50);
+    }
+
+    // ---- Task 23: what Operations needs from the controller ----------------------------------------------------
+
+    void everyJobReportsWhetherTheSessionHoldsAnOpenQueue()
+    {
+        Watchdog dog(60);
+        SessionController c(rfh_test::fakeApi());
+        QSignalSpy finished(&c, &SessionController::finished);
+        connectAndWait(c, finished);
+        QVERIFY(!lastResultOf(c, finished, [&]() { return c.inquireQueue(kQueue); }).queueOpen);
+
+        QVERIFY(c.get(kQueue, rfh::GetOptions()));
+        QVERIFY(waitFinished(finished));
+        QVERIFY(lastResult(finished).queueOpen);
+        finished.clear();
+
+        QVERIFY(c.inquireQueue(kQueue));
+        QVERIFY(waitFinished(finished));
+        QVERIFY2(lastResult(finished).queueOpen, "an inquiry uses its own handle and leaves the session's open");
+        finished.clear();
+
+        QVERIFY(c.disconnectFromQm());
+        QVERIFY(waitFinished(finished));
+        QVERIFY(!lastResult(finished).queueOpen);
+        QVERIFY(!lastResult(finished).connected);
+    }
+
+    void aRollbackJobBacksOutTheUnitOfWork()
+    {
+        Watchdog dog(60);
+        SessionController c(rfh_test::fakeApi());
+        QSignalSpy finished(&c, &SessionController::finished);
+        connectAndWait(c, finished);
+        rfh::Message m;
+        m.body = {'g'};
+        rfh::PutOptions syncpoint;
+        syncpoint.syncpoint = true;
+        QVERIFY(c.put(kQueue, m, syncpoint));
+        QVERIFY(waitFinished(finished));
+        QVERIFY(lastResult(finished).result.ok());
+        finished.clear();
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+
+        QVERIFY(c.rollback());
+        QVERIFY(waitFinished(finished));
+        QCOMPARE(finished.last().at(0).toString(), QString("rollback"));
+        QVERIFY(lastResult(finished).result.ok());
+        QCOMPARE(fake.backCalls, 1);
+        QVERIFY(fake.pendingPuts.empty());
+        QCOMPARE(fake.commitCalls, 0);
+        QVERIFY(fake.queue(kQueue).messages.empty());
+    }
+
+    void aFailedRollbackIsDelivered()
+    {
+        Watchdog dog(60);
+        fake.backRc = MQRC_CONNECTION_BROKEN;
+        SessionController c(rfh_test::fakeApi());
+        QSignalSpy finished(&c, &SessionController::finished);
+        connectAndWait(c, finished);
+        QVERIFY(c.rollback());
+        QVERIFY(waitFinished(finished));
+        QVERIFY(!lastResult(finished).result.ok());
+        QCOMPARE(lastResult(finished).result.rc, MQRC_CONNECTION_BROKEN);
+        QVERIFY(!lastResult(finished).connected);
+    }
+
+    void aPurgeJobCarriesTheUncertainCountAndTheQueueInfo()
+    {
+        Watchdog dog(60);
+        SessionController c(rfh_test::fakeApi());
+        QSignalSpy finished(&c, &SessionController::finished);
+        connectAndWait(c, finished);
+        for (int i = 0; i < 10; i++)
+        {
+            rfh_test::FakeMessage m;
+            m.data = {'p'};
+            m.md.Persistence = MQPER_PERSISTENT;
+            fake.queue(kQueue).messages.push_back(m);
+        }
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = MQRC_Q_MGR_QUIESCING;
+        fake.backRc = MQRC_CONNECTION_BROKEN;
+        rfh::PurgeOptions options;
+        options.syncpoint = true;
+        options.batchSize = 3;
+        QVERIFY(c.purge(kQueue, options));
+        QVERIFY(waitFinished(finished));
+        JobResult r = lastResult(finished);
+        QVERIFY(!r.result.ok());
+        QCOMPARE(r.count, 3L);
+        QCOMPARE(r.uncertain, 2L);
+        QVERIFY2(r.result.text.find("unknown outcome") != std::string::npos, r.result.text.c_str());
+        QVERIFY2(!r.connected, "the connection was released");
+        QVERIFY2(!r.hasQueueInfo, "no queue info without a connection");
+    }
+
+    void aPurgeJobRefreshesTheQueueInfoWhenTheConnectionSurvives()
+    {
+        Watchdog dog(60);
+        SessionController c(rfh_test::fakeApi());
+        QSignalSpy finished(&c, &SessionController::finished);
+        connectAndWait(c, finished);
+        for (int i = 0; i < 4; i++)
+        {
+            rfh_test::FakeMessage m;
+            m.data = {'p'};
+            fake.queue(kQueue).messages.push_back(m);
+        }
+        QVERIFY(c.purge(kQueue, rfh::PurgeOptions()));
+        QVERIFY(waitFinished(finished));
+        JobResult r = lastResult(finished);
+        QVERIFY(r.result.ok());
+        QCOMPARE(r.count, 4L);
+        QCOMPARE(r.uncertain, 0L);
+        QVERIFY(r.hasQueueInfo);
+        QCOMPARE(r.queue.depth, 0);
     }
 };
 

@@ -644,6 +644,42 @@ private slots:
         QCOMPARE(doc.queueManagerInfo().commandLevel, (MQLONG)0);		// unknown again, as MqSession::queueManagerInfo()
     }
 
+    void applyJobResultMirrorsTheOpenQueueOfTheSession()
+    {
+        // MqSession::isQueueOpen() is the only truth about the queue handle; every job reports it (Task 23).
+        AppDocument doc;
+        JobResult connect;
+        connect.connected = true;
+        doc.applyJobResult("connect", connect);
+        QVERIFY(!doc.queueOpen());
+
+        JobResult get;
+        get.connected = true;
+        get.queueOpen = true;
+        doc.applyJobResult("get", get);
+        QVERIFY(doc.queueOpen());
+
+        QSignalSpy conn(&doc, &AppDocument::connectionChanged);
+        doc.applyJobResult("get", get);
+        QCOMPARE(conn.count(), 0);						// nothing changed, nothing signalled
+
+        JobResult closed;
+        closed.connected = true;
+        closed.queueOpen = false;
+        doc.applyJobResult("close", closed);
+        QVERIFY(!doc.queueOpen());
+        QVERIFY(doc.connected());
+        QCOMPARE(conn.count(), 1);
+
+        doc.applyJobResult("get", get);
+        JobResult lost;							// the connection went: the handle went with it
+        lost.connected = false;
+        lost.queueOpen = false;
+        doc.applyJobResult("get", lost);
+        QVERIFY(!doc.connected());
+        QVERIFY(!doc.queueOpen());
+    }
+
     void clearDataKeepsHeadersMqmdFileAndCopyBook()
     {
         // Windows clearFileData -> resetDataArea (DataArea.cpp:2148): fileSize, fileCcsid, fileIntFormat, the data

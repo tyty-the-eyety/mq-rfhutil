@@ -85,6 +85,7 @@ namespace rfhqt
 				outcome.result = rfh::Result::failure("The operation failed with an unknown exception");
 			}
 			outcome.connected = s->isConnected();
+			outcome.queueOpen = s->isQueueOpen();
 			QMetaObject::invokeMethod(this, [this, name, outcome]()
 			{
 				jobDone(name, outcome);
@@ -163,8 +164,16 @@ namespace rfhqt
 		{
 			JobResult r;
 			MQLONG count = 0;
-			r.result = s.purge(queue, count, mine);
+			MQLONG uncertain = 0;
+			r.result = s.purge(queue, count, mine, uncertain);
 			r.count = count;
+			r.uncertain = uncertain;
+			if (s.isConnected())
+			{
+				// Windows purgeQueue ends with getCurrentDepth (DataArea.cpp:10226)
+				s.queueInfo(queue, r.queue);
+				r.hasQueueInfo = true;
+			}
 			return r;
 		});
 	}
@@ -175,6 +184,16 @@ namespace rfhqt
 		{
 			JobResult r;
 			r.result = s.commit();
+			return r;
+		});
+	}
+
+	bool SessionController::rollback()
+	{
+		return submit("rollback", [](rfh::MqSession & s)
+		{
+			JobResult r;
+			r.result = s.rollback();
 			return r;
 		});
 	}

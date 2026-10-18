@@ -2173,3 +2173,39 @@ TEST_F(MqSessionFakeTest, PurgeThatCannotOpenTheQueueKeepsTheBrowseHandle)
     EXPECT_EQ(1, session.browsePosition()) << "nothing was removed, so the browse is undisturbed";
     EXPECT_EQ(1u, fake.liveHandles.size());
 }
+
+TEST_F(MqSessionFakeTest, IsQueueOpenFollowsTheSessionsQueueHandle)
+{
+    EXPECT_FALSE(session.isQueueOpen()) << "no connection, no queue";
+    connect();
+    EXPECT_FALSE(session.isQueueOpen()) << "connected, nothing opened yet";
+
+    Message m;
+    ASSERT_TRUE(session.get("Q", m, GetOptions()).ok());
+    EXPECT_TRUE(session.isQueueOpen()) << "a get leaves the queue open, as Windows does";
+
+    QueueInfo info;
+    ASSERT_TRUE(session.queueInfo("Q", info).ok());
+    EXPECT_TRUE(session.isQueueOpen()) << "an inquiry uses a handle of its own";
+
+    ASSERT_TRUE(session.closeQueue().ok());
+    EXPECT_FALSE(session.isQueueOpen());
+
+    ASSERT_TRUE(session.get("Q", m, GetOptions()).ok());
+    EXPECT_TRUE(session.isQueueOpen());
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_FALSE(session.isQueueOpen());
+}
+
+TEST_F(MqSessionFakeTest, IsQueueOpenIsFalseAfterTheConnectionIsLost)
+{
+    connect();
+    Message m;
+    ASSERT_TRUE(session.get("Q", m, GetOptions()).ok());
+    ASSERT_TRUE(session.isQueueOpen());
+
+    fake.getRc = MQRC_CONNECTION_BROKEN;
+    EXPECT_FALSE(session.get("Q", m, GetOptions()).ok());
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_FALSE(session.isQueueOpen()) << "the handle went with the connection";
+}

@@ -341,6 +341,11 @@ namespace rfhqt
 				dropConnection(changes);
 			}
 		}
+		if (isQueueOpen != result.queueOpen)
+		{
+			isQueueOpen = result.queueOpen;			// MqSession::isQueueOpen(): the session owns the handle
+			changes |= CConnection;
+		}
 		if (result.connected && jobName == "connect")
 		{
 			managerFacts = result.queueManager;

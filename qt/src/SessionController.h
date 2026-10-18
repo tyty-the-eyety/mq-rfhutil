@@ -22,11 +22,23 @@
 #include <vector>
 
 #include "rfh_message.h"
+#include "rfh_message_file.h"
 #include "rfh_mq_session.h"
+#include "rfh_mqmd_fields.h"
 #include "rfh_result.h"
 
 namespace rfhqt
 {
+	// One call a multi-step job made, for the flows of Operations: the Windows operation word the status text
+	// uses ("Connect", "Get", "Put", "Close", "Disc", "commit", "rollback"...) and what the core answered. Every
+	// step the job ran is listed in order, the ones that simply worked included, so the UI thread can tell
+	// which state changes happened (a rollback that worked, a commit that worked).
+	struct JobStep
+	{
+		std::string operation;
+		rfh::Result result;
+	};
+
 	// What a job hands back. Plain values: no reference to the session crosses the thread boundary.
 	struct JobResult
 	{
@@ -39,6 +51,14 @@ namespace rfhqt
 		std::vector<std::string> names;				// listQueues
 		rfh::QueueManagerInfo queueManager;			// connect: what connect() learned
 		bool connected = false;						// MqSession::isConnected() when the job ended
+		bool queueOpen = false;						// MqSession::isQueueOpen() when the job ended
+		long uncertain = 0;							// purge: persistent messages whose removal is unknown (never in count)
+
+		// Set by the multi-step jobs of Operations (the controller's ready-made jobs leave them empty).
+		std::vector<JobStep> steps;
+		bool reconnected = false;					// the job connected (queueManager is then valid)
+		std::shared_ptr<rfh::fileio::ReadResult> fileRead;		// openFile: what fileio::read produced
+		std::shared_ptr<rfh::MqmdFields> fileFields;			// openFile: the MQMD tab after the read
 	};
 
 	// Runs connect on the session and wipes the password of options afterwards, whatever the outcome.
@@ -76,8 +96,11 @@ namespace rfhqt
 		bool disconnectFromQm();														// ("disconnect")
 		bool put(const std::string & queue, const rfh::Message & message, const rfh::PutOptions & options);	// ("put"; message holds the MQMD MQ returned)
 		bool get(const std::string & queue, const rfh::GetOptions & options);			// ("get"; options.cancel is set to cancelFlag())
-		bool purge(const std::string & queue, const rfh::PurgeOptions & options);		// ("purge"; options.cancel is set)
+		// ("purge"; options.cancel is set). The result carries count and uncertain (the persistent messages whose
+		// removal is unknown) and, while the connection survives, the queue facts after the purge.
+		bool purge(const std::string & queue, const rfh::PurgeOptions & options);
 		bool commit();																	// ("commit")
+		bool rollback();																// ("rollback"; MQBACK for the whole connection)
 		bool listQueues(const rfh::QueueListOptions & options);							// ("listQueues")
 		bool inquireQueue(const std::string & queue);									// ("queueInfo")
 

@@ -17,6 +17,7 @@ add_library(rfhqt STATIC
     src/AppSettings.cpp
     src/FileTrace.cpp
     src/MainWindow.cpp
+    src/Operations.cpp
     src/ProcessSetup.cpp
     src/SessionController.cpp
     src/StatusLog.cpp

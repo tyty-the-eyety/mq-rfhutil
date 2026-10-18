@@ -198,8 +198,9 @@ namespace rfhqt
 		void setBrowse(const BrowseState & state);
 		void setShell(const ShellState & state);
 
-		// Mirrors what a finished job tells: the connection state, the queue manager facts after "connect",
-		// and the queue facts when the job asked for them. Nothing else is taken (no message, no names).
+		// Mirrors what a finished job tells: the connection state, whether the session holds an open queue handle,
+		// the queue manager facts after "connect", and the queue facts when the job asked for them. Nothing else
+		// is taken (no message, no names).
 		void applyJobResult(const QString & jobName, const JobResult & result);
 
 		// Clear Data: Windows clearFileData -> resetDataArea (DataArea.cpp:2148). Empties the body, resets the
