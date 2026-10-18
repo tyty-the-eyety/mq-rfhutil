@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>DataTab</class>
+  <widget class="QWidget" name="DataTab">
+    <property name="windowTitle"><string>Data</string></property>
+    <layout class="QVBoxLayout" name="rootLayout" stretch="0,1,0">
+      <item>
+        <widget class="QLabel" name="captionLabel">
+          <property name="text"><string>Message Data</string></property>
+          <property name="buddy"><cstring>dataEdit</cstring></property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QPlainTextEdit" name="dataEdit">
+          <property name="toolTip"><string>Message data</string></property>
+          <property name="accessibleName"><string>Message data</string></property>
+          <property name="readOnly"><bool>true</bool></property>
+          <property name="lineWrapMode"><enum>QPlainTextEdit::NoWrap</enum></property>
+          <property name="undoRedoEnabled"><bool>false</bool></property>
+        </widget>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="controlsLayout">
+          <item><widget class="QGroupBox" name="viewBox">
+  <property name="title"><string>Data Format</string></property>
+  <layout class="QVBoxLayout" name="viewBoxLayout">
+<item><widget class="QRadioButton" name="viewCharacterRadio">
+  <property name="text"><string>Character</string></property>
+  <property name="toolTip"><string>Display data as characters (Ctrl+T)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewHexRadio">
+  <property name="text"><string>Hex</string></property>
+  <property name="toolTip"><string>Display data in hex (Ctrl+H)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewBothRadio">
+  <property name="text"><string>&amp;Both</string></property>
+  <property name="toolTip"><string>Display data as both characters and in hex (Ctrl+B)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewXmlRadio">
+  <property name="text"><string>XM&amp;L</string></property>
+  <property name="toolTip"><string>Display XML data in formatted  mode (Ctrl+L)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewParsedRadio">
+  <property name="text"><string>PARSED</string></property>
+  <property name="toolTip"><string>Display XML data in ESQL hierarchial format (Ctrl+Q)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewCobolRadio">
+  <property name="text"><string>COBOL</string></property>
+  <property name="toolTip"><string>Display data mapped to COBOL copy book (Ctrl+K)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewJsonRadio">
+  <property name="text"><string>JS&amp;ON</string></property>
+  <property name="toolTip"><string>Display JSON data in formatted  mode (Alt+O)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="viewFixRadio">
+  <property name="text"><string>&amp;FIX</string></property>
+  <property name="toolTip"><string>Display FIX data in formatted  mode (Alt+F)</string></property>
+</widget></item>
+  </layout>
+</widget></item>
+          <item>
+            <layout class="QVBoxLayout" name="formatColumn">
+              <item><widget class="QGroupBox" name="intBox">
+  <property name="title"><string>&amp;Integer Format</string></property>
+  <layout class="QVBoxLayout" name="intBoxLayout">
+<item><widget class="QRadioButton" name="intPcRadio">
+  <property name="text"><string>PC (Intel)</string></property>
+  <property name="toolTip"><string>For COBOL mapping, assume integer/float data in PC format</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="intHostRadio">
+  <property name="text"><string>HOST (390)</string></property>
+  <property name="toolTip"><string>For COBOL mapping, assume integer/float data in host format</string></property>
+</widget></item>
+  </layout>
+</widget></item>
+              <item><widget class="QGroupBox" name="pdBox">
+  <property name="title"><string>Packed &amp;Dec</string></property>
+  <layout class="QVBoxLayout" name="pdBoxLayout">
+<item><widget class="QRadioButton" name="pdPcRadio">
+  <property name="text"><string>PC (Intel)</string></property>
+  <property name="toolTip"><string>For COBOL mappings, assume packed decimal in PC format</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="pdHostRadio">
+  <property name="text"><string>HOST (390)</string></property>
+  <property name="toolTip"><string>For COBOL mappings, assume packed decimal in host format</string></property>
+</widget></item>
+  </layout>
+</widget></item>
+              <item><spacer name="formatSpacer"><property name="orientation"><enum>Qt::Vertical</enum></property></spacer></item>
+            </layout>
+          </item>
+          <item><widget class="QGroupBox" name="charBox">
+  <property name="title"><string>Char Format (Alt)</string></property>
+  <layout class="QVBoxLayout" name="charBoxLayout">
+<item><widget class="QRadioButton" name="charAsciiRadio">
+  <property name="text"><string>&amp;Ascii</string></property>
+  <property name="toolTip"><string>Character data in message is ASCII (Alt+A)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charEbcdicRadio">
+  <property name="text"><string>&amp;Ebcdic</string></property>
+  <property name="toolTip"><string>Character data in message is EBCDIC (Alt+E)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charChineseRadio">
+  <property name="text"><string>&amp;Simp Chinese</string></property>
+  <property name="toolTip"><string>Character data contains Simplified Chinese characters (Alt+S)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charKoreanRadio">
+  <property name="text"><string>&amp;Korean</string></property>
+  <property name="toolTip"><string>Character data contains Korean characters (Alt+K)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charTradChineseRadio">
+  <property name="text"><string>&amp;Trad Chinese</string></property>
+  <property name="toolTip"><string>Character data contains traditional Chinese characters (Alt+T)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charJapaneseRadio">
+  <property name="text"><string>&amp;Japanese</string></property>
+  <property name="toolTip"><string>Character data contains Japanese characters (Alt+J)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charThaiRadio">
+  <property name="text"><string>T&amp;hai</string></property>
+  <property name="toolTip"><string>Interpret characters as Thai characters (Alt+H)</string></property>
+</widget></item>
+<item><widget class="QRadioButton" name="charRussianRadio">
+  <property name="text"><string>Russian</string></property>
+  <property name="toolTip"><string></string></property>
+</widget></item>
+  </layout>
+</widget></item>
+          <item>
+            <layout class="QVBoxLayout" name="rightColumn">
+              <item><widget class="QGroupBox" name="optionsBox">
+  <property name="title"><string>Options</string></property>
+  <layout class="QVBoxLayout" name="optionsBoxLayout">
+<item><widget class="QCheckBox" name="crlfCheck">
+  <property name="text"><string>CR/LF</string></property>
+  <property name="toolTip"><string>For character display, break lines as per message data</string></property>
+</widget></item>
+<item><widget class="QCheckBox" name="ediCheck">
+  <property name="text"><string>EDI</string></property>
+  <property name="toolTip"><string>For character display, format lines as EDI segments</string></property>
+</widget></item>
+<item><widget class="QCheckBox" name="indentCheck">
+  <property name="text"><string>Indent</string></property>
+  <property name="toolTip"><string>Indent successive levels on COBOL copybook display</string></property>
+</widget></item>
+<item><widget class="QCheckBox" name="validateCheck">
+  <property name="text"><string>Validate</string></property>
+  <property name="toolTip"><string>Validate numeric fields in COBOL copy book</string></property>
+</widget></item>
+<item><widget class="QCheckBox" name="bomCheck">
+  <property name="text"><string>BOM</string></property>
+  <property name="toolTip"><string>File has Byte Order Mark (BOM)</string></property>
+</widget></item>
+  </layout>
+</widget></item>
+              <item><widget class="QGroupBox" name="buttonBox">
+  <property name="title"><string></string></property>
+  <layout class="QVBoxLayout" name="buttonBoxLayout">
+<item><widget class="QPushButton" name="browseNextButton">
+  <property name="text"><string>Browse Next</string></property>
+  <property name="toolTip"><string>Read next message in queue using current browse operation (Ctrl+N)</string></property>
+</widget></item>
+<item><widget class="QPushButton" name="browsePrevButton">
+  <property name="text"><string>B&amp;rowsePrev</string></property>
+  <property name="toolTip"><string>Browse previous message (Ctrl+R)</string></property>
+</widget></item>
+<item><widget class="QPushButton" name="copybookButton">
+  <property name="text"><string>Cop&amp;ybook</string></property>
+  <property name="toolTip"><string>Change or set the COBOL copy book to use for mappings (Alt+Y)</string></property>
+</widget></item>
+<item><widget class="QCheckBox" name="allowEditCheck">
+  <property name="text"><string>Allow Edit</string></property>
+  <property name="toolTip"><string>Allow editing of message data (Character and Hex modes only). Not yet ported</string></property>
+</widget></item>
+<item><widget class="QPushButton" name="writeQButton">
+  <property name="text"><string>Write Q</string></property>
+  <property name="toolTip"><string>Write the edited message data to the queue. Not yet ported</string></property>
+</widget></item>
+  </layout>
+</widget></item>
+            </layout>
+          </item>
+        </layout>
+      </item>
+    </layout>
+  </widget>
+</ui>
