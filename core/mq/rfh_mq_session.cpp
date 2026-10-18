@@ -632,6 +632,26 @@ namespace rfh
 		return r;
 	}
 
+	// Windows cuts a selector at MQ_SELECTOR_LENGTH - 1 characters (openQ 12087-12095), which selects something
+	// else, so a longer one is refused. MQ below command level 700 has no selectors; an unknown level (0) is allowed.
+	Result MqSession::checkSelector(const std::string & selector) const
+	{
+		if (selector.empty())
+		{
+			return Result::success();
+		}
+		if (selector.size() >= MQ_SELECTOR_LENGTH)
+		{
+			return Result::failure("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH - 1) + " characters");
+		}
+		if ((qmInfo.commandLevel > 0) && (qmInfo.commandLevel < MQCMDL_LEVEL_700))
+		{
+			return Result::failure("Message selectors need a queue manager at command level 700 (MQ V7) or above; this queue manager is at command level " +
+			                       std::to_string(qmInfo.commandLevel));
+		}
+		return Result::success();
+	}
+
 	Result MqSession::commit()
 	{
 		if (!isConnected())
@@ -841,17 +861,11 @@ namespace rfh
 
 		// The selector, alternate user and shared input belong to the queue handle. All checks come
 		// before any queue is opened or closed, so a refused option cannot disturb a browse.
-		if (!options.selector.empty())
 		{
-			if (options.selector.size() >= MQ_SELECTOR_LENGTH)
+			Result selectorCheck = checkSelector(options.selector);
+			if (!selectorCheck.ok())
 			{
-				// Windows cuts the selector at MQ_SELECTOR_LENGTH - 1 characters (openQ 12087-12095), which selects something else
-				return Result::failure("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH - 1) + " characters");
-			}
-			if ((qmInfo.commandLevel > 0) && (qmInfo.commandLevel < MQCMDL_LEVEL_700))
-			{
-				return Result::failure("Message selectors need a queue manager at command level 700 (MQ V7) or above; this queue manager is at command level " +
-				                       std::to_string(qmInfo.commandLevel));
+				return selectorCheck;
 			}
 		}
 
@@ -1398,10 +1412,20 @@ namespace rfh
 
 	Result MqSession::purge(const std::string & queue, MQLONG & count)
 	{
+		return purge(queue, count, PurgeOptions());
+	}
+
+	Result MqSession::purge(const std::string & queue, MQLONG & count, const PurgeOptions & options)
+	{
 		count = 0;
 		if (!isConnected())
 		{
 			return notConnected();
+		}
+		Result selectorCheck = checkSelector(options.selector);
+		if (!selectorCheck.ok())
+		{
+			return selectorCheck;
 		}
 
 		const bool heldBySession = (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue);
@@ -1409,20 +1433,60 @@ namespace rfh
 		const MQLONG inputOptions = MQOO_INPUT_AS_Q_DEF | MQOO_INPUT_SHARED | MQOO_INPUT_EXCLUSIVE | MQOO_BROWSE;
 		const bool conflictsWithSession = heldBySession && ((openOptions & inputOptions) != 0);
 
+		OpenExtras extras;
+		extras.selector = options.selector;
 		MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
-		Result opened = openQueue(queue, std::string(), MQOO_INPUT_AS_Q_DEF, obj);
+		Result opened = openQueue(queue, std::string(), MQOO_INPUT_AS_Q_DEF, obj, nullptr, &extras);
 		if (!opened.ok())
 		{
 			explainInUse(opened, conflictsWithSession);
 			return opened;
 		}
 
+		// purgeQueue 10160: a unit of work is committed after maxUOW - 1 messages, and never later than 2000
+		const MQLONG kMostPerCommit = 2001;
+		const MQLONG batch = ((options.batchSize > 0) && (options.batchSize < kMostPerCommit)) ? options.batchSize : kMostPerCommit;
+		const MQLONG getOptions = MQGMO_NO_WAIT | MQGMO_FAIL_IF_QUIESCING | MQGMO_ACCEPT_TRUNCATED_MSG |
+		                          (options.syncpoint ? MQGMO_SYNCPOINT_IF_PERSISTENT : MQGMO_NO_SYNCPOINT);
+
+		MQLONG gotInUnit = 0;		// messages got since the last commit (Windows' uowCount)
+		MQLONG persistentInUnit = 0;	// those of them that are in the unit of work, so not yet removed
+		MQLONG lostWithUnit = 0;	// persistent messages whose removal was not committed
 		Result r;
+		std::string stopped;		// why the loop ended, when it did not run out of messages
+
+		// Commits the unit of work. A message that was in it is not removed unless the commit worked.
+		auto commitUnit = [&]() -> Result
+		{
+			Result c = commit();
+			if (c.ok())
+			{
+				gotInUnit = 0;
+				persistentInUnit = 0;
+			}
+			else
+			{
+				count -= persistentInUnit;
+				lostWithUnit += persistentInUnit;
+				gotInUnit = 0;
+				persistentInUnit = 0;
+			}
+			return c;
+		};
+
 		for (;;)
 		{
+			if ((options.cancel != nullptr) && options.cancel->load())
+			{
+				stopped = "Purge cancelled";
+				break;
+			}
+
 			MQMD2 md = { MQMD2_DEFAULT };
 			MQGMO gmo = { MQGMO_DEFAULT };
-			gmo.Options = MQGMO_NO_WAIT | MQGMO_NO_SYNCPOINT | MQGMO_ACCEPT_TRUNCATED_MSG | MQGMO_FAIL_IF_QUIESCING;
+			gmo.Version = MQGMO_VERSION_2;
+			gmo.MatchOptions = MQMO_NONE;
+			gmo.Options = getOptions;
 
 			unsigned char unused = 0;
 			MQLONG dataLength = 0;
@@ -1431,19 +1495,96 @@ namespace rfh
 			api.get(hConn, obj, &md, &gmo, 0, &unused, &dataLength, &cc, &rc);
 			dropIfBroken(rc);
 
-			if ((cc == MQCC_OK) || (rc == MQRC_TRUNCATED_MSG_ACCEPTED))
+			if (options.syncpoint && (rc == MQRC_SYNCPOINT_LIMIT_REACHED) && isConnected())
 			{
+				// purgeQueue 10130-10138: commit what is pending, then ask again
+				Result c = commitUnit();
+				if (!c.ok())
+				{
+					r = c;
+					break;
+				}
+				md = MQMD2 { MQMD2_DEFAULT };
+				gmo = MQGMO { MQGMO_DEFAULT };
+				gmo.Version = MQGMO_VERSION_2;
+				gmo.MatchOptions = MQMO_NONE;
+				gmo.Options = getOptions;
+				api.get(hConn, obj, &md, &gmo, 0, &unused, &dataLength, &cc, &rc);
+				dropIfBroken(rc);
+			}
+
+			if (cc != MQCC_FAILED)
+			{
+				// a warning get has removed its message, whatever the warning
 				count++;
+				gotInUnit++;
+				if (options.syncpoint && (md.Persistence == MQPER_PERSISTENT))
+				{
+					persistentInUnit++;
+				}
+				if ((cc == MQCC_WARNING) && (rc != MQRC_TRUNCATED_MSG_ACCEPTED))
+				{
+					r = Result::fromMq("MQGET", cc, rc);
+					r.cc = MQCC_FAILED;
+					break;
+				}
+				if (options.syncpoint && (gotInUnit >= batch))
+				{
+					Result c = commitUnit();
+					if (!c.ok())
+					{
+						r = c;
+						break;
+					}
+				}
 				continue;
 			}
 
 			// an empty queue is the expected end of a purge
-			r = (rc == MQRC_NO_MSG_AVAILABLE) ? Result::success() : Result::fromMq("MQGET", cc, rc);
-			if (!r.ok())
+			if (rc != MQRC_NO_MSG_AVAILABLE)
 			{
-				r.text += " after " + std::to_string(count) + " messages";
+				r = Result::fromMq("MQGET", cc, rc);
+				if ((rc == MQRC_BACKED_OUT) || !isConnected())
+				{
+					// MQ has rolled the unit of work back (purgeQueue 10185 skips the commit for 2003)
+					count -= persistentInUnit;
+					lostWithUnit += persistentInUnit;
+					gotInUnit = 0;
+					persistentInUnit = 0;
+				}
 			}
 			break;
+		}
+
+		if (!stopped.empty())
+		{
+			r = Result::failure(stopped);
+		}
+
+		if (options.syncpoint && isConnected() && (gotInUnit > 0))
+		{
+			// purgeQueue 10185-10189: what was done is committed, after a failed get as well
+			Result c = commitUnit();
+			if (!c.ok())
+			{
+				if (r.ok() && stopped.empty())
+				{
+					r = c;
+				}
+				else
+				{
+					r.warnings.push_back(c.text);
+				}
+			}
+		}
+
+		if (!r.ok())
+		{
+			r.text += " after " + std::to_string(count) + " messages";
+			if (lostWithUnit > 0)
+			{
+				r.text += " (" + std::to_string(lostWithUnit) + " persistent messages got under syncpoint were not committed and remain on the queue)";
+			}
 		}
 
 		if (isConnected())
@@ -1458,9 +1599,9 @@ namespace rfh
 			}
 		}
 
-		if (r.ok() && heldBySession)
+		if (heldBySession && isConnected() && (r.ok() || (count > 0)))
 		{
-			browseCursor = 0;	// the session's own cursor now sits on an emptied queue
+			browseCursor = 0;	// the session's own cursor now sits on a queue purged from under it
 		}
 
 		return r;

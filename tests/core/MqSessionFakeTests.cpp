@@ -1111,3 +1111,432 @@ TEST(MqSessionFakeApi, ApiWithoutACommitEntryIsRejected)
     EXPECT_EQ("Injected MQ API is incomplete", r.text);
     EXPECT_EQ(0, fake.connxCalls);
 }
+
+// ---- purge options (Windows: DataArea::purgeQueue 10065-10244, openQ 12056-12105) ----
+//
+// Windows reads every message with a zero-length buffer and MQGMO_ACCEPT_TRUNCATED_MSG, with
+// MQGMO_SYNCPOINT_IF_PERSISTENT, commits every maxUOW - 1 messages (and after 2000 at most) and at the
+// end (except after a 2003), and opens the queue with the filter as a selector.
+
+namespace
+{
+    const char * kPurgeQueue = "RFHUTIL.TEST.PURGE";
+
+    void addPurgeMessages(int count, bool persistent, size_t size = 4)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            rfh_test::FakeMessage m;
+            m.data.assign(size, 'x');
+            m.md.Persistence = persistent ? MQPER_PERSISTENT : MQPER_NOT_PERSISTENT;
+            fake.queue(kPurgeQueue).messages.push_back(m);
+        }
+    }
+
+    size_t queued()
+    {
+        return fake.queue(kPurgeQueue).messages.size();
+    }
+
+    PurgeOptions syncpointOptions(MQLONG batch)
+    {
+        PurgeOptions options;
+        options.syncpoint = true;
+        options.batchSize = batch;
+        return options;
+    }
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutOptionsBehavesAsBefore)
+{
+    connect();
+    addPurgeMessages(3, true);
+
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(3, purged);
+    EXPECT_EQ(0u, queued());
+    EXPECT_EQ(0, fake.commitCalls) << "no syncpoint, nothing to commit";
+    ASSERT_EQ(4u, fake.getLog.size());
+    EXPECT_EQ(0, fake.getLog[0].options & (MQGMO_SYNCPOINT | MQGMO_SYNCPOINT_IF_PERSISTENT));
+    EXPECT_NE(0, fake.getLog[0].options & MQGMO_NO_SYNCPOINT);
+    EXPECT_NE(0, fake.getLog[0].options & MQGMO_ACCEPT_TRUNCATED_MSG);
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_LT(fake.openLog[0].odVersion, MQOD_VERSION_4) << "no selector, no version 4 descriptor";
+    EXPECT_EQ(fake.openCalls, fake.closeCalls);
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeOfAnEmptyQueueSucceedsWithCountZero)
+{
+    connect();
+    fake.queue(kPurgeQueue);
+    MQLONG purged = 9;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(10));
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.commitCalls) << "nothing was got, so there is no unit of work to commit";
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeSendsTheSelectorInAVersion4Open)
+{
+    connect();
+    addPurgeMessages(2, false);
+    PurgeOptions options;
+    options.selector = "color = 'blue'";
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kPurgeQueue, purged, options).ok());
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_EQ(MQOD_VERSION_4, fake.openLog[0].odVersion);
+    EXPECT_EQ("color = 'blue'", fake.openLog[0].selector);
+    EXPECT_GT(fake.openLog[0].resObjectStringBufSize, 0) << "version 7 answers 2520 without a buffer (openQ 12097-12100)";
+    EXPECT_EQ(MQOO_INPUT_AS_Q_DEF | MQOO_FAIL_IF_QUIESCING, fake.openLog[0].options & ~MQOO_INQUIRE);
+}
+
+TEST_F(MqSessionFakeTest, PurgeRefusesASelectorTheQueueManagerCannotUse)
+{
+    fake.commandLevel = 600;
+    connect();
+    addPurgeMessages(2, false);
+    PurgeOptions options;
+    options.selector = "a = 1";
+    MQLONG purged = 5;
+    Result r = session.purge(kPurgeQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("command level 700")) << r.text;
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.openCalls) << "refused before any open";
+    EXPECT_EQ(2u, queued());
+
+    fake.reset();
+    ASSERT_TRUE(session.disconnect().ok());
+    connect();
+    options.selector = std::string(MQ_SELECTOR_LENGTH, 'a');
+    r = session.purge(kPurgeQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("longer than")) << r.text;
+    EXPECT_EQ(0, fake.openCalls);
+}
+
+TEST_F(MqSessionFakeTest, PurgeSyncpointCommitsInBatchesAndAtTheEnd)
+{
+    connect();
+    addPurgeMessages(250, true);
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(250, purged);
+    EXPECT_EQ(3, fake.commitCalls);
+    EXPECT_EQ((std::vector<int>{ 100, 200, 251 }), fake.commitAtGet) << "after the 100th, the 200th and the last (the 251st get found the queue empty)";
+    EXPECT_NE(0, fake.getLog[0].options & MQGMO_SYNCPOINT_IF_PERSISTENT);
+    EXPECT_EQ(0, fake.getLog[0].options & MQGMO_NO_SYNCPOINT);
+    EXPECT_EQ(MQGMO_VERSION_2, fake.getLog[0].gmoVersion);
+    EXPECT_EQ(MQMO_NONE, fake.getLog[0].matchOptions);
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeSyncpointBatchIsCappedAtTheWindowsLimit)
+{
+    connect();
+    addPurgeMessages(2500, false, 1);
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kPurgeQueue, purged, syncpointOptions(100000)).ok());
+    EXPECT_EQ(2500, purged);
+    EXPECT_EQ((std::vector<int>{ 2001, 2501 }), fake.commitAtGet) << "uowCount > 2000 (purgeQueue 10160)";
+
+    ASSERT_TRUE(session.disconnect().ok());
+    fake.reset();
+    connect();
+    addPurgeMessages(2500, false, 1);
+    ASSERT_TRUE(session.purge(kPurgeQueue, purged, syncpointOptions(0)).ok());
+    EXPECT_EQ((std::vector<int>{ 2001, 2501 }), fake.commitAtGet) << "a batch size of zero means the cap";
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutSyncpointNeverCommits)
+{
+    connect();
+    addPurgeMessages(250, true);
+    PurgeOptions options;
+    options.batchSize = 10;
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kPurgeQueue, purged, options).ok());
+    EXPECT_EQ(250, purged);
+    EXPECT_EQ(0, fake.commitCalls);
+}
+
+TEST_F(MqSessionFakeTest, PurgeRemovesTruncatedAndEmptyMessagesAndCountsThem)
+{
+    connect();
+    addPurgeMessages(2, true, 100000);
+    addPurgeMessages(1, true, 0);
+    addPurgeMessages(1, false, 1);
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_TRUE(r.warnings.empty());
+    EXPECT_EQ(4, purged);
+    EXPECT_EQ(0u, queued());
+    EXPECT_EQ(0, r.rc) << "the truncation warning of the last get is not the result";
+}
+
+TEST_F(MqSessionFakeTest, PurgeKeepsThePartialCountWhenAGetFails)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 3;
+    fake.failGetsRc = MQRC_UNEXPECTED_ERROR;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_UNEXPECTED_ERROR, r.rc);
+    EXPECT_EQ(3, purged);
+    EXPECT_NE(std::string::npos, r.text.find("after 3 messages")) << r.text;
+    EXPECT_EQ(7u, queued());
+    EXPECT_EQ(1, fake.commitCalls) << "the three got are committed after a failed get, as Windows does";
+    EXPECT_TRUE(session.isConnected());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutSyncpointKeepsTheCountOfAFailedGet)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 4;
+    fake.failGetsRc = MQRC_UNEXPECTED_ERROR;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(4, purged);
+    EXPECT_NE(std::string::npos, r.text.find("after 4 messages")) << r.text;
+    EXPECT_EQ(0, fake.commitCalls);
+}
+
+TEST_F(MqSessionFakeTest, PurgeAfterALostConnectionKeepsOnlyWhatMQRemoved)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 5;
+    fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(3));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_EQ(3, purged) << "the commit after 3 worked; the 2 got after it were rolled back with the connection";
+    EXPECT_NE(std::string::npos, r.text.find("after 3 messages")) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find("2 persistent messages")) << r.text;
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(1, fake.commitCalls) << "no commit on a lost connection";
+    EXPECT_EQ(1, fake.discCalls);
+    EXPECT_EQ(0, fake.closeCalls) << "the queue handle went with the connection";
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeAfterALostConnectionCountsNonPersistentMessagesAsRemoved)
+{
+    connect();
+    addPurgeMessages(10, false);
+    fake.failGetsAfter = 5;
+    fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(5, purged) << "non-persistent messages are not in the unit of work (MQGMO_SYNCPOINT_IF_PERSISTENT)";
+    EXPECT_EQ(5u, queued());
+    EXPECT_EQ(0, fake.commitCalls);
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutSyncpointAfterALostConnectionKeepsTheCount)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 5;
+    fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(5, purged);
+}
+
+TEST_F(MqSessionFakeTest, PurgeBackedOutTakesTheUnitOfWorkOffTheCountAndSkipsTheCommit)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 3;
+    fake.failGetsRc = MQRC_BACKED_OUT;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(2));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_BACKED_OUT, r.rc);
+    EXPECT_EQ(2, purged) << "committed after 2; the 3rd was backed out (purgeQueue 10185 skips the commit)";
+    EXPECT_NE(std::string::npos, r.text.find("1 persistent messages")) << r.text;
+    EXPECT_EQ(1, fake.commitCalls);
+    EXPECT_TRUE(session.isConnected());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeStopsWhenACommitInTheLoopFails)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.cmitRc = MQRC_BACKED_OUT;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(2));
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("MQCMIT")) << r.text;
+    EXPECT_EQ(0, purged) << "the two got were not committed";
+    EXPECT_NE(std::string::npos, r.text.find("2 persistent messages")) << r.text;
+    EXPECT_EQ(1, fake.commitCalls);
+    EXPECT_EQ(2, fake.getCalls) << "no further gets after a failed commit";
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeFailsWhenTheFinalCommitFails)
+{
+    connect();
+    addPurgeMessages(3, true);
+    fake.cmitRc = MQRC_BACKED_OUT;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    EXPECT_FALSE(r.ok()) << "Windows reports success here (commitUOW's error is overwritten)";
+    EXPECT_EQ(0, purged);
+    EXPECT_NE(std::string::npos, r.text.find("MQCMIT")) << r.text;
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeRetriesAGetOnceAfterTheSyncpointLimitWasReached)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.maxUncommitted = 3;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(10, purged);
+    EXPECT_EQ(4, fake.commitCalls) << "three commits for the limit (after 3, 6, 9) and the last one for the tenth";
+    EXPECT_EQ(0u, queued());
+}
+
+TEST_F(MqSessionFakeTest, PurgeEndsWhenTheSyncpointLimitIsStillReachedAfterTheCommit)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.maxUncommitted = 3;
+    fake.cmitRc = MQRC_NONE;
+    fake.failGetsAfter = 4;   // the retried get (the 5th call) fails as well
+    fake.failGetsRc = MQRC_SYNCPOINT_LIMIT_REACHED;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(100));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_SYNCPOINT_LIMIT_REACHED, r.rc);
+    EXPECT_EQ(3, purged);
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeStopsAtAWarningOtherThanTruncationAndCountsTheMessageItRemoved)
+{
+    connect();
+    addPurgeMessages(5, false, 0);   // empty messages: the fake's truncation warning does not take the place of the one under test
+    fake.warnGetRc[3] = MQRC_NOT_CONVERTED;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged);
+    EXPECT_FALSE(r.ok()) << "Windows ends the loop on any cc other than OK";
+    EXPECT_EQ(MQRC_NOT_CONVERTED, r.rc);
+    EXPECT_EQ(3, purged) << "the warning get did remove its message (Windows does not count it)";
+    EXPECT_EQ(2u, queued());
+}
+
+TEST_F(MqSessionFakeTest, PurgeStopsWhenCancelledAndKeepsTheCount)
+{
+    connect();
+    addPurgeMessages(10, true);
+    std::atomic<bool> cancel(false);
+    fake.onGet = [&cancel](int number)
+    {
+        if (number == 4)
+        {
+            cancel = true;
+        }
+    };
+    PurgeOptions options = syncpointOptions(100);
+    options.cancel = &cancel;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("cancelled")) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find("after 4 messages")) << r.text;
+    EXPECT_EQ(4, purged) << "the 4th get ran; the flag is looked at before the 5th";
+    EXPECT_EQ(6u, queued());
+    EXPECT_EQ(1, fake.commitCalls) << "what was got is committed";
+    EXPECT_EQ((std::vector<int>{ 4 }), fake.commitAtGet);
+    EXPECT_TRUE(session.isConnected());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeCancelledBeforeTheFirstGetRemovesNothing)
+{
+    connect();
+    addPurgeMessages(3, true);
+    std::atomic<bool> cancel(true);
+    PurgeOptions options;
+    options.cancel = &cancel;
+    MQLONG purged = 5;
+    Result r = session.purge(kPurgeQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.getCalls);
+    EXPECT_EQ(3u, queued());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeWhenAnotherApplicationHoldsTheQueueExclusively)
+{
+    connect();
+    addPurgeMessages(3, true);
+    fake.openRcByName[kPurgeQueue] = MQRC_OBJECT_IN_USE;
+    MQLONG purged = 5;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(10));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_OBJECT_IN_USE, r.rc);
+    EXPECT_EQ(std::string::npos, r.text.find("this session already has the queue open")) << "another application, not this session";
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.getCalls);
+    EXPECT_EQ(3u, queued());
+    EXPECT_TRUE(fake.liveHandles.empty());
+    EXPECT_TRUE(session.isConnected());
+}
+
+TEST_F(MqSessionFakeTest, PurgeOfAQueueThatCannotBeOpened)
+{
+    connect();
+    fake.openRcByName[kPurgeQueue] = MQRC_UNKNOWN_OBJECT_NAME;
+    MQLONG purged = 5;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(10));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_UNKNOWN_OBJECT_NAME, r.rc);
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.commitCalls);
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutAConnectionFails)
+{
+    MQLONG purged = 5;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(10));
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, fake.openCalls);
+}
+
+TEST_F(MqSessionFakeTest, PurgeReportsACloseFailureAsAWarningAndKeepsTheCount)
+{
+    connect();
+    addPurgeMessages(3, true);
+    fake.closeRc = MQRC_UNEXPECTED_ERROR;
+    MQLONG purged = 0;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(10));
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(3, purged);
+    EXPECT_EQ(1u, r.warnings.size());
+}

@@ -1162,6 +1162,128 @@ TEST_F(MqBindingsTest, ASelectorWithBadSyntaxIsRefusedByTheQueueManager)
     EXPECT_TRUE(session.depth(kQueue, depth).ok()) << "the session still works";
 }
 
+TEST_F(MqBindingsTest, PurgeWithSyncpointRemovesPersistentTruncatedAndEmptyMessages)
+{
+    for (int i = 0; i < 25; i++)
+    {
+        Message m = textMessage(i % 5 == 0 ? std::string(5000, 'x') : (i % 7 == 0 ? std::string() : std::string("persistent ") + std::to_string(i)));
+        m.mqmd.Persistence = (i % 4 == 3) ? MQPER_NOT_PERSISTENT : MQPER_PERSISTENT;
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    PurgeOptions options;
+    options.syncpoint = true;
+    options.batchSize = 10;
+    MQLONG purged = -1;
+    Result r = session.purge(kQueue, purged, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(25, purged);
+
+    MQLONG depth = -1;
+    ASSERT_TRUE(session.depth(kQueue, depth).ok());
+    EXPECT_EQ(0, depth) << "committed: the messages are gone";
+}
+
+TEST_F(MqBindingsTest, PurgeWithASelectorOnlyRemovesTheMatchingMessages)
+{
+    if (session.queueManagerInfo().commandLevel < 700)
+    {
+        GTEST_SKIP() << "selectors need command level 700";
+    }
+    for (const char * colour : { "red", "blue", "green", "blue", "red" })
+    {
+        Message m = textMessage(colour);
+        memcpy(m.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
+        m.headers = rfh2WithProperty("color", colour);
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    PurgeOptions options;
+    options.selector = "color = 'blue'";
+    options.syncpoint = true;
+    MQLONG purged = -1;
+    Result r = session.purge(kQueue, purged, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(2, purged);
+
+    MQLONG depth = -1;
+    ASSERT_TRUE(session.depth(kQueue, depth).ok());
+    EXPECT_EQ(3, depth);
+
+    // a selector that matches nothing removes nothing
+    options.selector = "color = 'purple'";
+    r = session.purge(kQueue, purged, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(0, purged);
+
+    // a bad selector is refused by the queue manager and the session stays usable
+    options.selector = "color =";
+    r = session.purge(kQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_SELECTOR_SYNTAX_ERROR, r.rc) << r.text;
+    EXPECT_EQ(0, purged);
+    EXPECT_TRUE(session.isConnected());
+
+    // the rest goes without a selector
+    r = session.purge(kQueue, purged);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(3, purged);
+}
+
+TEST_F(MqBindingsTest, PurgeStopsBeforeTheFirstGetWhenCancelled)
+{
+    for (int i = 0; i < 3; i++)
+    {
+        Message m = textMessage("keep me");
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    std::atomic<bool> cancel(true);
+    PurgeOptions options;
+    options.cancel = &cancel;
+    MQLONG purged = -1;
+    Result r = session.purge(kQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+
+    MQLONG depth = -1;
+    ASSERT_TRUE(session.depth(kQueue, depth).ok());
+    EXPECT_EQ(3, depth);
+}
+
+TEST_F(MqBindingsTest, PurgeFailsWhenAnotherApplicationHasTheQueueOpenForExclusiveInput)
+{
+    for (int i = 0; i < 2; i++)
+    {
+        Message m = textMessage("not yours to purge");
+        ASSERT_TRUE(session.put(kExclQueue, m, PutOptions()).ok());
+    }
+
+    MqSession other;
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    Message held;
+    ASSERT_TRUE(other.get(kExclQueue, held, browse).ok());   // the queue's default is exclusive input
+
+    PurgeOptions options;
+    options.syncpoint = true;
+    MQLONG purged = -1;
+    Result r = session.purge(kExclQueue, purged, options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_OBJECT_IN_USE, r.rc) << r.text;
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(std::string::npos, r.text.find("this session already has the queue open")) << r.text;
+
+    ASSERT_TRUE(other.disconnect().ok());
+    MQLONG depth = -1;
+    ASSERT_TRUE(session.depth(kExclQueue, depth).ok());
+    EXPECT_EQ(2, depth) << "nothing was removed";
+}
+
 TEST_F(MqBindingsTest, AnAlternateUserWithoutAuthorityIsRefused)
 {
     GetOptions options;

@@ -163,6 +163,36 @@ namespace rfh
 		const std::atomic<bool> * cancel = nullptr;
 	};
 
+	// Windows' DataArea::purgeQueue (10065-10244). Every get accepts truncation with a zero-length buffer, so
+	// a message is removed without its data being read; a truncated message is counted, not an error.
+	//
+	// selector: given to MQOPEN in a version 4 MQOD (openQ 12056-12105): only matching messages are removed.
+	//   Needs command level 700; the same checks as get (too long, level below 700) fail before any open.
+	// syncpoint: gets use MQGMO_SYNCPOINT_IF_PERSISTENT as Windows always does (persistent messages in a unit
+	//   of work, others outside it) and the unit of work is committed every batchSize messages and at the
+	//   end. Off, the gets use MQGMO_NO_SYNCPOINT and nothing is committed.
+	// batchSize: messages per commit, counting every message got as Windows does (uowCount, purgeQueue 10160). Windows
+	//   commits at the queue manager's maximum uncommitted messages less one (128 - 1 by default) or after
+	//   2000, whichever comes first; here the caller chooses and the cap of 2001 messages is kept. Zero
+	//   or less means the cap.
+	// cancel: set from another thread, it stops the purge before the next get (Windows has no cancel). What
+	//   was got is committed, count is kept and the Result is a failure that says so.
+	//
+	// count is the number of messages removed, kept as a fact on every failure. Under syncpoint, persistent
+	// messages got since the last commit are not removed until the commit succeeds: when the commit fails,
+	// the connection is lost or MQ backs the unit of work out (2003), they are taken off count and the text
+	// says how many. (Windows counts them as purged.) A get that fails with 2024 (too many uncommitted
+	// messages) is retried once after a commit, as Windows does. Any other failed or warning get ends the
+	// purge; a warning get other than the accepted truncation has removed its message, which is counted
+	// (Windows ends the loop without counting it). Failure text: "... after N messages".
+	struct PurgeOptions
+	{
+		std::string selector;
+		bool syncpoint = false;
+		MQLONG batchSize = 100;
+		const std::atomic<bool> * cancel = nullptr;
+	};
+
 	// What MQINQ and MQOPEN report about a queue. Every field has an explicit unknown
 	// value for an inquiry that failed (Windows stores 0 or -1 silently; see queueInfo).
 	struct QueueInfo
@@ -298,7 +328,11 @@ namespace rfh
 		Result listQueues(const QueueListOptions & options, std::vector<std::string> & names);
 
 		// Removes every message from queue with destructive gets; count receives how many.
+		// Same as the overload below with default options (no selector, no syncpoint).
 		Result purge(const std::string & queue, MQLONG & count);
+
+		// Options and rules: see PurgeOptions.
+		Result purge(const std::string & queue, MQLONG & count, const PurgeOptions & options);
 
 		// MQCMIT on the connection: commits the puts and gets this connection made under syncpoint. With
 		// nothing pending MQ succeeds and so does this; the session keeps no unit-of-work state of its own
@@ -331,6 +365,8 @@ namespace rfh
 		Result getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs);
 		void dropIfBroken(MQLONG rc);
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
+
+		Result checkSelector(const std::string & selector) const;
 
 		void clearHandleState();
 

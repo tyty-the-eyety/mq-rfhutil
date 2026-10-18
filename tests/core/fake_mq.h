@@ -133,6 +133,12 @@ namespace rfh_test
         std::map<std::string, MQLONG> openRcByName;   // an open of the object with this name fails with the given reason (before openRc is looked at)
         int failGetsAfter = -1;       // from the get after this many gets (counting all of them), every get fails with failGetsRc; -1 never
         MQLONG failGetsRc = MQRC_NONE;
+        // Task 19 (purge), all off by default:
+        std::function<void(int)> onGet;   // called at the start of every get with its number (1-based, getCalls); a test sets a cancel flag here
+        std::map<int, MQLONG> warnGetRc;  // the get with this number delivers its message and reports MQCC_WARNING with this reason
+        MQLONG maxUncommitted = 0;        // above 0: a destructive get under syncpoint (MQGMO_SYNCPOINT, or MQGMO_SYNCPOINT_IF_PERSISTENT with a persistent message) fails with 2024 when this many are uncommitted
+        int uncommittedGets = 0;          // destructive gets under syncpoint since the last commit that worked
+        std::vector<int> commitAtGet;     // getCalls at each MQCMIT, in order
         std::string dynamicQueueName; // the name an open of SYSTEM.DEFAULT.MODEL.QUEUE gives its dynamic queue; empty generates <prefix>FAKE<n>
         int dynamicQueueCount = 0;
         // Called after a put to the named queue, with the message just put. A test uses it to play the
@@ -440,6 +446,10 @@ namespace rfh_test
             FakeMq & fake = fakeMq();
             fake.getCalls++;
             *length = 0;
+            if (fake.onGet)
+            {
+                fake.onGet(fake.getCalls);
+            }
 
             MQGMO * gmo = static_cast<MQGMO *>(gmoIn);
             if (gmo != nullptr)
@@ -517,6 +527,20 @@ namespace rfh_test
                 return;
             }
 
+            const bool browsing = browseFirst || browseNext;
+            const bool underSyncpoint = (gmo != nullptr) && !browsing &&
+                (((gmo->Options & MQGMO_SYNCPOINT) != 0) ||
+                 (((gmo->Options & MQGMO_SYNCPOINT_IF_PERSISTENT) != 0) && (q->messages[index].md.Persistence == MQPER_PERSISTENT)));
+            if (underSyncpoint && (fake.maxUncommitted > 0) && (fake.uncommittedGets >= fake.maxUncommitted))
+            {
+                report(MQRC_SYNCPOINT_LIMIT_REACHED, cc, rc);
+                return;
+            }
+            if (underSyncpoint)
+            {
+                fake.uncommittedGets++;
+            }
+
             const FakeMessage & m = q->messages[index];
             *length = (MQLONG)m.data.size();
             if (md != nullptr)
@@ -563,6 +587,13 @@ namespace rfh_test
             if (truncated)
             {
                 *rc = MQRC_TRUNCATED_MSG_ACCEPTED;   // accepted truncation: the message is delivered with a warning
+                *cc = MQCC_WARNING;
+                return;
+            }
+            std::map<int, MQLONG>::const_iterator warning = fake.warnGetRc.find(fake.getCalls);
+            if (warning != fake.warnGetRc.end())
+            {
+                *rc = warning->second;
                 *cc = MQCC_WARNING;
                 return;
             }
@@ -642,10 +673,15 @@ namespace rfh_test
     {
         FakeMq & fake = fakeMq();
         fake.commitCalls++;
+        fake.commitAtGet.push_back(fake.getCalls);
         fake_detail::report(fake.cmitRc, cc, rc);
         if (fake.cmitRc != MQRC_NONE)
         {
             *cc = fake.cmitCc;
+        }
+        if (*cc != MQCC_FAILED)
+        {
+            fake.uncommittedGets = 0;
         }
     }
 
