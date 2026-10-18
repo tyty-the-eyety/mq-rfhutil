@@ -16,7 +16,11 @@
 #include <cstring>
 #include <string>
 
+#include <QClipboard>
+#include <QGuiApplication>
+
 #include "AppDocument.h"
+#include "IdEdit.h"
 #include "MqmdTab.h"
 #include "rfh_mqmd_fields.h"
 
@@ -417,15 +421,143 @@ private slots:
         compare(h.tab.fields(), f);        // redrawing changes no byte
     }
 
-    void idDisplaySwitchStoresPendingEditsFirst()
+    void theMsgIdReachesTheDocumentOnEveryChange()
     {
+        // Operations reads doc.mqmd() and never asks the tab: the document must not wait for the box to lose focus
         Harness h;
         QLineEdit * msg = h.edit("msgIdEdit");
-        h.typeAtStart(msg, QStringLiteral("4142"));        // the Msg Id box applies on focus loss, not on each key
-        QCOMPARE((int)h.doc.mqmd().msgId[0], 0);            // not stored yet: the box is applied when it is left
+        msg->setFocus();
+        h.typeAtStart(msg, QStringLiteral("4142"));
+        QVERIFY(msg->hasFocus() || !h.tab.isActiveWindow());        // still in the box, as with a shortcut flow
+        QCOMPARE((int)h.doc.mqmd().msgId[0], 0x41);
+        QCOMPARE((int)h.doc.mqmd().msgId[1], 0x42);
+
+        // what a put would send, built from the document alone
+        MQMD2 mqmd = { MQMD2_DEFAULT };
+        rfh::PutContext context;
+        rfh::mqmd_fields::toPutMqmd(h.doc.mqmd(), context, mqmd);
+        QCOMPARE((int)mqmd.MsgId[0], 0x41);
+        QCOMPARE((int)mqmd.MsgId[1], 0x42);
+
         h.showMode("dispAsciiRadio");
         QCOMPARE(msg->text().left(3), QStringLiteral("AB "));
         QCOMPARE((int)h.tab.fields().msgId[1], 0x42);
+    }
+
+    void fieldsAloneCommitsAnEditThatNoSignalAnnounced()
+    {
+        Harness h;
+        h.edit("msgIdEdit")->setText(QStringLiteral("AB") + QString(46, QLatin1Char('0')));        // setText sends no textEdited
+        QCOMPARE((int)h.doc.mqmd().msgId[0], 0);
+        QCOMPARE((int)h.tab.fields().msgId[0], 0xAB);
+        QCOMPARE((int)h.tab.fields().msgId[0], 0xAB);        // asking does not change the tab
+    }
+
+    void correlAndGroupReachTheDocumentOnEveryChange()
+    {
+        Harness h;
+        h.typeAtStart(h.edit("correlIdEdit"), QStringLiteral("C1"));
+        h.typeAtStart(h.edit("groupIdEdit"), QStringLiteral("D2"));
+        QCOMPARE((int)h.doc.mqmd().correlId[0], 0xC1);
+        QCOMPARE((int)h.doc.mqmd().groupId[0], 0xD2);
+    }
+
+    void hexModeHoldsEveryInputPathToTheHexRule()
+    {
+        Harness h;
+        IdEdit * correl = need<IdEdit>(h.tab, "correlIdEdit");
+        correl->clear();
+        correl->insert(QStringLiteral("zz"));
+        QCOMPARE(correl->text(), QString());        // refused whole, as a validator does
+        correl->insert(QStringLiteral("a1z"));
+        QCOMPARE(correl->text(), QString());
+        correl->insert(QStringLiteral("ab1"));        // lower case is accepted and upper-cased
+        QCOMPARE(correl->text(), QStringLiteral("AB1"));
+        h.showMode("dispAsciiRadio");
+        correl->clear();
+        correl->insert(QStringLiteral("zz"));        // other modes take any text
+        QCOMPARE(correl->text(), QStringLiteral("zz"));
+    }
+
+    void ctrlVPastesFromTheCaretAndTurnsNonHexIntoZero()
+    {
+        Harness h;
+        QGuiApplication::clipboard()->setText(QStringLiteral("zz12"));
+        QLineEdit * correl = h.edit("correlIdEdit");
+        h.typeAtStart(correl, QStringLiteral("F"));
+        correl->setCursorPosition(2);
+        QTest::keyClick(correl, Qt::Key_V, Qt::ControlModifier);
+        QCOMPARE(correl->text().left(6), QStringLiteral("F00012"));
+        QCOMPARE((int)h.doc.mqmd().correlId[0], 0xF0);
+        QCOMPARE((int)h.doc.mqmd().correlId[1], 0x00);
+        QCOMPARE((int)h.doc.mqmd().correlId[2], 0x12);
+    }
+
+    void altJAndAltCPressTheirButtons()
+    {
+        Harness h;
+        h.tab.activateWindow();
+        QVERIFY(QTest::qWaitForWindowActive(&h.tab));
+        rfh::MqmdFields f = populated();
+        h.tab.setFields(f);
+        QTest::keyClick(&h.tab, Qt::Key_C, Qt::AltModifier);
+        QVERIFY(memcmp(h.tab.fields().correlId, f.msgId, 24) == 0);
+        QTest::keyClick(&h.tab, Qt::Key_J, Qt::AltModifier);
+        const MQBYTE24 zero = { 0 };
+        QVERIFY(memcmp(h.tab.fields().msgId, zero, 24) == 0);
+        QVERIFY(memcmp(h.tab.fields().groupId, zero, 24) == 0);
+    }
+
+    void resetIdsRestoresOvertype()
+    {
+        Harness h;
+        IdEdit * correl = need<IdEdit>(h.tab, "correlIdEdit");
+        correl->setCursorPosition(0);
+        QTest::keyClick(correl, Qt::Key_Insert);
+        QVERIFY(!correl->overtype());
+        h.button("resetIdsButton")->click();
+        for (const char * name : { "msgIdEdit", "correlIdEdit", "groupIdEdit" })
+        {
+            QVERIFY2(need<IdEdit>(h.tab, name)->overtype(), name);
+        }
+    }
+
+    void valuesNoButtonStandsForRoundTrip()
+    {
+        Harness h;
+        rfh::MqmdFields f;
+        f.persistence = 5;
+        f.encoding = 9;
+        f.floatEncoding = 7;
+        f.reportException = 6;
+        f.reportCod = 4;
+        h.tab.setFields(f);
+        QCOMPARE(h.tab.fields().persistence, 5);
+        QCOMPARE(h.tab.fields().encoding, 9);
+        QCOMPARE(h.tab.fields().floatEncoding, 7);
+        QCOMPARE(h.tab.fields().reportException, 6);
+        QCOMPARE(h.tab.fields().reportCod, 4);
+        QCOMPARE(h.tab.fields().reportCoa, -1);
+        QCOMPARE(h.group("persistGroup")->checkedId(), -1);
+        // another change on the tab keeps them
+        h.button("panCheck")->click();
+        QCOMPARE(h.doc.mqmd().persistence, 5);
+        QCOMPARE(h.doc.mqmd().reportException, 6);
+    }
+
+    void overLongTextIsCutByTheEditAndNotReportedAsAnEdit()
+    {
+        // documented choice: the edit limit cuts what is shown, as the Windows DDX does; setFields reports no edit
+        Harness h;
+        QSignalSpy edited(&h.tab, &MqmdTab::fieldsEdited);
+        rfh::MqmdFields f;
+        f.userId = "ABCDEFGHIJKLMNOP";        // 16 characters, limit 12
+        f.originalLength = "12345678901";
+        h.doc.setMqmd(f);
+        QCOMPARE(edited.count(), 0);
+        QCOMPARE(h.tab.fields().userId, std::string("ABCDEFGHIJKL"));
+        QCOMPARE(h.tab.fields().originalLength, std::string("123456789"));
+        QCOMPARE(h.doc.mqmd().userId, std::string("ABCDEFGHIJKLMNOP"));        // the document is not rewritten
     }
 
     void asciiEditsReplaceOnlyChangedCharacters()

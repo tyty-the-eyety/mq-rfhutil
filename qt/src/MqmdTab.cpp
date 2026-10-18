@@ -181,7 +181,7 @@ namespace rfhqt
 
 	// ---- ids ----------------------------------------------------------------------------------------------------------
 
-	unsigned char * MqmdTab::idBytes(Field field) const
+	unsigned char * MqmdTab::idBytes(Field field)
 	{
 		switch (field)
 		{
@@ -219,19 +219,28 @@ namespace rfhqt
 		loading = wasLoading;
 	}
 
-	bool MqmdTab::storeId(Field field)
+	// The bytes an id box stands for: `id` after applying the box's text in the mode it shows. False, with `error`, for a
+	// refused edit (the bytes stay). A box whose text is what the bytes show is not applied (updateIdFields, :629), so
+	// untouched non-printable bytes survive.
+	bool MqmdTab::boxToBytes(Field field, MQBYTE24 id, std::string & error) const
 	{
-		unsigned char * id = idBytes(field);
+		error.clear();
 		const std::string typed = text(idEdit(field)->text());
 		const std::string previous = rfh::id_display::toText(id, mode);
 		if (typed == previous)
 		{
-			return false;		// untouched: keep the bytes, including the ones the box shows as blanks
+			return true;
 		}
+		return rfh::id_display::applyEdit(field, id, typed, previous, mode, error);
+	}
+
+	bool MqmdTab::storeId(Field field)
+	{
+		unsigned char * id = idBytes(field);
 		MQBYTE24 updated;
 		memcpy(updated, id, sizeof(updated));
 		std::string error;
-		if (!rfh::id_display::applyEdit(field, updated, typed, previous, mode, error))
+		if (!boxToBytes(field, updated, error))
 		{
 			emit statusMessage(QString::fromLatin1(error.c_str()));
 			return false;
@@ -276,6 +285,10 @@ namespace rfhqt
 		memset(cur.msgId, 0, sizeof(cur.msgId));
 		memset(cur.correlId, 0, sizeof(cur.correlId));
 		memset(cur.groupId, 0, sizeof(cur.groupId));
+		for (IdEdit * e : { ui->msgIdEdit, ui->correlIdEdit, ui->groupIdEdit })
+		{
+			e->setOvertype(true);		// OnResetIds: SetOvertype(TRUE)
+		}
 		showIds();
 		editedByUser();
 	}
@@ -284,8 +297,12 @@ namespace rfhqt
 
 	rfh::MqmdFields MqmdTab::fields() const
 	{
-		const_cast<MqmdTab *>(this)->storeIds();
 		rfh::MqmdFields f = cur;		// the ids, and the values of groups that show none
+		for (Field field : { Field::MsgId, Field::CorrelId, Field::GroupId })
+		{
+			std::string ignored;
+			boxToBytes(field, field == Field::MsgId ? f.msgId : field == Field::CorrelId ? f.correlId : f.groupId, ignored);		// a pending edit counts
+		}
 		f.format = text(ui->formatCombo->currentText());
 		f.ccsid = text(ui->ccsidEdit->text());
 		f.msgType = text(ui->msgTypeCombo->currentText());
@@ -311,10 +328,10 @@ namespace rfhqt
 		f.encoding = pick(encodingGroup, cur.encoding);
 		f.pdEncoding = pick(pdEncodingGroup, cur.pdEncoding);
 		f.floatEncoding = pick(floatGroup, cur.floatEncoding);
-		f.reportException = reportGroups[0]->checkedId();
-		f.reportExpiration = reportGroups[1]->checkedId();
-		f.reportCoa = reportGroups[2]->checkedId();
-		f.reportCod = reportGroups[3]->checkedId();
+		f.reportException = reportGroups[0]->checkedId() >= 0 ? reportGroups[0]->checkedId() : cur.reportException;
+		f.reportExpiration = reportGroups[1]->checkedId() >= 0 ? reportGroups[1]->checkedId() : cur.reportExpiration;
+		f.reportCoa = reportGroups[2]->checkedId() >= 0 ? reportGroups[2]->checkedId() : cur.reportCoa;
+		f.reportCod = reportGroups[3]->checkedId() >= 0 ? reportGroups[3]->checkedId() : cur.reportCod;
 
 		f.reportPan = ui->panCheck->isChecked();
 		f.reportNan = ui->nanCheck->isChecked();
@@ -448,6 +465,10 @@ namespace rfhqt
 		{
 			connect(idEdit(f), &QLineEdit::textEdited, this, [this, f]() { if (!loading && storeId(f)) editedByUser(); });
 		}
+		// Windows applies the Message Id box when it loses focus; Operations reads the document and never asks the tab, so
+		// here it is stored on every change too and the document is never behind the box. Leaving the box applies it again
+		// (nothing changes) so a refused edit is still reported there.
+		connect(ui->msgIdEdit, &QLineEdit::textEdited, this, [this]() { if (!loading && storeId(Field::MsgId)) editedByUser(); });
 		connect(ui->msgIdEdit, &QLineEdit::editingFinished, this, [this]() { if (!loading && storeId(Field::MsgId)) editedByUser(); });
 		for (IdEdit * e : { ui->msgIdEdit, ui->correlIdEdit, ui->groupIdEdit })
 		{

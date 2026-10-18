@@ -9,14 +9,18 @@
 //     (setMqmd, then fieldsEdited()); a change the document announces (a get, Open File, Clear) is shown without being
 //     reported as an edit. The tab does not touch message().mqmd.
 //   * Ids. The bytes live in a copy of the fields. A box is applied to its bytes with id_display::applyEdit: the Correl
-//     Id and Group Id boxes on each change (OnUpdateCorrelId, OnUpdateGroupId), the Message Id box when it loses focus
-//     (MQMDPAGE.cpp:3920), and every box when the display mode changes, when Copy Msg Id is used and when fields() is
+//     Id and Group Id boxes on each change (OnUpdateCorrelId, OnUpdateGroupId), the Message Id box too (Windows does it
+//     when the box loses focus, MQMDPAGE.cpp:3920, but Operations reads the document and never asks the tab, so the
+//     document must never be behind the box), and every box when the display mode changes, when Copy Msg Id is used and when fields() is
 //     asked, so pending edits are never lost. A box whose text equals what the bytes show is not applied
 //     (updateIdFields, :629): untouched non-printable bytes survive. The mode a box is applied in is the mode it was
 //     displayed in.
 //   * Read-only rules. MQMDPAGE::OnSetActive applies them when the tab is activated; here they follow the document's
 //     enables, which are current whenever the Main tab's Set Iden / Set All / Alternate User check boxes change, so the
 //     tab never shows a stale state. Backout Count is always read-only; the Message Id is always editable.
+//   * Text. Fields longer than their edit limit are cut by the edit when shown (as the Windows DDX does), so fields()
+//     returns the cut text; setFields itself never reports an edit. A radio value no button stands for (a report
+//     option outside 0-3, an unknown persistence) is kept and returned unchanged.
 //   * Report and other radio groups are QButtonGroups whose ids are the core's option values (REPORT_NONE..REPORT_FULL
 //     0-3, MQPERSIST_*, NUMERIC_*, FLOAT_*), so checkedId() == -1 ("none selected") round-trips as -1 and no default is
 //     forced.
@@ -28,6 +32,7 @@
 #include <QWidget>
 
 #include <memory>
+#include <string>
 
 #include "rfh_id_display.h"
 #include "rfh_mqmd_fields.h"
@@ -74,8 +79,9 @@ namespace rfhqt
 		void showIds();
 		void showMode(rfh::id_display::Mode newMode);
 		bool storeIds();									// applies every id box; true when a byte changed
+		bool boxToBytes(rfh::id_display::Field field, unsigned char * id, std::string & error) const;
 		bool storeId(rfh::id_display::Field field);
-		unsigned char * idBytes(rfh::id_display::Field field) const;
+		unsigned char * idBytes(rfh::id_display::Field field);
 		IdEdit * idEdit(rfh::id_display::Field field) const;
 		void copyMsgId();
 		void resetIds();

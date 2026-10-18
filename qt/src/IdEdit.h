@@ -15,9 +15,28 @@
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QLineEdit>
+#include <QValidator>
 
 namespace rfhqt
 {
+	class HexValidator : public QValidator
+	{
+	public:
+		using QValidator::QValidator;
+		State validate(QString & input, int &) const override
+		{
+			input = input.toUpper();
+			for (QChar c : input)
+			{
+				if (!((c >= QLatin1Char('0') && c <= QLatin1Char('9')) || (c >= QLatin1Char('A') && c <= QLatin1Char('F'))))
+				{
+					return Invalid;
+				}
+			}
+			return Acceptable;
+		}
+	};
+
 	class IdEdit : public QLineEdit
 	{
 		Q_OBJECT
@@ -26,7 +45,21 @@ namespace rfhqt
 		using QLineEdit::QLineEdit;
 
 		bool hexOnly() const { return hex; }
-		void setHexOnly(bool value) { hex = value; }
+		// Hex mode also installs a validator, so insert(), a context menu paste, a drop and an input method are held to
+		// the same rule as the keyboard: only 0-9 and A-F (lower case is upper-cased) get in.
+		void setHexOnly(bool value)
+		{
+			hex = value;
+			if (value && validator() == nullptr)
+			{
+				setValidator(new HexValidator(this));
+			}
+			else if (!value && validator() != nullptr)
+			{
+				delete validator();
+				setValidator(nullptr);
+			}
+		}
 		bool overtype() const { return over; }
 		void setOvertype(bool value) { over = value; }
 
