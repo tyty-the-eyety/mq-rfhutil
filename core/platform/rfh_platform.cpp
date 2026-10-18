@@ -15,7 +15,7 @@
 #include <time.h>
 
 #ifdef _WIN32
-#include <secext.h>			// GetUserNameExA; the projects link Secur32.lib
+#include <security.h>		// GetUserNameExA (via sspi.h and secext.h); the projects link Secur32.lib
 #else
 #include <pwd.h>
 #include <sys/types.h>

@@ -366,8 +366,8 @@ TEST(JsonParse, ParsingTwiceStartsFromAnEmptyTree)
     CJsonParse p;
     ASSERT_EQ(JPARSE_OK, p.parse(big.c_str(), (int)big.size()));
 
-    const char * small = "{\"x\":2}";
-    ASSERT_EQ(JPARSE_OK, p.parse(small, (int)strlen(small)));
+    const char * smallDoc = "{\"x\":2}";
+    ASSERT_EQ(JPARSE_OK, p.parse(smallDoc, (int)strlen(smallDoc)));
 
     int child = p.getFirstChild(0);
     ASSERT_GT(child, 0);
