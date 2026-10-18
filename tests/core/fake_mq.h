@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -43,6 +44,33 @@ namespace rfh_test
         std::deque<FakeMessage> messages;
         bool hasDepthOverride = false;
         MQLONG depthOverride = 0;
+        bool dynamic = false;        // created by an open of the model queue; MQCO_DELETE_PURGE removes it
+    };
+
+    // What the fake saw, one record per call (Task 12). Tests read them to check the open
+    // options, the object descriptor fields, the request bytes and the close options.
+    struct OpenRecord
+    {
+        std::string name;            // MQOD.ObjectName as sent, trimmed
+        std::string dynamicName;     // MQOD.DynamicQName as sent, trimmed
+        std::string openedAs;        // the queue the handle refers to (the generated name for a model open)
+        std::string alternateUser;   // MQOD.AlternateUserId as sent, trimmed
+        MQLONG objectType = 0;
+        MQLONG options = 0;
+        MQHOBJ handle = 0;
+    };
+
+    struct CloseRecord
+    {
+        std::string queue;           // the queue the handle referred to
+        MQLONG options = 0;
+    };
+
+    struct PutRecord
+    {
+        std::string queue;
+        FakeMessage message;
+        MQLONG pmoOptions = 0;
     };
 
     struct FakeMq
@@ -58,6 +86,14 @@ namespace rfh_test
         int unlimitedWaitMs = 1000;   // how long a get with MQWI_UNLIMITED waits in the fake
         MQLONG getRc = MQRC_NONE;     // every get fails with this reason, before it looks at the queue
         bool browseCursors = false;   // model one browse cursor per queue handle (off: a browse always returns the first message)
+        std::map<std::string, MQLONG> openRcByName;   // an open of the object with this name fails with the given reason (before openRc is looked at)
+        int failGetsAfter = -1;       // from the get after this many gets (counting all of them), every get fails with failGetsRc; -1 never
+        MQLONG failGetsRc = MQRC_NONE;
+        std::string dynamicQueueName; // the name an open of SYSTEM.DEFAULT.MODEL.QUEUE gives its dynamic queue; empty generates <prefix>FAKE<n>
+        int dynamicQueueCount = 0;
+        // Called after a put to the named queue, with the message just put. A test uses it to play the
+        // command server: it reads the request and enqueues replies on the queue the request names.
+        std::map<std::string, std::function<void(const FakeMessage &)>> onPut;
 
         // What it saw.
         int connxCalls = 0;
@@ -75,6 +111,10 @@ namespace rfh_test
         MQLONG lastOpenOptions = 0;
         int lastWaitedMs = 0;
         std::string lastOpenedName;
+        std::vector<OpenRecord> openLog;
+        std::vector<CloseRecord> closeLog;
+        std::vector<PutRecord> putLog;
+        std::vector<std::string> deletedQueues;      // dynamic queues removed by a close with MQCO_DELETE_PURGE
 
         std::map<std::string, FakeQueue> queues;
         std::map<MQHOBJ, std::string> handleNames;   // object handle -> queue name
@@ -141,38 +181,84 @@ namespace rfh_test
         {
             FakeMq & fake = fakeMq();
             fake.openCalls++;
+            MQLONG openRc = fake.openRc;
+            if (objDesc != nullptr)
+            {
+                const MQOD * named = static_cast<const MQOD *>(objDesc);
+                std::map<std::string, MQLONG>::const_iterator byName = fake.openRcByName.find(trimmed(named->ObjectName, sizeof(named->ObjectName)));
+                if (byName != fake.openRcByName.end())
+                {
+                    openRc = byName->second;
+                }
+            }
             fake.lastOpenOptions = options;
             *hObj = fake.openCalls;
 
-            const MQOD * od = static_cast<const MQOD *>(objDesc);
+            MQOD * od = static_cast<MQOD *>(objDesc);
+            OpenRecord record;
+            record.options = options;
+            record.handle = *hObj;
             if (od != nullptr)
             {
                 fake.lastOpenedName = trimmed(od->ObjectName, sizeof(od->ObjectName));
+                record.name = fake.lastOpenedName;
+                record.objectType = od->ObjectType;
+                record.dynamicName = trimmed(od->DynamicQName, sizeof(od->DynamicQName));
+                record.alternateUser = trimmed(od->AlternateUserId, sizeof(od->AlternateUserId));
+                record.openedAs = fake.lastOpenedName;
+                if ((openRc == MQRC_NONE) && (od->ObjectType == MQOT_Q) &&
+                    (fake.lastOpenedName == "SYSTEM.DEFAULT.MODEL.QUEUE") && !record.dynamicName.empty())
+                {
+                    // a model queue open creates a dynamic queue and reports its name in the descriptor
+                    fake.dynamicQueueCount++;
+                    std::string prefix = record.dynamicName.substr(0, record.dynamicName.find('*'));
+                    std::string generated = fake.dynamicQueueName.empty() ? prefix + "FAKE" + std::to_string(fake.dynamicQueueCount) : fake.dynamicQueueName;
+                    fake.queues[generated].dynamic = true;
+                    memset(od->ObjectName, ' ', sizeof(od->ObjectName));
+                    memcpy(od->ObjectName, generated.data(), std::min(sizeof(od->ObjectName), generated.size()));
+                    fake.lastOpenedName = generated;
+                    record.openedAs = generated;
+                }
                 fake.handleNames[*hObj] = fake.lastOpenedName;
                 fake.handleIsQmgr[*hObj] = (od->ObjectType == MQOT_Q_MGR);
             }
-            if ((od != nullptr) && (od->Version >= MQOD_VERSION_3) && (fake.openRc == MQRC_NONE))
+            fake.openLog.push_back(record);
+            if ((od != nullptr) && (od->Version >= MQOD_VERSION_3) && (openRc == MQRC_NONE))
             {
                 // an open with a version 3 descriptor reports the name the object resolved to
-                MQOD * out = static_cast<MQOD *>(objDesc);
+                MQOD * out = od;
                 FakeQueue * resolved = fake.find(fake.lastOpenedName);
                 std::string name = ((resolved != nullptr) && !resolved->resolvedQName.empty()) ? resolved->resolvedQName : fake.lastOpenedName;
                 memset(out->ResolvedQName, ' ', sizeof(out->ResolvedQName));
                 memcpy(out->ResolvedQName, name.data(), std::min(sizeof(out->ResolvedQName), name.size()));
             }
-            if (fake.openRc == MQRC_NONE)
+            if (openRc == MQRC_NONE)
             {
                 fake.liveHandles.insert(*hObj);
             }
-            report(fake.openRc, cc, rc);
+            report(openRc, cc, rc);
         }
 
-        inline void fakeClose(MQHCONN, PMQHOBJ hObj, MQLONG, PMQLONG cc, PMQLONG rc)
+        inline void fakeClose(MQHCONN, PMQHOBJ hObj, MQLONG options, PMQLONG cc, PMQLONG rc)
         {
             FakeMq & fake = fakeMq();
             fake.closeCalls++;
+            CloseRecord record;
+            record.options = options;
+            std::map<MQHOBJ, std::string>::iterator named = fake.handleNames.find(*hObj);
+            if (named != fake.handleNames.end())
+            {
+                record.queue = named->second;
+            }
+            fake.closeLog.push_back(record);
             if (fake.closeRc == MQRC_NONE)
             {
+                FakeQueue * closing = fake.find(record.queue);
+                if ((closing != nullptr) && closing->dynamic && ((options & MQCO_DELETE_PURGE) == MQCO_DELETE_PURGE))
+                {
+                    fake.deletedQueues.push_back(record.queue);
+                    fake.queues.erase(record.queue);
+                }
                 fake.liveHandles.erase(*hObj);
                 fake.cursors.erase(*hObj);
                 *hObj = MQHO_UNUSABLE_HOBJ;   // as real MQ does on success
@@ -190,7 +276,7 @@ namespace rfh_test
             }
 
             FakeQueue * q = queueOf(hObj);
-            if ((fake.putRc == MQRC_NONE) && (q != nullptr))
+            if (fake.putRc == MQRC_NONE)
             {
                 FakeMessage m;
                 if (md != nullptr)
@@ -202,7 +288,24 @@ namespace rfh_test
                     const unsigned char * p = static_cast<const unsigned char *>(buffer);
                     m.data.assign(p, p + length);
                 }
-                q->messages.push_back(m);
+
+                PutRecord record;
+                std::map<MQHOBJ, std::string>::iterator named = fake.handleNames.find(hObj);
+                record.queue = (named == fake.handleNames.end()) ? std::string() : named->second;
+                record.message = m;
+                record.pmoOptions = (pmo != nullptr) ? static_cast<const MQPMO *>(pmo)->Options : 0;
+                fake.putLog.push_back(record);
+
+                if (q != nullptr)
+                {
+                    q->messages.push_back(m);
+                }
+                std::map<std::string, std::function<void(const FakeMessage &)>>::iterator hook = fake.onPut.find(record.queue);
+                if (hook != fake.onPut.end())
+                {
+                    std::function<void(const FakeMessage &)> run = hook->second;
+                    run(m);
+                }
             }
             report(fake.putRc, cc, rc);
         }
@@ -224,6 +327,11 @@ namespace rfh_test
             if (fake.getRc != MQRC_NONE)
             {
                 report(fake.getRc, cc, rc);
+                return;
+            }
+            if ((fake.failGetsAfter >= 0) && (fake.getCalls > fake.failGetsAfter))
+            {
+                report(fake.failGetsRc, cc, rc);
                 return;
             }
 

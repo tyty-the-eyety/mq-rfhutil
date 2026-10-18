@@ -78,7 +78,7 @@ add_executable(rfhutil_mq_tests core/MqSessionTests.cpp)
 target_link_libraries(rfhutil_mq_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_tests PROPERTIES LABELS mq RUN_SERIAL TRUE)
 
-add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp)
+add_executable(rfhutil_mq_fake_tests core/MqSessionFakeTests.cpp core/ListQueuesTests.cpp)
 target_link_libraries(rfhutil_mq_fake_tests PRIVATE rfhcore GTest::gtest_main)
 gtest_discover_tests(rfhutil_mq_fake_tests)
 
@@ -103,6 +103,9 @@ endfunction()
 rfh_add_memcheck_test(memcheck.GuardMalloc rfhutil_core_tests "GuardMalloc.*")
 
 rfh_add_memcheck_test(memcheck.DataFormatter rfhutil_core_tests "DataFormatter.*")
+
+# The PCF reply parser and the queue listing read replies of any length and shape; run them with exact-size buffers under the guard allocator.
+rfh_add_memcheck_test(memcheck.ListQueues rfhutil_mq_fake_tests "ListQueues.*:PcfQueueReply.*")
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
 rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")

@@ -20,11 +20,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <regex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "rfh_mq_session.h"
 #include "mq_layout.h"
@@ -481,6 +483,68 @@ TEST_F(MqBindingsTest, QueueInfoOnARealQueueAfterAPut)
 
     Result missing = session.queueInfo("RFHUTIL.TEST.NO.SUCH.QUEUE", info);
     EXPECT_EQ(MQRC_UNKNOWN_OBJECT_NAME, missing.rc);
+}
+
+namespace
+{
+    // Removes the queues a listing test defines, whatever the outcome of the test.
+    struct ListQueuesCleanup
+    {
+        ~ListQueuesCleanup()
+        {
+            runMqsc("DELETE QLOCAL(RFHUTIL.TEST.LIST) PURGE\nDELETE QALIAS(RFHUTIL.TEST.LIST.ALIAS)\nDELETE QREMOTE(RFHUTIL.TEST.LIST.REMOTE)");
+        }
+    };
+
+    bool contains(const std::vector<std::string> & names, const std::string & name)
+    {
+        return std::find(names.begin(), names.end(), name) != names.end();
+    }
+}
+
+TEST_F(MqBindingsTest, ListQueuesFindsATestQueue)
+{
+    ListQueuesCleanup cleanup;
+    ASSERT_TRUE(runMqsc("DEFINE QLOCAL(RFHUTIL.TEST.LIST) REPLACE\n"
+                        "DEFINE QALIAS(RFHUTIL.TEST.LIST.ALIAS) TARGET(RFHUTIL.TEST.LIST) REPLACE\n"
+                        "DEFINE QREMOTE(RFHUTIL.TEST.LIST.REMOTE) RNAME(SOME.QUEUE) RQMNAME(OTHER.QM) REPLACE"));
+
+    std::vector<std::string> names;
+    Result r = session.listQueues(QueueListOptions(), names);
+    if (r.rc == MQRC_NO_MSG_AVAILABLE)
+    {
+        GTEST_SKIP() << "the PCF command server of " << bindingsQm() << " does not answer (strmqcsv starts it); listQueues is covered by the fake tests: " << r.text;
+    }
+    ASSERT_TRUE(r.ok()) << r.text;
+    for (const std::string & w : r.warnings)
+    {
+        ADD_FAILURE() << "warning: " << w;
+    }
+
+    EXPECT_TRUE(contains(names, "RFHUTIL.TEST.LIST")) << "local";
+    EXPECT_TRUE(contains(names, "RFHUTIL.TEST.LIST.REMOTE")) << "remote";
+    EXPECT_TRUE(contains(names, "RFHUTIL.TEST.LIST.ALIAS")) << "alias";
+    EXPECT_TRUE(contains(names, "SYSTEM.ADMIN.COMMAND.QUEUE")) << "system queues are listed; hiding them is the caller's choice";
+    EXPECT_FALSE(contains(names, "SYSTEM.DEFAULT.MODEL.QUEUE")) << "model queues are left out";
+    for (const std::string & name : names)
+    {
+        EXPECT_NE(0u, name.find("RFHUTIL.REPLY.QUEUE")) << "the temporary reply queue is not listed: " << name;
+    }
+
+    // a second listing works on the same connection and the first one's reply queue is gone
+    std::vector<std::string> again;
+    ASSERT_TRUE(session.listQueues(QueueListOptions(), again).ok());
+    EXPECT_EQ(names.size(), again.size());
+
+    // only the alias queues
+    QueueListOptions aliasOnly;
+    aliasOnly.local = false;
+    aliasOnly.remote = false;
+    std::vector<std::string> aliases;
+    ASSERT_TRUE(session.listQueues(aliasOnly, aliases).ok());
+    EXPECT_TRUE(contains(aliases, "RFHUTIL.TEST.LIST.ALIAS"));
+    EXPECT_FALSE(contains(aliases, "RFHUTIL.TEST.LIST"));
+    EXPECT_FALSE(contains(aliases, "RFHUTIL.TEST.LIST.REMOTE"));
 }
 
 TEST_F(MqBindingsTest, BrowsePositionFollowsTheRealCursor)

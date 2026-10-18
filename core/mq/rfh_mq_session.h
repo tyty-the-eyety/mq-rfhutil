@@ -12,7 +12,9 @@
 #include <cmqxc.h>
 
 #include <atomic>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "rfh_message.h"
 #include "rfh_mq_loader.h"
@@ -98,6 +100,20 @@ namespace rfh
 		std::string resolvedName;		// the queue the name resolved to (MQOD.ResolvedQName); empty when it is the same or unknown
 	};
 
+	// Which queue names listQueues asks the command server for (Windows: DataArea::getQueueNames).
+	struct QueueListOptions
+	{
+		bool local = true;
+		bool remote = true;
+		bool alias = true;
+		bool cluster = false;			// add the cluster filter, so cluster queues are listed too
+
+		// Added by the port; the defaults are Windows' constants.
+		MQLONG replyWaitMs = 3000;		// how long each reply is waited for (getReplyMsg: 3 * 1000)
+		size_t maxNames = 100000;		// stop collecting at this many names and say so in a warning
+		std::string alternateUser;		// MQOD alternate user id for both opens (the MQMD tab's); at most 12 characters are used, as in Windows
+	};
+
 	class MqSession
 	{
 	public:
@@ -157,6 +173,34 @@ namespace rfh
 		// refuses the inquiry at open (2045); that is the failure reported.
 		Result queueInfo(const std::string & queue, QueueInfo & info);
 
+		// Lists queue names over PCF, as the Main tab's Load Names does (see rfh_pcf_queues.h for the
+		// messages and DataArea::loadNames, openAdminQ, OpenTempQ and getListOfNames for the flow).
+		// names is cleared, then receives the names without duplicates, local queues first, then remote,
+		// then alias, each in the order the command server answered. Model queues, queue types
+		// that were not asked for and the temporary reply queue itself are left out. Names that
+		// start with SYSTEM. are included: hiding them is the caller's choice.
+		//
+		// Flow: inquire the platform and command level of the queue manager (unknown levels are
+		// reported in a warning and treated as modern), open a dynamic reply queue from
+		// SYSTEM.DEFAULT.MODEL.QUEUE (RFHUTIL.REPLY.QUEUE*), open SYSTEM.ADMIN.COMMAND.QUEUE for output,
+		// then for each requested type put one non-persistent request (expiry 10000 tenths, no syncpoint)
+		// and read replies, each waited for replyWaitMs, until one is not marked "not last". The
+		// reply queue is closed with MQCO_DELETE_PURGE and the admin queue closed in every case unless
+		// the connection was lost, which takes the handles with it. Windows opens a connection per type; this
+		// uses the session's connection and one pair of queues for all types.
+		//
+		// The result is a failure when the first requested type fails (no reply within replyWaitMs:
+		// rc 2033, rejected by the command server: its reason, connection lost: its reason, an open
+		// or put failing: that reason), as Windows decides by its local queues; the names already
+		// read stay in names. A failure of a later type is a warning. Windows reports none of the
+		// command server's rejections. A z/OS queue manager below command level 600 has no PCF
+		// and is refused with the Windows text.
+		//
+		// Bounds: one reply is read into 64 KiB (Windows 32 KiB plus a header); a longer reply is
+		// read as far as it goes and a warning says so. At most options.maxNames names are kept. At most 50
+		// warnings are kept.
+		Result listQueues(const QueueListOptions & options, std::vector<std::string> & names);
+
 		// Removes every message from queue with destructive gets; count receives how many.
 		Result purge(const std::string & queue, MQLONG & count);
 
@@ -174,6 +218,11 @@ namespace rfh
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
 
 		void clearHandleState();
+
+		// listQueues: one request and its replies; false when the connection was lost.
+		Result collectQueueNames(MQHOBJ adminQ, MQHOBJ replyQ, const std::string & replyName, MQLONG queueType, bool extended,
+		                         const QueueListOptions & options, std::vector<std::string> & names, std::set<std::string> & seen,
+		                         std::vector<std::string> & warnings, bool & limitReached);
 
 		MqApi api;
 		bool apiInjected = false;

@@ -9,7 +9,10 @@
 #include <string>
 #include <vector>
 
+#include <cmqcfc.h>
+
 #include "rfh_header_chain.h"
+#include "rfh_pcf_queues.h"
 #include "mqsubs.h"
 
 namespace rfh
@@ -790,6 +793,370 @@ namespace rfh
 
 		closeInquiryHandle(obj, r);
 		return r;
+	}
+
+	namespace
+	{
+		const size_t kMaxListWarnings = 50;
+		const size_t kReplyBufferBytes = 64 * 1024;
+		const char * const kModelQueue = "SYSTEM.DEFAULT.MODEL.QUEUE";
+		const char * const kReplyQueueTemplate = "RFHUTIL.REPLY.QUEUE*";
+		const char * const kAdminQueue = "SYSTEM.ADMIN.COMMAND.QUEUE";
+
+		void addListWarning(std::vector<std::string> & warnings, const std::string & text)
+		{
+			if (warnings.size() < kMaxListWarnings)
+			{
+				warnings.push_back(text);
+			}
+			else if (warnings.size() == kMaxListWarnings)
+			{
+				warnings.push_back("further warnings were not kept");
+			}
+		}
+
+		std::string trimmedField(const char * field, size_t size)
+		{
+			size_t length = size;
+			while ((length > 0) && ((field[length - 1] == ' ') || (field[length - 1] == '\0')))
+			{
+				length--;
+			}
+			return std::string(field, length);
+		}
+
+		// MQOPEN as OpenTempQ and openAdminQ issue it: the alternate user id is cut to 12 characters.
+		void setAlternateUser(MQOD & od, MQLONG & openOptions, const std::string & user)
+		{
+			if (user.empty())
+			{
+				return;
+			}
+			openOptions |= MQOO_ALTERNATE_USER_AUTHORITY;
+			memset(od.AlternateUserId, 0, MQ_USER_ID_LENGTH);
+			memcpy(od.AlternateUserId, user.data(), std::min(user.size(), (size_t)MQ_USER_ID_LENGTH));
+		}
+
+		const char * typeLabel(MQLONG queueType)
+		{
+			switch (queueType)
+			{
+			case MQQT_LOCAL: return "local queues";
+			case MQQT_REMOTE: return "remote queues";
+			case MQQT_ALIAS: return "alias queues";
+			default: break;
+			}
+			return "queues";
+		}
+	}
+
+	// One request and its replies (DataArea::PutAdminMsg, getReplyMsg and getListOfNames).
+	Result MqSession::collectQueueNames(MQHOBJ adminQ, MQHOBJ replyQ, const std::string & replyName, MQLONG queueType, bool extended,
+	                                    const QueueListOptions & options, std::vector<std::string> & names, std::set<std::string> & seen,
+	                                    std::vector<std::string> & warnings, bool & limitReached)
+	{
+		const std::vector<unsigned char> request = pcf::buildInquireQueueRequest(queueType, options.cluster, extended);
+
+		MQMD2 putMd = { MQMD2_DEFAULT };
+		memcpy(putMd.Format, MQFMT_ADMIN, MQ_FORMAT_LENGTH);
+		putMd.MsgType = MQMT_REQUEST;
+		memset(putMd.ReplyToQ, ' ', sizeof(putMd.ReplyToQ));
+		memcpy(putMd.ReplyToQ, replyName.data(), std::min(replyName.size(), sizeof(putMd.ReplyToQ)));
+		putMd.Persistence = MQPER_NOT_PERSISTENT;
+		putMd.Expiry = 10 * 1000;		// Windows' value: tenths of a second, so 100 seconds, under a comment that says 10
+
+		MQPMO pmo = { MQPMO_DEFAULT };
+		pmo.Options = MQPMO_NO_SYNCPOINT;
+
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		api.put(hConn, adminQ, &putMd, &pmo, (MQLONG)request.size(), const_cast<unsigned char *>(request.data()), &cc, &rc);
+		dropIfBroken(rc);
+		if (cc == MQCC_FAILED)
+		{
+			Result failed;
+			failed.cc = cc;
+			failed.rc = rc;
+			failed.text = "***** Error writing to Admin queue cc=" + std::to_string(cc) + ", reason=" + std::to_string(rc);
+			return failed;
+		}
+
+		std::vector<unsigned char> buffer(kReplyBufferBytes);
+		Result outcome;
+		size_t received = 0;
+
+		for (;;)
+		{
+			MQMD2 md = { MQMD2_DEFAULT };
+			MQGMO gmo = { MQGMO_DEFAULT };
+			gmo.Options = MQGMO_FAIL_IF_QUIESCING | MQGMO_WAIT | MQGMO_NO_SYNCPOINT | MQGMO_CONVERT | MQGMO_ACCEPT_TRUNCATED_MSG;
+			gmo.WaitInterval = options.replyWaitMs;
+
+			MQLONG dataLength = 0;
+			api.get(hConn, replyQ, &md, &gmo, (MQLONG)buffer.size(), buffer.data(), &dataLength, &cc, &rc);
+			dropIfBroken(rc);
+
+			if (cc == MQCC_FAILED)
+			{
+				outcome = Result::fromMq("MQGET", cc, rc);
+				if (rc == MQRC_NO_MSG_AVAILABLE)
+				{
+					outcome.text += " - no reply from the command server within " + std::to_string(options.replyWaitMs) + " ms after " +
+					                std::to_string(received) + " reply message(s); is the command server running?";
+				}
+				return outcome;
+			}
+
+			received++;
+			if ((cc == MQCC_WARNING) && (rc != MQRC_TRUNCATED_MSG_ACCEPTED))
+			{
+				addListWarning(warnings, Result::fromMq("MQGET", cc, rc).text);
+			}
+
+			size_t length = (dataLength < 0) ? 0 : (size_t)dataLength;
+			if (length > buffer.size())
+			{
+				addListWarning(warnings, "PCF reply of " + std::to_string(length) + " bytes is longer than the " + std::to_string(buffer.size()) +
+				                         " byte buffer; it was read as far as the buffer goes");
+				length = buffer.size();
+			}
+
+			const pcf::QueueReply reply = pcf::parseQueueReply(buffer.data(), length, md.Encoding, md.CodedCharSetId);
+			for (const std::string & w : reply.warnings)
+			{
+				addListWarning(warnings, w);
+			}
+
+			if (!reply.headerValid)
+			{
+				addListWarning(warnings, std::string("the list of ") + typeLabel(queueType) + " may be incomplete");
+				return outcome;
+			}
+
+			if (reply.compCode == MQCC_FAILED)
+			{
+				// "none found" is how a command server says there is no queue of the type: an empty list, not an error
+				if (reply.reason != MQRCCF_NONE_FOUND)
+				{
+					outcome = Result();
+					outcome.cc = MQCC_FAILED;
+					outcome.rc = reply.reason;
+					outcome.text = std::string("The command server rejected the request for ") + typeLabel(queueType) + ": reason " + std::to_string(reply.reason);
+					if (reply.parameterId != 0)
+					{
+						outcome.text += " (parameter " + std::to_string(reply.parameterId) + ")";
+					}
+				}
+			}
+			else if (reply.hasQueue && (reply.queueType != MQQT_MODEL) && (reply.name != replyName) && (seen.count(reply.name) == 0))
+			{
+				seen.insert(reply.name);
+				names.push_back(reply.name);
+				if ((names.size() >= options.maxNames) && !reply.last)
+				{
+					limitReached = true;
+					return outcome;
+				}
+			}
+
+			if (reply.last)
+			{
+				return outcome;
+			}
+		}
+	}
+
+	Result MqSession::listQueues(const QueueListOptions & options, std::vector<std::string> & names)
+	{
+		names.clear();
+		if (!isConnected())
+		{
+			return notConnected();
+		}
+
+		Result result;
+		std::vector<std::string> warnings;
+
+		// platform and command level (connect2QM keeps them; this session does not)
+		MQLONG platform = 0;
+		MQLONG level = 0;
+		bool levelKnown = false;
+		{
+			MQOD od = { MQOD_DEFAULT };
+			od.ObjectType = MQOT_Q_MGR;
+			MQHOBJ qmgr = MQHO_UNUSABLE_HOBJ;
+			MQLONG cc = MQCC_OK;
+			MQLONG rc = MQRC_NONE;
+			api.open(hConn, &od, MQOO_INQUIRE | MQOO_FAIL_IF_QUIESCING, &qmgr, &cc, &rc);
+			dropIfBroken(rc);
+			if (cc == MQCC_FAILED)
+			{
+				return Result::fromMq("MQOPEN", cc, rc);
+			}
+
+			MQLONG selectors[2] = { MQIA_PLATFORM, MQIA_COMMAND_LEVEL };
+			MQLONG answers[2] = { 0, 0 };
+			api.inq(hConn, qmgr, 2, selectors, 2, answers, 0, nullptr, &cc, &rc);
+			dropIfBroken(rc);
+			if (cc == MQCC_FAILED)
+			{
+				if (!isConnected())
+				{
+					return Result::fromMq("MQINQ", cc, rc);
+				}
+				addListWarning(warnings, "The platform and command level of the queue manager are unknown (" + Result::fromMq("MQINQ", cc, rc).text +
+				                         "); the request is built for a queue manager at command level 600 or above");
+			}
+			else
+			{
+				platform = answers[0];
+				level = answers[1];
+				levelKnown = true;
+			}
+
+			Result closed;
+			closeInquiryHandle(qmgr, closed);
+			for (const std::string & w : closed.warnings)
+			{
+				addListWarning(warnings, w);
+			}
+		}
+
+		if (!isConnected())
+		{
+			return Result::failure("The connection was lost");
+		}
+
+		// z/OS before V6 has no PCF (DataArea::loadNames)
+		if (levelKnown && (platform == MQPL_MVS) && (level < MQCMDL_LEVEL_600))
+		{
+			return Result::failure("MQ on 390 does not support PCF prior to V6");
+		}
+		const bool extended = !levelKnown || (level >= MQCMDL_LEVEL_600);
+
+		// a temporary dynamic queue receives the replies (OpenTempQ)
+		MQHOBJ replyQ = MQHO_UNUSABLE_HOBJ;
+		std::string replyName;
+		{
+			MQOD od = { MQOD_DEFAULT };
+			od.ObjectType = MQOT_Q;
+			copyField(od.ObjectName, sizeof(od.ObjectName), kModelQueue);
+			memset(od.DynamicQName, ' ', sizeof(od.DynamicQName));
+			memcpy(od.DynamicQName, kReplyQueueTemplate, strlen(kReplyQueueTemplate));
+			MQLONG openOptions = MQOO_INPUT_SHARED | MQOO_FAIL_IF_QUIESCING;
+			setAlternateUser(od, openOptions, options.alternateUser);
+
+			MQLONG cc = MQCC_OK;
+			MQLONG rc = MQRC_NONE;
+			api.open(hConn, &od, openOptions, &replyQ, &cc, &rc);
+			dropIfBroken(rc);
+			if (cc == MQCC_FAILED)
+			{
+				Result failed;
+				failed.cc = cc;
+				failed.rc = rc;
+				failed.text = "Open for temporary reply queue failed rc=" + std::to_string(rc);
+				return failed;
+			}
+			replyName = trimmedField(od.ObjectName, sizeof(od.ObjectName));
+		}
+
+		// the command server's queue (openAdminQ)
+		MQHOBJ adminQ = MQHO_UNUSABLE_HOBJ;
+		{
+			MQOD od = { MQOD_DEFAULT };
+			od.ObjectType = MQOT_Q;
+			copyField(od.ObjectName, sizeof(od.ObjectName), kAdminQueue);
+			MQLONG openOptions = MQOO_OUTPUT | MQOO_FAIL_IF_QUIESCING;
+			setAlternateUser(od, openOptions, options.alternateUser);
+
+			MQLONG cc = MQCC_OK;
+			MQLONG rc = MQRC_NONE;
+			api.open(hConn, &od, openOptions, &adminQ, &cc, &rc);
+			dropIfBroken(rc);
+			if (cc == MQCC_FAILED)
+			{
+				result.cc = cc;
+				result.rc = rc;
+				result.text = "Open for admin queue failed rc=" + std::to_string(rc);
+				adminQ = MQHO_UNUSABLE_HOBJ;
+			}
+		}
+
+		if (adminQ != MQHO_UNUSABLE_HOBJ)
+		{
+			// Windows lists local, then remote, then alias queues, and decides success by the local ones
+			struct Step
+			{
+				bool wanted;
+				MQLONG type;
+			};
+			const Step steps[] = { { options.local, MQQT_LOCAL }, { options.remote, MQQT_REMOTE }, { options.alias, MQQT_ALIAS } };
+
+			std::set<std::string> seen;
+			bool limitReached = false;
+			bool firstStep = true;
+			for (size_t i = 0; (i < sizeof(steps) / sizeof(steps[0])) && isConnected() && !limitReached; i++)
+			{
+				if (!steps[i].wanted)
+				{
+					continue;
+				}
+				if (names.size() >= options.maxNames)
+				{
+					limitReached = true;
+					break;
+				}
+
+				Result step = collectQueueNames(adminQ, replyQ, replyName, steps[i].type, extended, options, names, seen, warnings, limitReached);
+				if (!step.ok())
+				{
+					if (firstStep)
+					{
+						result = step;
+					}
+					else
+					{
+						addListWarning(warnings, step.text);
+					}
+					if (step.rc == MQRC_NO_MSG_AVAILABLE)
+					{
+						break;	// the command server is not answering: the other types would only wait as long again
+					}
+				}
+				firstStep = false;
+			}
+
+			if (limitReached)
+			{
+				addListWarning(warnings, "The list is limited to " + std::to_string(options.maxNames) + " names and is incomplete");
+			}
+		}
+
+		// close and delete the reply queue, close the admin queue (closeReplyQ, closeAdminQ); a lost connection took them already
+		if (isConnected())
+		{
+			MQLONG cc = MQCC_OK;
+			MQLONG rc = MQRC_NONE;
+			api.close(hConn, &replyQ, MQCO_DELETE_PURGE, &cc, &rc);
+			dropIfBroken(rc);
+			if (cc == MQCC_FAILED)
+			{
+				addListWarning(warnings, Result::fromMq("MQCLOSE", cc, rc).text + " (temporary reply queue " + replyName + ")");
+			}
+			if (isConnected() && (adminQ != MQHO_UNUSABLE_HOBJ))
+			{
+				api.close(hConn, &adminQ, MQCO_NONE, &cc, &rc);
+				dropIfBroken(rc);
+				if (cc == MQCC_FAILED)
+				{
+					addListWarning(warnings, Result::fromMq("MQCLOSE", cc, rc).text + " (" + kAdminQueue + ")");
+				}
+			}
+		}
+
+		result.warnings.insert(result.warnings.end(), warnings.begin(), warnings.end());
+		return result;
 	}
 
 	Result MqSession::purge(const std::string & queue, MQLONG & count)
