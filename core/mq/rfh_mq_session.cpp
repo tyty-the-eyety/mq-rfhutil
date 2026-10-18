@@ -223,7 +223,10 @@ namespace rfh
 					return Result::failure("Connection name is longer than 264 characters");
 				}
 
-				cd.Version = MQCD_CURRENT_VERSION;
+				// Version 6, as Windows (DataArea.cpp 10715-10735): an older client library refuses a version it does
+				// not know. TLS, a local address or a non-default keep-alive raise it to 7 (applyConnectSecurity).
+				cd.Version = MQCD_VERSION_6;
+				cd.StrucLength = MQCD_LENGTH_6;
 				cd.MaxMsgLength = 104857600;	// as the MFC application does; the default would limit messages to 4 MB
 				cd.TransportType = MQXPT_TCP;
 				cd.HeartbeatInterval = options.heartbeat;
@@ -257,7 +260,7 @@ namespace rfh
 		api.connx(qmName, &cno, &hConn, &cc, &rc);
 
 		// MQ has what it needs: no readable copy of the password stays with the session
-		detail::secureZero(passwordScratch.data(), passwordScratch.size());
+		detail::wipePasswordScratch(passwordScratch);
 
 		if (trace->isTraceEnabled())
 		{

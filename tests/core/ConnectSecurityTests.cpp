@@ -12,10 +12,12 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <vector>
 
+#include "rfh_connect_security.h"
 #include "rfh_mq_session.h"
 #include "rfh_trace.h"
 
@@ -126,7 +128,18 @@ namespace
             EXPECT_FALSE(session.isConnected());
         }
 
-        const ConnxRecord & last() const { return fake.connxLog.back(); }
+        // The newest MQCONNX record. When a connect was wrongly rejected there is none: that fails this test
+        // and hands back an empty record, so one bad test does not abort the whole binary.
+        const ConnxRecord & last() const
+        {
+            static const ConnxRecord none;
+            if (fake.connxLog.empty())
+            {
+                ADD_FAILURE() << "MQCONNX was never called";
+                return none;
+            }
+            return fake.connxLog.back();
+        }
 
         MqSession session;
     };
@@ -160,9 +173,10 @@ TEST_F(ConnectSecurityTest, SslFieldsReachTheChannelDefinition)
     EXPECT_EQ("TLS_RSA_WITH_AES_128_CBC_SHA256", field(last().cd.SSLCipherSpec));
     EXPECT_EQ(MQSCA_REQUIRED, last().cd.SSLClientAuth);
     // structure versions: the CD carries the SSL fields (version 7 and above) and the CNO points at the SCO (version 4 and above)
-    EXPECT_GE(last().cd.Version, MQCD_VERSION_7);
-    EXPECT_EQ(MQCD_CURRENT_VERSION, last().cd.Version);
-    EXPECT_EQ(MQCD_CURRENT_LENGTH, last().cd.StrucLength);
+    // Windows raises the CD to exactly version 7 for TLS (DataArea.cpp 10932-10935); an older client library
+    // refuses a version it does not know (MQRC_CD_ERROR), so the core does not claim version 12.
+    EXPECT_EQ(MQCD_VERSION_7, last().cd.Version);
+    EXPECT_EQ(MQCD_LENGTH_7, last().cd.StrucLength);
     EXPECT_GE(last().cno.Version, MQCNO_VERSION_4);
     EXPECT_NE(nullptr, last().cno.SSLConfigPtr);
     EXPECT_EQ(0, memcmp(last().sco.StrucId, MQSCO_STRUC_ID, 4));
@@ -382,7 +396,30 @@ TEST_F(ConnectSecurityTest, NothingIsSetWhenSslIsOff)
     EXPECT_EQ("", field(last().cd.SSLCipherSpec));
     EXPECT_EQ(nullptr, last().cd.SSLPeerNamePtr);
     EXPECT_EQ(0, last().cd.SSLPeerNameLength);
+    // Windows ignores them silently; here a warning names what was ignored (the box may have been unticked by mistake)
+    EXPECT_TRUE(anyWarningContains(r, "TLS is not enabled"));
+    EXPECT_TRUE(anyWarningContains(r, "cipher spec"));
+    EXPECT_TRUE(anyWarningContains(r, "key repository"));
+    EXPECT_TRUE(anyWarningContains(r, "peer name"));
+}
+
+TEST_F(ConnectSecurityTest, UntickedTlsWithNoTlsFieldsHasNoWarning)
+{
+    ConnectOptions o = client();
+    o.sslClientValidation = true;       // a bare flag with nothing to apply it to is not worth a warning
+    Result r = connectOk(o);
     EXPECT_TRUE(r.warnings.empty());
+}
+
+TEST_F(ConnectSecurityTest, UntickedTlsWarnsOnlyAboutTheFieldsThatAreSet)
+{
+    ConnectOptions o = client();
+    o.keyRepository = "/var/mqm/ssl/key";
+    Result r = connectOk(o);
+    EXPECT_TRUE(anyWarningContains(r, "key repository"));
+    EXPECT_FALSE(anyWarningContains(r, "cipher spec"));
+    EXPECT_FALSE(anyWarningContains(r, "peer name"));
+    EXPECT_EQ(nullptr, last().cno.SSLConfigPtr);
 }
 
 TEST_F(ConnectSecurityTest, NothingIsSetByDefault)
@@ -394,6 +431,55 @@ TEST_F(ConnectSecurityTest, NothingIsSetByDefault)
     EXPECT_EQ("", field(last().cd.LocalAddress));
     EXPECT_EQ("TEST.CHL", field(last().cd.ChannelName));
     EXPECT_EQ("host.example(1414)", field(last().cd.ConnectionName));
+    // Windows keeps the CD at version 6 until TLS needs more (10715-10735, 10932); nothing here lies beyond version 6
+    EXPECT_EQ(MQCD_VERSION_6, last().cd.Version);
+    EXPECT_EQ(MQCD_LENGTH_6, last().cd.StrucLength);
+}
+
+TEST_F(ConnectSecurityTest, ALocalAddressNeedsChannelDefinitionVersion7)
+{
+    // LocalAddress lies after MQCD_LENGTH_6; a version 6 definition would drop it silently
+    ConnectOptions o = client();
+    o.localAddress = "192.0.2.7(5000)";
+    connectOk(o);
+    EXPECT_EQ(MQCD_VERSION_7, last().cd.Version);
+    EXPECT_EQ(MQCD_LENGTH_7, last().cd.StrucLength);
+}
+
+TEST_F(ConnectSecurityTest, ANonDefaultKeepAliveNeedsChannelDefinitionVersion7)
+{
+    ConnectOptions o = client();
+    o.keepAlive = 30;
+    connectOk(o);
+    EXPECT_EQ(30, last().cd.KeepAliveInterval);
+    EXPECT_EQ(MQCD_VERSION_7, last().cd.Version);
+    EXPECT_EQ(MQCD_LENGTH_7, last().cd.StrucLength);
+}
+
+TEST_F(ConnectSecurityTest, EveryChannelDefinitionFieldTheCoreSetsLiesInsideVersion7)
+{
+    // The core writes these MQCD fields (session and security code). The version 7 length must cover the end of each.
+    const size_t ends[] = {
+        offsetof(MQCD, ChannelName) + sizeof(MQCD::ChannelName),
+        offsetof(MQCD, ConnectionName) + sizeof(MQCD::ConnectionName),
+        offsetof(MQCD, MaxMsgLength) + sizeof(MQCD::MaxMsgLength),
+        offsetof(MQCD, TransportType) + sizeof(MQCD::TransportType),
+        offsetof(MQCD, HeartbeatInterval) + sizeof(MQCD::HeartbeatInterval),
+        offsetof(MQCD, KeepAliveInterval) + sizeof(MQCD::KeepAliveInterval),
+        offsetof(MQCD, SecurityExit) + sizeof(MQCD::SecurityExit),
+        offsetof(MQCD, SecurityUserData) + sizeof(MQCD::SecurityUserData),
+        offsetof(MQCD, LocalAddress) + sizeof(MQCD::LocalAddress),
+        offsetof(MQCD, SSLCipherSpec) + sizeof(MQCD::SSLCipherSpec),
+        offsetof(MQCD, SSLPeerNamePtr) + sizeof(MQCD::SSLPeerNamePtr),
+        offsetof(MQCD, SSLPeerNameLength) + sizeof(MQCD::SSLPeerNameLength),
+        offsetof(MQCD, SSLClientAuth) + sizeof(MQCD::SSLClientAuth),
+    };
+    for (size_t i = 0; i < sizeof(ends) / sizeof(ends[0]); i++)
+    {
+        EXPECT_LE(ends[i], (size_t)MQCD_LENGTH_7) << "field " << i;
+    }
+    // and the fields TLS adds are really past version 6, which is why TLS needs version 7
+    EXPECT_GT(offsetof(MQCD, SSLCipherSpec) + sizeof(MQCD::SSLCipherSpec), (size_t)MQCD_LENGTH_6);
 }
 
 TEST_F(ConnectSecurityTest, BindingsModeIgnoresTheClientOnlyFields)
@@ -747,6 +833,56 @@ TEST_F(ConnectSecurityTest, PasswordIsNeverTraced)
         sawUser = sawUser || contains(trace.lines[i], "mqapp");
     }
     EXPECT_TRUE(sawUser);
+}
+
+TEST_F(ConnectSecurityTest, ACcdtUrlWithCredentialsIsNeverTraced)
+{
+    CapturingTrace trace;
+    rfhSetTrace(&trace);
+
+    ConnectOptions o;
+    o.mode = Mode::Client;
+    o.qmName = "QM1";
+    o.ccdtUrl = std::string("https://ccdtuser:") + kMarker + "@host.example/ccdt.json";
+    Result r = session.connect(o);
+
+    rfhSetTrace(nullptr);
+    ASSERT_TRUE(r.ok()) << r.text;
+    ASSERT_FALSE(trace.lines.empty());
+    bool sawCcdt = false;
+    for (size_t i = 0; i < trace.lines.size(); i++)
+    {
+        EXPECT_FALSE(contains(trace.lines[i], kMarker)) << "line " << i;
+        EXPECT_FALSE(contains(trace.lines[i], "ccdtuser")) << "line " << i;
+        sawCcdt = sawCcdt || contains(trace.lines[i], "ccdt=set");
+    }
+    EXPECT_TRUE(sawCcdt);
+    EXPECT_EQ(o.ccdtUrl, last().ccdtUrl);     // MQ still gets the URL as given
+}
+
+TEST_F(ConnectSecurityTest, NoCcdtIsTracedAsNotSet)
+{
+    CapturingTrace trace;
+    rfhSetTrace(&trace);
+    session.connect(client());
+    rfhSetTrace(nullptr);
+    bool saw = false;
+    for (size_t i = 0; i < trace.lines.size(); i++)
+    {
+        saw = saw || contains(trace.lines[i], "ccdt=not set");
+    }
+    EXPECT_TRUE(saw);
+}
+
+TEST_F(ConnectSecurityTest, WipingTheScratchBufferZeroesItAndForgetsItsLength)
+{
+    std::vector<char> scratch(kMarker, kMarker + strlen(kMarker));
+    const char * data = scratch.data();
+    const size_t size = scratch.size();
+    detail::wipePasswordScratch(scratch);
+    EXPECT_TRUE(scratch.empty());           // the length of the last password is not observable
+    ASSERT_GE(scratch.capacity(), size);    // the storage is kept, and it is zero
+    EXPECT_TRUE(std::all_of(data, data + size, [](char c) { return c == '\0'; }));
 }
 
 TEST_F(ConnectSecurityTest, TheSessionsPasswordCopyIsZeroedAfterConnect)

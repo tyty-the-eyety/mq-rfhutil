@@ -65,6 +65,12 @@ namespace rfh
 			}
 		}
 
+		void wipePasswordScratch(std::vector<char> & passwordScratch)
+		{
+			secureZero(passwordScratch.data(), passwordScratch.size());
+			passwordScratch.clear();	// the length of the last password is not observable; the storage stays
+		}
+
 		Result applyConnectSecurity(const ConnectOptions & options, MQCNO & cno, MQCD * cd, MQSCO & sco, MQCSP & csp,
 		                            std::vector<char> & passwordScratch, std::vector<std::string> & warnings)
 		{
@@ -98,6 +104,28 @@ namespace rfh
 			{
 				ssl = options.sslEnabled;
 				Result r = Result::success();
+
+				if (!ssl)
+				{
+					// Windows ignores these silently while the box is unticked (10873); a stale box is easy to miss
+					std::string set;
+					if (!options.cipherSpec.empty())
+					{
+						set += "cipher spec";
+					}
+					if (!options.keyRepository.empty())
+					{
+						set += set.empty() ? "key repository" : ", key repository";
+					}
+					if (!options.sslPeerName.empty())
+					{
+						set += set.empty() ? "peer name" : ", peer name";
+					}
+					if (!set.empty())
+					{
+						warn(warnings, "TLS is not enabled, so the TLS " + set + " given was ignored and the connection is not encrypted");
+					}
+				}
 
 				if (ssl)
 				{
@@ -222,6 +250,17 @@ namespace rfh
 				copyNulPadded(cd->LocalAddress, sizeof(cd->LocalAddress), options.localAddress);
 			}
 
+			// The session builds the channel definition at version 6. TLS fields, the local address and a
+			// keep-alive other than the default lie past MQCD_LENGTH_6; Windows raises it to exactly version 7
+			// for TLS (10932-10935). Nothing the core sets lies past MQCD_LENGTH_7.
+			if (client && (cd != nullptr) &&
+			    (ssl || !options.localAddress.empty() || (options.keepAlive != MQKAI_AUTO)) &&
+			    (cd->Version < MQCD_VERSION_7))
+			{
+				cd->Version = MQCD_VERSION_7;
+				cd->StrucLength = MQCD_LENGTH_7;
+			}
+
 			if (ssl)
 			{
 				if (cd != nullptr)
@@ -264,7 +303,7 @@ namespace rfh
 			line += " qm=" + options.qmName;
 			line += " channel=" + options.channel;
 			line += " connName=" + options.connName;
-			line += " ccdt=" + options.ccdtUrl;
+			line += options.ccdtUrl.empty() ? " ccdt=not set" : " ccdt=set";	// a URL can carry user:password@
 			line += " user=" + options.userId;
 			line += options.password.empty() ? " password=not set" : " password=set";
 			line += " ssl=" + std::string(options.sslEnabled ? "1" : "0");

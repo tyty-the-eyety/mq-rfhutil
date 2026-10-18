@@ -20,6 +20,9 @@
 //   older than version 6 (10758-10816)                                |   always used
 // SSLPeerName set in the MQCD; reset count taken as given (10907)     | peer name up to 1024 bytes; reset count 0 to
 //                                                                     |   999999999, others rejected
+// TLS fields set while "use SSL" is unticked are ignored (10873)     | ignored with a warning naming them
+// MQCD version 6, raised to 7 / MQCD_LENGTH_7 for TLS (10932)         | the same, also for a local address or a
+//                                                                     |   keep-alive other than the default
 // TLS and local address exist only in the client build (#ifdef        | one binary: a bindings connection ignores them
 //   MQCLIENT); the bindings build ignores them silently               |   with a warning when any is set
 //
@@ -27,7 +30,8 @@
 // 2347-2412, never copies m_local_address); here it is a plain option.
 //
 // Passwords: the password is copied into a scratch buffer for MQCSP and the buffer is zeroed as soon as MQCONNX
-// returns. Nothing here puts a password into a message, a warning or a trace line.
+// returns. ConnectOptions itself is freely copyable and every copy duplicates the secret; the session cannot reach
+// the copies, so the caller wipes each one (ConnectOptions::wipePassword). Nothing here puts a password into a message, a warning or a trace line.
 #pragma once
 
 #include <string>
@@ -49,7 +53,11 @@ namespace rfh
 		// Overwrites memory in a way the compiler may not drop.
 		void secureZero(void * data, size_t size);
 
-		// One line describing the connect for the trace. The password is "set" or "not set", never its value.
+		// Zeroes the scratch buffer, then empties it (the storage stays) so the last password's length is not observable.
+		void wipePasswordScratch(std::vector<char> & passwordScratch);
+
+		// One line describing the connect for the trace. The password, the security data and the CCDT URL (which can carry
+		// user:password@) are "set" or "not set", never their value.
 		std::string describeConnect(const ConnectOptions & options);
 	}
 }

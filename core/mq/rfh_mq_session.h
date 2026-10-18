@@ -46,7 +46,8 @@ namespace rfh
 		// that buffer as soon as MQCONNX returns, and never writes the password to a trace, a warning, an error or
 		// Result::text. The caller's string is the caller's: call wipePassword() when the connect is done.
 		// MQ may keep its own copy (a client library keeps credentials for an automatic reconnect, which this
-		// session does not request); that copy is not reachable from here.
+		// session does not request); that copy is not reachable from here. ConnectOptions is freely copyable and
+		// every copy duplicates the password; the session cannot reach those copies, so wipe each one.
 		std::string userId;
 		std::string password;
 
