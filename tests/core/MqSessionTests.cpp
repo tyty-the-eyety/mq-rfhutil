@@ -1496,3 +1496,49 @@ TEST(MqClient, PutThenGetOverClientChannel)
     ASSERT_TRUE(r.ok()) << r.text;
     EXPECT_EQ("over the channel", bodyText(in));
 }
+
+TEST_F(MqBindingsTest, PropertiesModesAreAcceptedByARealQueueManager)
+{
+    // The real queue manager is at command level 900 or so, so the property options are sent. None of the
+    // messages carries a property, so every mode must return the message as it was put.
+    for (GetMode mode : { GetMode::Destructive, GetMode::BrowseFirst })
+    {
+        for (PropertiesMode properties : { PropertiesMode::AsQueue, PropertiesMode::None, PropertiesMode::Rfh2, PropertiesMode::Compat })
+        {
+            Message out = textMessage("props");
+            ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+
+            GetOptions get;
+            get.mode = mode;
+            get.properties = properties;
+            Message in;
+            Result r = session.get(kQueue, in, get);
+            ASSERT_TRUE(r.ok()) << "mode " << (int)properties << ": " << r.text;
+            EXPECT_TRUE(r.warnings.empty());
+            EXPECT_EQ("props", bodyText(in));
+
+            MQLONG purged = 0;
+            ASSERT_TRUE(session.purge(kQueue, purged).ok());
+        }
+    }
+}
+
+TEST_F(MqBindingsTest, PropertiesModeSurvivesABrowsePrevious)
+{
+    for (const char * text : {"b1", "b2"})
+    {
+        Message out = textMessage(text);
+        ASSERT_TRUE(session.put(kQueue, out, PutOptions()).ok());
+    }
+    GetOptions get;
+    get.properties = PropertiesMode::Rfh2;
+    Message m;
+    get.mode = GetMode::BrowseFirst;
+    ASSERT_TRUE(session.get(kQueue, m, get).ok());
+    get.mode = GetMode::BrowseNext;
+    ASSERT_TRUE(session.get(kQueue, m, get).ok());
+    get.mode = GetMode::BrowsePrevious;
+    Result r = session.get(kQueue, m, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("b1", bodyText(m));
+}

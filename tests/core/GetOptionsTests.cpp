@@ -662,3 +662,217 @@ TEST_F(GetOptionsFake, AFailedConnectLearnsNothing)
     EXPECT_FALSE(again.ok());
     EXPECT_EQ(940, session.queueManagerInfo().commandLevel) << "the facts of the live connection stay";
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Message properties mode (Task 17). Windows: processMQGet 7690-7760, browsePrev 9054-9107.
+// ---------------------------------------------------------------------------------------------------
+
+namespace
+{
+    const MQLONG kPropertyBits = MQGMO_PROPERTIES_FORCE_MQRFH2 | MQGMO_NO_PROPERTIES | MQGMO_PROPERTIES_IN_HANDLE | MQGMO_PROPERTIES_COMPATIBILITY;
+
+    struct ModeCase
+    {
+        PropertiesMode mode;
+        MQLONG flag;
+    };
+
+    const ModeCase kModeCases[] = {
+        { PropertiesMode::None, MQGMO_NO_PROPERTIES },
+        { PropertiesMode::Rfh2, MQGMO_PROPERTIES_FORCE_MQRFH2 },
+        { PropertiesMode::Compat, MQGMO_PROPERTIES_COMPATIBILITY },
+    };
+
+    void addTextMessages(const char * queue, int count)
+    {
+        for (int i = 1; i <= count; i++)
+        {
+            rfh_test::FakeMessage m;
+            const std::string text = "m" + std::to_string(i);
+            m.data.assign(text.begin(), text.end());
+            fake.queue(queue).messages.push_back(m);
+        }
+    }
+}
+
+TEST_F(GetOptionsFake, PropertiesModesSetTheirFlags)
+{
+    ASSERT_TRUE(connect().ok());
+
+    for (const ModeCase & c : kModeCases)
+    {
+        for (GetMode mode : { GetMode::Destructive, GetMode::BrowseFirst, GetMode::BrowseNext })
+        {
+            GetOptions options;
+            options.mode = mode;
+            options.properties = c.mode;
+            Result r = getWith(options);
+            ASSERT_TRUE(r.ok()) << r.text;
+            EXPECT_TRUE(r.warnings.empty());
+
+            const rfh_test::GetRecord & sent = fake.getLog.back();
+            EXPECT_EQ(c.flag, sent.options & kPropertyBits) << "exactly this one property option";
+            EXPECT_EQ(MQGMO_VERSION_4, sent.gmoVersion) << "Windows raises the GMO to version 4 for the property options";
+            EXPECT_NE(0, sent.options & MQGMO_FAIL_IF_QUIESCING) << "the other options stay";
+        }
+    }
+}
+
+TEST_F(GetOptionsFake, AsQueueSetsNoPropertiesFlag)
+{
+    ASSERT_TRUE(connect().ok());
+
+    GetOptions options;
+    options.properties = PropertiesMode::AsQueue;
+    ASSERT_TRUE(getWith(options).ok());
+    EXPECT_EQ(0, fake.getLog.back().options & kPropertyBits);
+    EXPECT_EQ(MQGMO_VERSION_2, fake.getLog.back().gmoVersion) << "the version stays what it was";
+    EXPECT_EQ(PropertiesMode::AsQueue, GetOptions().properties) << "the default";
+}
+
+TEST_F(GetOptionsFake, ABrowsePreviousKeepsTheMode)
+{
+    fake.browseCursors = true;
+    addTextMessages(kQueue, 3);
+    ASSERT_TRUE(connect().ok());
+
+    for (const ModeCase & c : kModeCases)
+    {
+        GetOptions options;
+        options.properties = c.mode;
+        options.mode = GetMode::BrowseFirst;
+        ASSERT_TRUE(getWith(options).ok());
+        options.mode = GetMode::BrowseNext;
+        ASSERT_TRUE(getWith(options).ok());
+        ASSERT_TRUE(getWith(options).ok());
+        ASSERT_EQ(3, session.browsePosition());
+
+        fake.getLog.clear();
+        options.mode = GetMode::BrowsePrevious;
+        Result r = getWith(options);
+        ASSERT_TRUE(r.ok()) << r.text;
+        EXPECT_EQ(2, session.browsePosition());
+        ASSERT_EQ(2u, fake.getLog.size()) << "the walk to position 2 is a browse first and a browse next";
+        for (const rfh_test::GetRecord & sent : fake.getLog)
+        {
+            EXPECT_EQ(c.flag, sent.options & kPropertyBits) << "every step of the walk carries the mode";
+            EXPECT_EQ(MQGMO_VERSION_4, sent.gmoVersion);
+        }
+    }
+}
+
+TEST_F(GetOptionsFake, ModesAreIgnoredBelowV7AndSaySo)
+{
+    fake.commandLevel = 600;
+    ASSERT_TRUE(connect().ok());
+
+    for (const ModeCase & c : kModeCases)
+    {
+        GetOptions options;
+        options.properties = c.mode;
+        Result r = getWith(options);
+        ASSERT_TRUE(r.ok()) << r.text;
+        EXPECT_EQ(0, fake.getLog.back().options & kPropertyBits);
+        EXPECT_EQ(MQGMO_VERSION_2, fake.getLog.back().gmoVersion);
+        EXPECT_TRUE(anyWarningContains(r, "message properties")) << "the dropped option is reported";
+        EXPECT_TRUE(anyWarningContains(r, "600"));
+    }
+
+    // AsQueue sends nothing, so there is nothing to report
+    GetOptions asQueue;
+    Result r = getWith(asQueue);
+    ASSERT_TRUE(r.ok());
+    EXPECT_TRUE(r.warnings.empty());
+}
+
+TEST_F(GetOptionsFake, ModesApplyFromV7AndWhenTheLevelIsUnknown)
+{
+    // Windows tests "0 == level || level >= MQCMDL_LEVEL_700" (processMQGet 7690)
+    fake.commandLevel = MQCMDL_LEVEL_700;
+    ASSERT_TRUE(connect().ok());
+    GetOptions options;
+    options.properties = PropertiesMode::None;
+    Result r = getWith(options);
+    ASSERT_TRUE(r.ok());
+    EXPECT_EQ(MQGMO_NO_PROPERTIES, fake.getLog.back().options & kPropertyBits);
+    EXPECT_TRUE(r.warnings.empty());
+
+    session.disconnect();
+    fake.inqRcBySelector[MQIA_COMMAND_LEVEL] = MQRC_SELECTOR_ERROR;
+    ASSERT_TRUE(connect().ok());
+    ASSERT_EQ(0, session.queueManagerInfo().commandLevel);
+    r = getWith(options);
+    ASSERT_TRUE(r.ok());
+    EXPECT_EQ(MQGMO_NO_PROPERTIES, fake.getLog.back().options & kPropertyBits);
+    EXPECT_FALSE(anyWarningContains(r, "message properties"));
+}
+
+TEST_F(GetOptionsFake, TheModeCombinesWithGroupMatchAndConvertOptions)
+{
+    ASSERT_TRUE(connect().ok());
+    GetOptions options;
+    options.properties = PropertiesMode::Rfh2;
+    options.logicalOrder = true;
+    options.matchCorrelId = true;
+    options.convert = true;
+    ASSERT_TRUE(getWith(options).ok());
+
+    const rfh_test::GetRecord & sent = fake.getLog.back();
+    EXPECT_EQ(MQGMO_PROPERTIES_FORCE_MQRFH2, sent.options & kPropertyBits);
+    EXPECT_NE(0, sent.options & MQGMO_LOGICAL_ORDER);
+    EXPECT_NE(0, sent.options & MQGMO_CONVERT);
+    EXPECT_EQ(MQMO_MATCH_CORREL_ID, sent.matchOptions);
+}
+
+TEST_F(GetOptionsFake, TheModeSurvivesTheBufferGrowingRetry)
+{
+    rfh_test::FakeMessage m;
+    m.data.assign(200, 'x');
+    fake.queue(kQueue).messages.push_back(m);
+    ASSERT_TRUE(connect().ok());
+
+    GetOptions options;
+    options.mode = GetMode::BrowseFirst;
+    options.properties = PropertiesMode::Compat;
+    options.initialBufferSize = 16;
+    Message out;
+    Result r = session.get(kQueue, out, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(200u, out.body.size());
+    ASSERT_GE(fake.getLog.size(), 2u) << "the first get was too small";
+    for (const rfh_test::GetRecord & sent : fake.getLog)
+    {
+        EXPECT_EQ(MQGMO_PROPERTIES_COMPATIBILITY, sent.options & kPropertyBits);
+    }
+}
+
+TEST_F(GetOptionsFake, ARefusedModeIsAFailureWithTheReasonAndNothingLeaks)
+{
+    ASSERT_TRUE(connect().ok());
+    fake.getRc = MQRC_OPTIONS_ERROR;
+
+    GetOptions options;
+    options.properties = PropertiesMode::None;
+    Result r = getWith(options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_OPTIONS_ERROR, r.rc);
+    EXPECT_TRUE(session.isConnected());
+
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_TRUE(fake.liveHandles.empty());
+}
+
+TEST_F(GetOptionsFake, ConnectionLostDuringAGetWithAModeReleasesEverything)
+{
+    ASSERT_TRUE(connect().ok());
+    fake.getRc = MQRC_CONNECTION_BROKEN;
+
+    GetOptions options;
+    options.properties = PropertiesMode::Rfh2;
+    Result r = getWith(options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_TRUE(fake.liveHandles.empty());
+    EXPECT_EQ(0, session.browsePosition());
+}

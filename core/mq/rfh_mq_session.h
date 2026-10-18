@@ -100,6 +100,15 @@ namespace rfh
 
 	enum class GetMode { Destructive, BrowseFirst, BrowseNext, BrowsePrevious };
 
+	// What a get does with message properties (the Main tab's User Props radios, Windows m_mq_props).
+	enum class PropertiesMode
+	{
+		AsQueue,	// no option: the queue's PROPDEF decides (MQGMO_PROPERTIES_AS_Q_DEF, which is 0)
+		None,		// MQGMO_NO_PROPERTIES
+		Rfh2,		// MQGMO_PROPERTIES_FORCE_MQRFH2
+		Compat		// MQGMO_PROPERTIES_COMPATIBILITY
+	};
+
 	struct GetOptions
 	{
 		GetMode mode = GetMode::Destructive;
@@ -140,6 +149,13 @@ namespace rfh
 		std::string selector;		// message selector, given to MQOPEN in a version 4 MQOD; needs a queue manager at command level 700
 		std::string alternateUser;	// MQOO_ALTERNATE_USER_AUTHORITY; at most 12 characters are used, as in Windows, and a warning says so
 		bool inputShared = false;	// MQOO_INPUT_SHARED instead of MQOO_INPUT_AS_Q_DEF
+
+		// Message properties. A mode other than AsQueue raises the GMO to version 4, as Windows does, and needs
+		// a queue manager at command level 700; below it (or on a level that is known and lower) the option is
+		// not sent and a warning says so. An unknown level (0) is allowed, as in Windows. Windows' Get
+		// (processMQGet) only honours its Yes radio, so None, RFH2 and Compat are no-ops there; this core
+		// honours all three. Not ported: Yes (a message handle and a property list).
+		PropertiesMode properties = PropertiesMode::AsQueue;
 
 		// Optional: set to true from another thread to stop a waiting get. The wait is
 		// split into slices of at most one second, so it stops within about a second.

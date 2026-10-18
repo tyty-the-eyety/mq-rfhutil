@@ -22,6 +22,7 @@ namespace rfh
 	namespace
 	{
 		const MQLONG kWaitSliceMs = 1000;
+		const MQLONG kPropertyOptions = MQGMO_NO_PROPERTIES | MQGMO_PROPERTIES_FORCE_MQRFH2 | MQGMO_PROPERTIES_COMPATIBILITY;
 		const size_t kMaxBufferBytes = 104857600;	// the largest message MQ allows (100 MB)
 
 		// Copies text into a blank-padded MQ character field.
@@ -668,6 +669,11 @@ namespace rfh
 			gmo.Version = MQGMO_VERSION_2;
 			gmo.MatchOptions = MQMO_NONE;
 			gmo.Options = getOptions | MQGMO_FAIL_IF_QUIESCING;
+			if ((getOptions & kPropertyOptions) != 0)
+			{
+				// the property options come with the version 4 GMO in Windows (processMQGet 7693, browsePrev 9057)
+				gmo.Version = MQGMO_VERSION_4;
+			}
 			if (options.convert)
 			{
 				gmo.Options |= MQGMO_CONVERT;
@@ -936,6 +942,21 @@ namespace rfh
 		case GetMode::Destructive: case GetMode::BrowsePrevious: break;
 		}
 		getOptions |= groupFlags;
+
+		// processMQGet 7690: only on a queue manager of command level 700 or above, or one whose level is unknown (0)
+		if (options.properties != PropertiesMode::AsQueue)
+		{
+			if ((qmInfo.commandLevel != 0) && (qmInfo.commandLevel < MQCMDL_LEVEL_700))
+			{
+				notes.push_back("The message properties option was not used: it needs a queue manager at command level 700 (MQ V7) or above; this queue manager is at command level " +
+				                std::to_string(qmInfo.commandLevel));
+			}
+			else
+			{
+				getOptions |= (options.properties == PropertiesMode::None) ? MQGMO_NO_PROPERTIES :
+				              (options.properties == PropertiesMode::Rfh2) ? MQGMO_PROPERTIES_FORCE_MQRFH2 : MQGMO_PROPERTIES_COMPATIBILITY;
+			}
+		}
 
 		Result r = getOnce(hObj, message, options, getOptions, options.waitMs);
 		r.warnings.insert(r.warnings.end(), notes.begin(), notes.end());
