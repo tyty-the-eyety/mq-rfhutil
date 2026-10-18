@@ -218,6 +218,18 @@ namespace rfhqt
 		publish(changes);
 	}
 
+	void AppDocument::acceptMessage(rfh::Message && message, std::string dataSource, bool dirty, const rfh::MqmdFields & mqmdFields,
+	                                const rfh::format::RenderOptions & options)
+	{
+		unsigned changes = CMessage | CMqmd | CRender;
+		msg = std::move(message);
+		source = std::move(dataSource);
+		fields = mqmdFields;
+		renderOptions = options;
+		setDirty(dirty, changes);
+		publish(changes);
+	}
+
 	void AppDocument::setMqmd(const rfh::MqmdFields & mqmdFields)
 	{
 		fields = mqmdFields;

@@ -184,6 +184,11 @@ namespace rfhqt
 		// dirty says whether the data is unsaved (true for a message from a queue or an edit, false when it
 		// was just read from a file).
 		void setMessage(rfh::Message && message, std::string dataSource = EmptySource, bool dirty = true);
+		// A message and the things that come with it (the MQMD tab's fields and the display formats), as one change:
+		// one set of signals, so a tab that redraws on them draws once and never shows the new formats with the old
+		// message or the reverse. Operations uses it for a get and for a file read.
+		void acceptMessage(rfh::Message && message, std::string dataSource, bool dirty, const rfh::MqmdFields & mqmdFields,
+		                   const rfh::format::RenderOptions & options);
 		void setMqmd(const rfh::MqmdFields & mqmdFields);
 		void setRender(const rfh::format::RenderOptions & options);
 		void setFilePath(const QString & filePath);

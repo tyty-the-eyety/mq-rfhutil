@@ -92,6 +92,7 @@ namespace
             ShellState s = doc.shell();
             s.tab = Tab::Data;
             doc.setShell(s);
+            tab->show();		// a hidden tab does not render
         }
 
         template <typename T>
@@ -194,20 +195,22 @@ private slots:
         QVERIFY(h.shown().contains("636166E9"));
     }
 
-    void doubleByteBodyDecodesWithTheDisplayCodePage()
+    void doubleByteBodyDecodesWithTheCodePageOfTheCharacterSet()
     {
         Harness h;
-        rfh::format::RenderOptions o = h.doc.render();
-        o.display.ansi = 932;
-        h.doc.setRender(o);
-        h.radio("charJapaneseRadio")->click();
+        if (!h.radio("charJapaneseRadio")->isEnabled())
+        {
+            QSKIP("code page 932 is not installed here");
+        }
+        // display.ansi stays 1252: the Japanese radio, not the display setting, picks Shift-JIS
+        QCOMPARE(h.doc.render().display.ansi, 1252);
         h.setBody(std::string("ab\x82\xA0" "cd"));		// Shift-JIS "a b <hiragana a> c d"
-        const QString text = h.shown();
-        QVERIFY2(text.contains(QString::fromUtf8("ab\xE3\x81\x82" "cd")), qPrintable(text));
-        // and the same bytes under 1252 are two characters
-        o.display.ansi = 1252;
-        h.doc.setRender(o);
+        h.radio("charJapaneseRadio")->click();
+        QVERIFY2(h.shown().contains(QString::fromUtf8("ab\xE3\x81\x82" "cd")), qPrintable(h.shown()));
+        // back to ASCII: the bytes are two Windows-1252 characters
+        h.radio("charAsciiRadio")->click();
         QVERIFY(!h.shown().contains(QString::fromUtf8("\xE3\x81\x82")));
+        QVERIFY(h.shown().contains(QString::fromUtf8("\xE2\x80\x9A")));		// 0x82 is a low quote in 1252
     }
 
     void settingsCodePageIsTheDisplayCodePage()
@@ -415,6 +418,137 @@ private slots:
         // and a later good render replaces it
         h.radio("viewHexRadio")->click();
         QVERIFY(h.shown().contains("414243"));
+    }
+
+    // ---- when it renders -----------------------------------------------------------------------------------------
+
+    void aHiddenTabRendersOnceWhenShown()
+    {
+        AppDocument doc;
+        StatusLog log;
+        SessionController controller(rfh_test::fakeApi());
+        Operations ops(doc, controller, log);
+        DataTab tab(doc, ops);
+        rfh::format::RenderOptions o = doc.render();
+        o.charFormat = CHAR_EBCDIC;
+        doc.setRender(o);
+        doc.setMessage(messageOf("hello"), "Message Data", false);
+        doc.setMessage(messageOf("again"), "Message Data", false);
+        QCOMPARE(tab.renderCount(), 0);
+        tab.show();
+        QCOMPARE(tab.renderCount(), 1);
+        QVERIFY(tab.findChild<QPlainTextEdit *>("dataEdit")->toPlainText().length() > 0);
+        tab.hide();
+        doc.setMessage(messageOf("third"), "Message Data", false);
+        QCOMPARE(tab.renderCount(), 1);
+        tab.show();
+        QCOMPARE(tab.renderCount(), 2);
+        tab.show();
+        QCOMPARE(tab.renderCount(), 2);
+    }
+
+    void aMessageWithItsFormatsRendersOnce()
+    {
+        Harness h;
+        h.setBody("old");
+        const int n = h.tab->renderCount();
+        rfh::format::RenderOptions o = h.doc.render();
+        o.charFormat = CHAR_EBCDIC;
+        rfh::MqmdFields fields;
+        h.doc.acceptMessage(messageOf("\xC8\xC5"), "Message Data (2) msg 1 of 1 from Q", true, fields, o);
+        QCOMPARE(h.tab->renderCount(), n + 1);
+        QVERIFY(h.shown().contains("HE"));
+        QVERIFY(h.radio("charEbcdicRadio")->isChecked());
+    }
+
+    void readingAFileRendersOnce()
+    {
+        Harness h;
+        QTemporaryDir dir;
+        QFile f(dir.filePath("in.dat"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("file contents");
+        f.close();
+        h.doc.setMessage(messageOf("old"), "Message Data", false);
+        const int n = h.tab->renderCount();
+        QSignalSpy flows(&h.ops, &Operations::flowFinished);
+        h.ops.openFile(f.fileName());
+        QTRY_COMPARE_WITH_TIMEOUT(flows.count(), 1, 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(!h.controller.busy(), 5000);
+        QVERIFY(h.shown().contains("file contents"));
+        QCOMPARE(h.tab->renderCount(), n + 1);
+    }
+
+    void largeBodiesAreAnnouncedBeforeTheyAreFormatted()
+    {
+        Harness h;
+        QStringList lines;
+        QObject::connect(h.tab.get(), &DataTab::statusMessage, [&](const QString & t) { lines << t; });
+        h.setBody(std::string(DataTab::LargeBodyBytes - 1, 'x'));
+        QVERIFY(lines.isEmpty());
+        h.setBody(std::string(DataTab::LargeBodyBytes + 1, 'x'));
+        QCOMPARE(lines.size(), 1);
+        QVERIFY2(lines[0].contains("seconds"), qPrintable(lines[0]));
+        QVERIFY(lines[0].contains(QString::number(DataTab::LargeBodyBytes + 1)));
+    }
+
+    // ---- messages for the status box ----------------------------------------------------------------------------
+
+    void renderWarningsGoToTheStatusBox()
+    {
+        Harness h;
+        QStringList lines;
+        QObject::connect(h.tab.get(), &DataTab::statusMessage, [&](const QString & t) { lines << t; });
+        h.setBody("not json");
+        h.radio("viewJsonRadio")->click();
+        QCOMPARE(lines, QStringList() << "Error parsing user data");
+        QVERIFY(h.shown().isEmpty());
+    }
+
+    void theCopyBookIsOnlyReportedReadWhenTheRenderReadIt()
+    {
+        Harness h;
+        QStringList lines;
+        QObject::connect(h.tab.get(), &DataTab::statusMessage, [&](const QString & t) { lines << t; });
+        QTemporaryFile book;
+        QVERIFY(book.open());
+        book.write("       01 REC.\n          05 NAME PIC X(4).\n          05 CODE PIC X(2).\n");
+        book.flush();
+        h.setBody("ABCDEF");
+        // chosen while another view is shown: not read yet, so nothing is claimed
+        h.chooserAnswer = book.fileName();
+        h.button("copybookButton")->click();
+        QVERIFY(lines.isEmpty());
+        h.radio("viewCobolRadio")->click();
+        QCOMPARE(lines, QStringList() << QString("copybook file read (%1)").arg(book.fileName()));
+        QVERIFY(h.shown().contains("NAME"));
+
+        // a file that cannot be read is an error, not "read"
+        lines.clear();
+        h.chooserAnswer = "/nonexistent/dir/missing.cpy";
+        h.button("copybookButton")->click();
+        QCOMPARE(lines.size(), 1);
+        QVERIFY2(lines[0].contains("error reading copy book file"), qPrintable(lines[0]));
+        QVERIFY(!lines[0].startsWith("copybook file read"));
+    }
+
+    void aSearchOnAFailedViewIsReportedAndDoesNotMove()
+    {
+        Harness h;
+        QStringList lines;
+        QObject::connect(h.tab.get(), &DataTab::statusMessage, [&](const QString & t) { lines << t; });
+        h.setBody(std::string(rfh::format::kMaxRenderBody + 1, 'x'));		// every view refuses it
+        QVERIFY(!h.shown().isEmpty());
+        const QString failure = h.shown();
+        lines.clear();
+        h.tab->goToOffset(5);
+        QCOMPARE(lines.size(), 1);
+        QVERIFY2(lines[0].contains(failure), qPrintable(lines[0]));
+        QVERIFY(!h.edit()->textCursor().hasSelection());
+        h.tab->searchFor("x", true);
+        QCOMPARE(lines.size(), 2);
+        QVERIFY2(lines[1].contains(failure), qPrintable(lines[1]));
+        QVERIFY(!h.edit()->textCursor().hasSelection());
     }
 
     // ---- fixed controls ----------------------------------------------------------------------------------------------

@@ -8,7 +8,9 @@
 //     holds after any change, so a get, a file read or Operations that sets the formats is shown without the tab being
 //     told. The Find dialogs' presence is shell().findDialogOpen. Nothing reads the tab's widgets back.
 //   * Render. A change of the message, the formats, the options or the view renders once (renderCount()); changes that do
-//     not touch the display do not. An empty body shows an empty box. A failed render shows its text. The text is in
+//     not touch the display do not. A tab that is not visible only marks itself stale and renders once when it is shown
+//     (or when a search needs the text); the document's acceptMessage() delivers a message with its formats as one
+//     change, so a get or a file read renders once. An empty body shows an empty box. A failed render shows its text. The text is in
 //     options.display.ansi (the settings' display code page when AppSettings is given) and is decoded with
 //     rfh_MultiByteToWideChar, never with a Qt codec; CR LF is shown as the edit's line break.
 //   * Search. The Windows search state (findStartOffset) is here: -1 or the offset of the previous hit. A new text, a new
@@ -74,6 +76,15 @@ namespace rfhqt
 
 		void focusFirst();
 
+		// The size from which a body is announced before it is formatted: a 10 MB body takes seconds in the larger views
+		// (the render itself is quick; the decode and the text box are not), and the tab cannot show progress.
+		static constexpr size_t LargeBodyBytes = 4 * 1024 * 1024;
+
+		// The search and Go To by program, as the dialogs do them: the typed text in the display code page of the
+		// character set (translated to EBCDIC for the byte views when that is the character format), and a byte offset.
+		void searchFor(const QString & text, bool down);
+		void goToOffset(qint64 offset);
+
 	public slots:
 		void showFind();			// Ctrl+F
 		void showFindHex();			// Ctrl+Z
@@ -81,6 +92,9 @@ namespace rfhqt
 		void chooseCopybook();		// Copybook button, Ctrl+Y, Alt+Y
 		void scrollTop();			// Edit > Top
 		void scrollBottom();		// Edit > Bottom
+
+	protected:
+		void showEvent(QShowEvent * event) override;
 
 	signals:
 		void statusMessage(const QString &);		// a line for the status box (copy book read, render warnings)
@@ -102,13 +116,15 @@ namespace rfhqt
 		void dialogClosed(QDialog * dialog);
 		void findRequested(const std::string & needle, bool down);
 		void findTyped();
+		void ensureRendered();
+		bool viewUsable(const char * what);
+		int textCodePage() const;
 		void findHex();
 		void resetSearch() { searchStart = -1; }
 		std::string typedBytes(const QString & text) const;
 		void select(size_t byteOffset, size_t byteLength);
 		void showHit(size_t offset);
 		void moveToTop(bool selectFirst);
-		void goTo(qint64 offset);
 		QString decode(const char * bytes, size_t length) const;
 		size_t lineStart(size_t line) const;
 
@@ -130,6 +146,8 @@ namespace rfhqt
 		rfh::format::View renderedView = rfh::format::View::Character;
 		int batch = 0;					// > 0: refresh is held back
 		int renders = 0;
+		std::string renderFailure;		// why the view could not be produced; empty when it could
+		QString copybookToReport;		// a copy book chosen and not yet read by a render
 
 		qint64 searchStart = -1;		// DataArea::findStartOffset
 		std::string searchNeedle;		// what the position belongs to

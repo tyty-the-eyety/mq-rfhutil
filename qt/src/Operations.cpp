@@ -710,7 +710,7 @@ namespace rfhqt
 	}
 
 	// processMessage: the MQMD tab, the display formats and the data come from the message; the document keeps the
-	// only copy. The formats go in first so a tab that redraws on messageChanged() sees them.
+	// only copy. The message, the MQMD fields and the formats reach the document as one change.
 	void Operations::acceptMessage(const rfh::Message & message, const std::string & source, QStringList & warnings)
 	{
 		rfh::MqmdFields fields = doc.mqmd();				// keeps the float format, as the Windows page does
@@ -722,10 +722,8 @@ namespace rfhqt
 		{
 			warnings << trimmedLine(w);
 		}
-		doc.setMqmd(fields);
-		doc.setRender(render);
 		rfh::Message copy = message;
-		doc.setMessage(std::move(copy), source, true);
+		doc.acceptMessage(std::move(copy), source, true, fields, render);
 	}
 
 	void Operations::clearAfterGet(bool clearFileName)
@@ -1255,9 +1253,7 @@ namespace rfhqt
 				rfh::fileio::ReadResult & read = *r.fileRead;
 				rfh::format::RenderOptions render = doc.render();
 				render.apply(rfh::format::defaultsFor(read));
-				doc.setMqmd(*r.fileFields);
-				doc.setRender(render);
-				doc.setMessage(std::move(read.message), read.dataSource, false);
+				doc.acceptMessage(std::move(read.message), read.dataSource, false, *r.fileFields, render);
 				doc.markSaved(path);
 				if (settings != nullptr)
 				{

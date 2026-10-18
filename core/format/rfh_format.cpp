@@ -304,11 +304,26 @@ namespace rfh
 			int length = 1;
 			if (view == View::Character && (options.crlf || options.edi))
 			{
-				// Windows' column rule: the line, from its start. CR LF and EDI lines can begin
-				// after bytes that are not shown, so the first line may start past the offset
+				// Lines start at the offset of their label, which can be past the offset when the view dropped
+				// the CR and LF bytes before it. The bytes of a line follow its label one for one; the CR and
+				// LF that end it are not in the text, so they select nothing at the end of the line.
 				if (!found)
 				{
 					line = 0;
+					length = 0;
+				}
+				else
+				{
+					const size_t col = label.prefix + (size_t)(shown - label.value);
+					if (col < lineText.size())
+					{
+						column = (int)col;
+					}
+					else
+					{
+						column = (int)lineText.size();
+						length = 0;
+					}
 				}
 			}
 			else

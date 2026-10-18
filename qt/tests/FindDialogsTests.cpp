@@ -21,6 +21,7 @@
 #include <string>
 
 #include "AppDocument.h"
+#include "comsubs.h"
 #include "DataTab.h"
 #include "FindDialogs.h"
 #include "Operations.h"
@@ -645,6 +646,219 @@ private slots:
         QCOMPARE(h.start().second, 8 + 9);
         d->findChild<QPushButton *>("findButton")->click();
         QCOMPARE(h.start().second, 4 + 9);
+    }
+
+    // ---- the needle -----------------------------------------------------------------------------------------------
+
+    void theNeedleCutIsExactlyAt255Bytes()
+    {
+        Harness h;
+        h.setBody(std::string(300, 'A'));
+        auto hits = [&](int needleLength)
+        {
+            FindDialog * d = h.findDialog() ? h.findDialog() : h.openFind();
+            d->findChild<QLineEdit *>("findEdit")->setText(QString(needleLength, 'A'));
+            int n = 0;
+            for (int i = 0; i < 400; i++)
+            {
+                d->findChild<QPushButton *>("findNextButton")->click();
+                if (!h.edit()->textCursor().hasSelection())
+                {
+                    break;
+                }
+                n++;
+            }
+            return n;
+        };
+        QCOMPARE(hits(254), 300 - 254 + 1);
+        QCOMPARE(hits(255), 300 - 255 + 1);
+        QCOMPARE(hits(256), 300 - 255 + 1);		// the 256th byte is cut
+        QCOMPARE(hits(300), 300 - 255 + 1);
+    }
+
+    void ebcdicTextIsNotTranslatedInTheRenderedTextViews()
+    {
+        Harness h;
+        std::string ascii = "<a><b>one</b><b>two</b></a>";
+        std::string ebcdic(ascii.size(), '\0');
+        AsciiToEbcdic((unsigned char *)ascii.data(), (unsigned int)ascii.size(), (unsigned char *)&ebcdic[0]);
+        h.setBody(ebcdic);
+        h.useChars(CHAR_EBCDIC);
+        h.useView(View::Xml);
+        QVERIFY2(h.edit()->toPlainText().contains("<b>"), qPrintable(h.edit()->toPlainText()));
+        h.findNext("<b>");
+        QVERIFY(h.edit()->textCursor().hasSelection());
+        const int at = h.edit()->textCursor().selectionStart();
+        QCOMPARE(h.edit()->toPlainText().mid(at, 3), QString("<b>"));
+        // the same text in the byte views is translated, so it is found in the raw EBCDIC bytes
+        h.useView(View::Character);
+        h.findNext("<b>");
+        QCOMPARE(h.selected(), QString("<"));
+    }
+
+    void theCharacterSetPicksTheNeedleCodePageToo()
+    {
+        Harness h;
+        if (!h.tab->findChild<QRadioButton *>("charJapaneseRadio")->isEnabled())
+        {
+            QSKIP("code page 932 is not installed here");
+        }
+        h.setBody(std::string("ab\x82\xA0" "cd"));
+        h.tab->findChild<QRadioButton *>("charJapaneseRadio")->click();
+        h.findNext(QString::fromUtf8("\xE3\x81\x82"));		// the hiragana a
+        QCOMPARE(h.selected(), QString::fromUtf8("\xE3\x81\x82"));
+        QCOMPARE(h.start().second, 9 + 2);
+    }
+
+    void aChangeOfTheRenderedTextStartsTheSearchAgain()
+    {
+        Harness h;
+        h.setBody("<a><b>1</b><b>2</b></a>");
+        h.useView(View::Xml);
+        h.findNext("<b>");
+        const int first = h.edit()->textCursor().selectionStart();
+        h.findNext("<b>");
+        QVERIFY(h.edit()->textCursor().selectionStart() > first);
+        // the text changes (the body shown as EBCDIC) and changes back
+        h.useChars(CHAR_EBCDIC);
+        h.useChars(CHAR_ASCII);
+        h.findNext("<b>");		// from the top again, not a miss after the second hit
+        QVERIFY(h.edit()->textCursor().hasSelection());
+        QCOMPARE(h.edit()->textCursor().selectionStart(), first);
+    }
+
+    // ---- CR/LF and EDI: the real byte -------------------------------------------------------------------------------
+
+    void crlfAndEdiSelectTheByteForFindFindHexAndGoTo()
+    {
+        Harness h;
+        h.setBody("line one\r\nline two");
+        rfh::format::RenderOptions o = h.doc.render();
+        o.crlf = true;
+        h.doc.setRender(o);
+        QCOMPARE(h.edit()->toPlainText(), QString("00000000 line one\n00000010 line two"));
+        h.findNext("two");
+        QCOMPARE(h.selected(), QString("t"));
+        QCOMPARE(h.start().first, 1);
+        QCOMPARE(h.start().second, 9 + 5);
+        h.tab->goToOffset(15);
+        QCOMPARE(h.selected(), QString("t"));
+        QCOMPARE(h.start().second, 14);
+        h.tab->goToOffset(0);
+        QCOMPARE(h.selected(), QString("l"));
+        QCOMPARE(h.start().second, 9);
+        // the CR is not in the text: the cursor is at the end of its line and selects nothing
+        h.tab->goToOffset(8);
+        QVERIFY(!h.edit()->textCursor().hasSelection());
+        QCOMPARE(h.edit()->textCursor().blockNumber(), 0);
+        QCOMPARE(h.edit()->textCursor().positionInBlock(), 17);
+
+        // Find Hex of the same bytes
+        h.findDialog()->findChild<QPushButton *>("cancelButton")->click();
+        QTRY_VERIFY(h.findDialog() == nullptr);
+        h.host.activateWindow();
+        QTest::keyClick(&h.host, Qt::Key_Z, Qt::ControlModifier);
+        HexFindDialog * hex = h.hexDialog();
+        QVERIFY(hex != nullptr);
+        hex->findChild<QLineEdit *>("hexEdit")->setText("776F");		// "wo"
+        hex->findChild<QPushButton *>("findButton")->click();
+        QCOMPARE(h.selected(), QString("w"));
+        QCOMPARE(h.start().second, 9 + 6);
+        hex->findChild<QPushButton *>("cancelButton")->click();
+        QTRY_VERIFY(h.hexDialog() == nullptr);
+
+        o.crlf = false;
+        o.edi = true;
+        h.doc.setRender(o);
+        h.setBody("UNA:+.? 'UNB+UNOC:3+X'UNH+1'");
+        h.findNext("UNH");
+        QCOMPARE(h.selected(), QString("U"));
+        QCOMPARE(h.start().first, 2);
+        h.tab->goToOffset(25);
+        QCOMPARE(h.selected(), QString("+"));
+        h.tab->goToOffset(27);
+        QCOMPARE(h.selected(), QString("'"));
+        h.tab->goToOffset(10);
+        QCOMPARE(h.selected(), QString("N"));
+    }
+
+    void randomBodiesNeverSelectTheWrongByteWithCrlfOrEdi()
+    {
+        Harness h;
+        srand(2024);
+        const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 :+.?*/-";
+        int checked = 0;
+        for (int mode = 0; mode < 2; mode++)
+        {
+            rfh::format::RenderOptions o = h.doc.render();
+            o.crlf = (mode == 0);
+            o.edi = (mode == 1);
+            h.doc.setRender(o);
+            for (int round = 0; round < 25; round++)
+            {
+                std::string body;
+                const int size = 1 + rand() % 150;
+                for (int i = 0; i < size; i++)
+                {
+                    const int r = rand() % 12;
+                    if (r == 0) body += "\r\n";
+                    else if (r == 1) body += '\n';
+                    else if (r == 2) body += '\'';
+                    else body += alphabet[rand() % (sizeof(alphabet) - 1)];
+                }
+                h.setBody(body);
+                int expectedHits = 0;
+                for (char c : body)
+                {
+                    expectedHits += (c == 'A');
+                }
+                // Go To every offset
+                for (int i = 0; i < (int)body.size(); i++)
+                {
+                    h.tab->goToOffset(i);
+                    const unsigned char b = (unsigned char)body[(size_t)i];
+                    if (h.edit()->textCursor().hasSelection())
+                    {
+                        QCOMPARE(h.selected(), QString(QChar(b < 0x20 ? '.' : b)));
+                        checked++;
+                    }
+                    else
+                    {
+                        QVERIFY2(b < 0x20, qPrintable(QString("mode %1 round %2 offset %3 selected nothing").arg(mode).arg(round).arg(i)));
+                    }
+                }
+                // Find walks every 'A' and selects an 'A' each time
+                int hits = 0;
+                for (int i = 0; i < (int)body.size() + 2; i++)
+                {
+                    h.tab->searchFor("A", true);
+                    if (!h.edit()->textCursor().hasSelection())
+                    {
+                        break;
+                    }
+                    QCOMPARE(h.selected(), QString("A"));
+                    hits++;
+                }
+                QCOMPARE(hits, expectedHits);
+            }
+        }
+        QVERIFY(checked > 1000);
+    }
+
+    // ---- a second Ctrl+F --------------------------------------------------------------------------------------------
+
+    void aSecondFindRaisesTheOpenDialogInsteadOfOpeningAnother()
+    {
+        Harness h;
+        h.setBody("abc");
+        FindDialog * d = h.openFind();
+        QVERIFY(d != nullptr);
+        QVERIFY(QTest::qWaitForWindowActive(d));
+        h.host.activateWindow();
+        QTRY_VERIFY(QApplication::activeWindow() == &h.host);
+        QTest::keyClick(&h.host, Qt::Key_F, Qt::ControlModifier);
+        QCOMPARE(h.tab->findChildren<FindDialog *>().size(), 1);
+        QTRY_VERIFY(QApplication::activeWindow() == d);
     }
 
     // ---- Go To -------------------------------------------------------------------------------------------------------------------

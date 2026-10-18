@@ -1159,21 +1159,22 @@ TEST(Locate, EveryOffsetPointsAtItsCharacterInTheBothView)
     }
 }
 
-TEST(Locate, CrLfOnPutsTheOffsetOnItsLineAtColumnZero)
+TEST(Locate, CrLfOnPutsTheOffsetOnItsByte)
 {
-    // "00000000 line one" / "00000010 line two": Windows counts the LF bytes before the
-    // offset and uses column 0; the CR and the LF belong to the line they end
+    // "00000000 line one" / "00000010 line two": the line, and the column of the byte in it
+    // (Windows used column 0, the first digit of the label). The CR and the LF are not in
+    // the text: they are at the end of the line they end, selecting nothing.
     Message m = message("line one\r\nline two");
     RenderOptions o = options();
     o.crlf = true;
-    for (size_t i : { 0, 5, 7, 8, 9 })
-    {
-        expectSpot(View::Character, o, m, i, { 0, 0, 1 });
-    }
-    for (size_t i : { 10, 11, 17 })
-    {
-        expectSpot(View::Character, o, m, i, { 1, 0, 1 });
-    }
+    expectSpot(View::Character, o, m, 0, { 0, 9, 1 });
+    expectSpot(View::Character, o, m, 5, { 0, 14, 1 });
+    expectSpot(View::Character, o, m, 7, { 0, 16, 1 });
+    expectSpot(View::Character, o, m, 8, { 0, 17, 0 });
+    expectSpot(View::Character, o, m, 9, { 0, 17, 0 });
+    expectSpot(View::Character, o, m, 10, { 1, 9, 1 });
+    expectSpot(View::Character, o, m, 11, { 1, 10, 1 });
+    expectSpot(View::Character, o, m, 17, { 1, 16, 1 });
 }
 
 TEST(Locate, CrLfOnSkipsBlankLinesAsTheViewDoes)
@@ -1184,30 +1185,75 @@ TEST(Locate, CrLfOnSkipsBlankLinesAsTheViewDoes)
     RenderOptions o = options();
     o.crlf = true;
     EXPECT_EQ("00000000 a\r\n00000005 b\r\n00000007 c", render(m, View::Character, o));
-    expectSpot(View::Character, o, m, 0, { 0, 0, 1 });
-    expectSpot(View::Character, o, m, 5, { 1, 0, 1 });
-    expectSpot(View::Character, o, m, 7, { 2, 0, 1 });
+    expectSpot(View::Character, o, m, 0, { 0, 9, 1 });
+    expectSpot(View::Character, o, m, 5, { 1, 9, 1 });
+    expectSpot(View::Character, o, m, 7, { 2, 9, 1 });
 }
 
-TEST(Locate, EdiOnPutsTheOffsetOnItsSegmentLineAtColumnZero)
+TEST(Locate, EdiOnPutsTheOffsetOnItsSegmentLineAndByte)
 {
-    // lines start at offsets 0, 9 and 22; Windows says line 0 for all of them
+    // lines start at offsets 0, 9 and 22; Windows says line 0 and column 0 for all of them
     Message m = message("UNA:+.? 'UNB+UNOC:3+X'UNH+1'");
     RenderOptions o = options();
     o.edi = true;
-    expectSpot(View::Character, o, m, 0, { 0, 0, 1 });
-    expectSpot(View::Character, o, m, 8, { 0, 0, 1 });
-    expectSpot(View::Character, o, m, 9, { 1, 0, 1 });
-    expectSpot(View::Character, o, m, 25, { 2, 0, 1 });
+    expectSpot(View::Character, o, m, 0, { 0, 9, 1 });
+    expectSpot(View::Character, o, m, 8, { 0, 17, 1 });
+    expectSpot(View::Character, o, m, 9, { 1, 9, 1 });
+    expectSpot(View::Character, o, m, 25, { 2, 12, 1 });
 }
 
-TEST(Locate, EdiOnForDataThatIsNotEdiIsStillColumnZero)
+TEST(Locate, EdiOnForDataThatIsNotEdiIsStillTheByteShown)
 {
-    // the option decides the column, as in getLineOffset, but the line is the one shown
     Message m = message(letters(70));
     RenderOptions o = options();
     o.edi = true;
-    expectSpot(View::Character, o, m, 40, { 1, 0, 1 });
+    Spot s;
+    ASSERT_TRUE(where(View::Character, o, m, 40, s));
+    EXPECT_EQ(1, s.length);
+    EXPECT_EQ(m.body[40], (unsigned char)lineOf(render(m, View::Character, o), s.line)[s.column]);
+}
+
+// Every shown byte of random text is at the column locate reports, with CR LF or EDI on
+TEST(Locate, EveryShownByteIsAtItsColumnWithCrLfOrEdiOn)
+{
+    srand(12345);
+    const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 :+.?'*/-";
+    for (int mode = 0; mode < 2; mode++)
+    {
+        for (int round = 0; round < 60; round++)
+        {
+            std::string body;
+            const int size = 1 + rand() % 200;
+            for (int i = 0; i < size; i++)
+            {
+                const int r = rand() % 12;
+                if (r == 0) body += "\r\n";
+                else if (r == 1) body += '\n';
+                else if (r == 2) body += '\'';
+                else body += alphabet[rand() % (sizeof(alphabet) - 1)];
+            }
+            Message m = message(body);
+            RenderOptions o = options();
+            (mode == 0 ? o.crlf : o.edi) = true;
+            const std::string text = render(m, View::Character, o);
+            for (size_t i = 0; i < body.size(); i++)
+            {
+                Spot s;
+                if (!where(View::Character, o, m, i, s))
+                {
+                    ADD_FAILURE() << "mode " << mode << " round " << round << " offset " << i << " not located";
+                    continue;
+                }
+                if (s.length == 0)
+                {
+                    continue;		// not in the text (a dropped CR or LF)
+                }
+                const std::string line = lineOf(text, s.line);
+                ASSERT_LT((size_t)s.column, line.size()) << "mode " << mode << " round " << round << " offset " << i;
+                EXPECT_EQ((unsigned char)body[i] < 0x20 ? '.' : body[i], line[s.column]) << "mode " << mode << " round " << round << " offset " << i << " [" << body << "]";
+            }
+        }
+    }
 }
 
 TEST(Locate, ByteOrderMarkIsNotShownSoLaterOffsetsMoveBack)

@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QScrollBar>
 #include <QShortcut>
+#include <QShowEvent>
 #include <QTextBlock>
 #include <QTextCursor>
 
@@ -21,13 +22,12 @@
 
 #include "AppDocument.h"
 #include "AppSettings.h"
+#include "comsubs.h"
 #include "FindDialogs.h"
 #include "Operations.h"
 #include "rfh_codepage.h"
 #include "ui_DataTab.h"
 
-// comsubs.cpp: the ASCII to EBCDIC table DataArea::findNext translates the typed text with
-void AsciiToEbcdic(unsigned char * dati, unsigned int pl, unsigned char * dato);
 
 namespace rfhqt
 {
@@ -122,8 +122,7 @@ namespace rfhqt
 
 		wire();
 		addShortcuts();
-		syncWidgets();
-		render();
+		syncWidgets();		// the text is made when the tab is first shown
 	}
 
 	DataTab::~DataTab()
@@ -243,9 +242,41 @@ namespace rfhqt
 			return;
 		}
 		syncWidgets();
+		if (stale && isVisible())
+		{
+			render();
+		}
+	}
+
+	void DataTab::showEvent(QShowEvent * event)
+	{
+		QWidget::showEvent(event);
+		refresh();
+	}
+
+	void DataTab::ensureRendered()
+	{
 		if (stale)
 		{
 			render();
+		}
+	}
+
+	// The character set decides the code page of the text, as the per-script fonts of Windows decided how it was drawn
+	// (MSGDATA.cpp setDisplayFont). Nothing in the core maps one to the other: DataFormatter only knows the lead bytes
+	// of the double-byte sets. The other character sets use the display setting.
+	int DataTab::textCodePage() const
+	{
+		const rfh::format::RenderOptions & o = doc.render();
+		switch (o.charFormat)
+		{
+		case CHAR_CHINESE: return 936;
+		case CHAR_KOREAN: return 949;
+		case CHAR_TRAD_CHIN: return 950;
+		case CHAR_JAPANESE: return 932;
+		case CHAR_THAI: return 874;
+		case CHAR_RUSSIAN: return 1251;
+		default: return o.display.ansi;
 		}
 	}
 
@@ -314,24 +345,51 @@ namespace rfhqt
 		stale = false;
 		renderedView = doc.shell().view;
 		renders++;
+		const std::string previous = std::move(shownBytes);
 		shownBytes.clear();
+		renderFailure.clear();
 		const rfh::Message & message = doc.message();
 		if (message.body.empty())
 		{
 			ui->dataEdit->clear();
 			return;
 		}
-		const rfh::format::RenderOptions options = doc.render();
+		if (message.body.size() > LargeBodyBytes)
+		{
+			emit statusMessage(tr("Formatting %1 bytes for display; this can take several seconds").arg(message.body.size()));
+		}
+		rfh::format::RenderOptions options = doc.render();
+		options.display.ansi = textCodePage();
 		std::string out;
 		const rfh::Result result = rfh::format::render(message, renderedView, options, out);
+		const bool cobol = renderedView == View::Cobol;
 		if (!result.ok())
 		{
+			renderFailure = result.text;
+			if (!isByteView(renderedView))
+			{
+				resetSearch();
+			}
+			if (cobol && !copybookToReport.isEmpty())
+			{
+				emit statusMessage(tr("error reading copy book file (%1): %2").arg(copybookToReport, QString::fromStdString(result.text)));
+				copybookToReport.clear();
+			}
 			ui->dataEdit->setPlainText(QString::fromUtf8(result.text.data(), (qsizetype)result.text.size()));
 			return;
+		}
+		if (cobol && !copybookToReport.isEmpty())
+		{
+			emit statusMessage(tr("copybook file read (%1)").arg(copybookToReport));
+			copybookToReport.clear();
 		}
 		for (const std::string & warning : result.warnings)
 		{
 			emit statusMessage(QString::fromUtf8(warning.data(), (qsizetype)warning.size()));
+		}
+		if (!isByteView(renderedView) && out != previous)
+		{
+			resetSearch();		// the position was an offset in text that is gone
 		}
 		shownBytes = std::move(out);
 		shownCodePage = options.display.ansi;
@@ -371,7 +429,7 @@ namespace rfhqt
 			settings->setLastDirectory(QStringLiteral("copybook"), QFileInfo(chosen).absolutePath());
 		}
 		path = chosen.toStdString();
-		emit statusMessage(tr("copybook file read (%1)").arg(chosen));
+		copybookToReport = chosen;		// reported when a render has read it
 		return true;
 	}
 
@@ -380,7 +438,13 @@ namespace rfhqt
 		std::string path;
 		if (askForCopybook(path))
 		{
+			const int before = renders;
 			updateRender([&path](rfh::format::RenderOptions & o) { o.copybookPath = path; });
+			if (doc.shell().view == View::Cobol && renders == before)
+			{
+				markStale();		// the same file again: read it again
+				refresh();
+			}
 		}
 	}
 
@@ -447,6 +511,12 @@ namespace rfhqt
 
 	void DataTab::showFind()
 	{
+		if (!findDialog.isNull())
+		{
+			findDialog->raise();		// a second request brings the open dialog forward
+			findDialog->activateWindow();
+			return;
+		}
 		if (!doc.enables().menuFind)
 		{
 			return;
@@ -461,6 +531,12 @@ namespace rfhqt
 
 	void DataTab::showFindHex()
 	{
+		if (!hexDialog.isNull())
+		{
+			hexDialog->raise();
+			hexDialog->activateWindow();
+			return;
+		}
 		if (!doc.enables().menuFindHex)
 		{
 			return;
@@ -482,7 +558,7 @@ namespace rfhqt
 		GotoDialog dialog((qint64)doc.dataSize(), this);
 		if (dialog.exec() == QDialog::Accepted)
 		{
-			goTo(dialog.offset());
+			goToOffset(dialog.offset());
 		}
 	}
 
@@ -495,7 +571,7 @@ namespace rfhqt
 		if (!text.isEmpty())
 		{
 			std::vector<char> out((size_t)text.size() * 4 + 4);
-			const int n = rfh_WideCharToMultiByte(doc.render().display.ansi, 0, reinterpret_cast<const RFH_UCS2 *>(text.utf16()),
+			const int n = rfh_WideCharToMultiByte(textCodePage(), 0, reinterpret_cast<const RFH_UCS2 *>(text.utf16()),
 			                                      (int)text.size(), out.data(), (int)out.size(), nullptr, nullptr);
 			if (n > 0)
 			{
@@ -515,11 +591,15 @@ namespace rfhqt
 
 	void DataTab::findTyped()
 	{
-		if (findDialog.isNull())
+		if (!findDialog.isNull())
 		{
-			return;
+			searchFor(findDialog->text(), findDialog->searchDown());
 		}
-		std::string needle = typedBytes(findDialog->text());
+	}
+
+	void DataTab::searchFor(const QString & text, bool down)
+	{
+		std::string needle = typedBytes(text);
 		const View view = doc.shell().view;
 		if (isByteView(view) && doc.render().charFormat == CHAR_EBCDIC && !needle.empty())
 		{
@@ -527,7 +607,7 @@ namespace rfhqt
 			AsciiToEbcdic((unsigned char *)needle.data(), (unsigned int)needle.size(), (unsigned char *)&translated[0]);
 			needle = translated;
 		}
-		findRequested(needle, findDialog->searchDown());
+		findRequested(needle, down);
 	}
 
 	void DataTab::findHex()
@@ -543,9 +623,14 @@ namespace rfhqt
 	void DataTab::findRequested(const std::string & needle, bool down)
 	{
 		const View view = doc.shell().view;
-		if (needle.empty() || !isSearchableView(view) || view != renderedView)
+		if (needle.empty() || !isSearchableView(view))
 		{
 			return;
+		}
+		ensureRendered();
+		if (!viewUsable("Find"))
+		{
+			return;		// the position does not move on a view that could not be made
 		}
 		if (needle != searchNeedle || view != searchView)
 		{
@@ -584,13 +669,28 @@ namespace rfhqt
 		}
 	}
 
-	void DataTab::goTo(qint64 offset)
+	void DataTab::goToOffset(qint64 offset)
 	{
 		if (!isByteView(doc.shell().view) || offset < 0 || (size_t)offset >= doc.dataSize())
 		{
 			return;
 		}
-		showHit((size_t)offset);
+		ensureRendered();
+		if (viewUsable("Go to"))
+		{
+			showHit((size_t)offset);
+		}
+	}
+
+	// false, with a line for the status box, when the view could not be produced
+	bool DataTab::viewUsable(const char * what)
+	{
+		if (renderFailure.empty())
+		{
+			return true;
+		}
+		emit statusMessage(tr("%1: the view cannot be shown (%2)").arg(QString::fromLatin1(what), QString::fromStdString(renderFailure)));
+		return false;
 	}
 
 	// The byte offset in shownBytes of the first byte of a line (lines end in LF).

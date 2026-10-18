@@ -144,10 +144,11 @@ namespace rfh
 		//   0, length 0 (Windows ignores the option and selects a byte too far on);
 		// - a double-byte character is one of the 32 on its line, so the offsets after
 		//   it are on the line the view shows them on (Windows divides by 32 bytes);
-		// - with CR/LF on, the line is the line the view shows the byte on (Windows
-		//   counts LF bytes, which is wrong after a blank line); with EDI on it is the
-		//   segment line (Windows always says line 0). As on Windows, the column is 0
-		//   (the first digit of the offset label) when either option is on;
+		// - with CR/LF on, the line is the line the view shows the byte on (Windows counts LF bytes,
+		//   which is wrong after a blank line); with EDI on it is the segment line (Windows always says
+		//   line 0). The column is the byte's own (Windows always used 0, the first digit of the label
+		//   and not the byte); a CR or LF that the view does not show is at the end of its line with
+		//   length 0;
 		// - a label wider than 8 digits (a body over 99,999,999 bytes) moves the columns
 		//   right, which Windows' formulas do not allow for.
 		bool locate(View view, const RenderOptions & options, const Message & message, size_t offset, TextPos & pos);
