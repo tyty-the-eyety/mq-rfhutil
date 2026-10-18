@@ -497,6 +497,94 @@ namespace rfhqt
 		});
 	}
 
+	QStringList Operations::queueNames(const QString & queueManager) const
+	{
+		return loadedNames.value(queueManager);
+	}
+
+	// OnLoadQueueNames (General.cpp:1642): an open queue is closed (close option None) and the connection dropped, because
+	// getQueueNames uses a connection of its own; it connects to the queue manager of the tab, asks the command server
+	// for the local, remote and alias queues (cluster queues are not offered: View > Cluster Queues is not ported) and
+	// disconnects. A failure shows the MQ text and then "Error getting queue names" (General.cpp:1710).
+	void Operations::loadNames()
+	{
+		const QString flow = QStringLiteral("loadNames");
+		if (!admit(flow, doc.enables().loadNames))
+		{
+			return;
+		}
+		trace(QStringLiteral("Entering Operations::loadNames QM=%1").arg(doc.queueManager()));
+		Env env = capture(false);
+		env.checks = true;
+		env.connect = std::make_shared<rfh::ConnectOptions>(options.connect);		// the job wipes this copy
+		const QString qm = doc.queueManager();
+		rfh::QueueListOptions list;
+		list.alternateUser = doc.shell().alternateUser ? doc.mqmd().userId : std::string();
+		submitFlow(flow, env, false, [env, list](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (s.isConnected())
+			{
+				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
+				addStep(r, "Disc", s.disconnect());
+			}
+			env.connect->qmName = env.qm;
+			const rfh::Result c = connectAndWipe(s, *env.connect);
+			r.queueManager = s.queueManagerInfo();
+			addStep(r, "Connect", c);
+			if (c.ok())
+			{
+				addStep(r, "listQueues", s.listQueues(list, r.names));
+				addStep(r, "Disc", s.disconnect());
+			}
+			return r;
+		}, [this, flow, qm](const JobResult & r)
+		{
+			QStringList lines;
+			bool failed = false;
+			bool closeFailed = false;
+			for (const JobStep & step : r.steps)
+			{
+				if (step.operation == "listQueues")
+				{
+					// the core's own text carries the Windows wording of the admin queue failures
+					if (!step.result.ok() && !step.result.text.empty())
+					{
+						lines << QString::fromStdString(step.result.text);
+					}
+					for (const std::string & warning : step.result.warnings)
+					{
+						lines << QString::fromStdString(warning);
+					}
+				}
+				else
+				{
+					lines += describeStep(step, closeFailed);
+				}
+				failed = failed || (!step.result.ok() && ((step.operation == "Connect") || (step.operation == "listQueues")));
+				closeFailed = closeFailed || ((step.operation == "Close") && !step.result.ok());
+			}
+			if (failed)
+			{
+				lines << QStringLiteral("Error getting queue names");
+			}
+			QStringList names;
+			for (const std::string & name : r.names)
+			{
+				names << QString::fromStdString(name);
+			}
+			names.removeDuplicates();
+			names.sort();
+			if (!names.isEmpty() || !failed)
+			{
+				loadedNames.insert(qm, names);
+				emit queueNamesChanged(qm);
+			}
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
 	// ---- messages from queues -------------------------------------------------------------------------------------
 
 	namespace

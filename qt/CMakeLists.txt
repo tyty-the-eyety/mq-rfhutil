@@ -15,12 +15,15 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS ${CMAKE_CURRENT_SOURCE_DIR}/ui)
 add_library(rfhqt STATIC
     src/AppDocument.cpp
     src/AppSettings.cpp
+    src/ConnUserDialog.cpp
     src/FileTrace.cpp
+    src/MainTab.cpp
     src/MainWindow.cpp
     src/Operations.cpp
     src/ProcessSetup.cpp
     src/SessionController.cpp
     src/StatusLog.cpp
+    src/PopupComboBox.h
 )
 target_include_directories(rfhqt PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(rfhqt PUBLIC Qt6::Widgets rfhcore)

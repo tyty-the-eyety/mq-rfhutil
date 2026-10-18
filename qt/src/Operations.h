@@ -25,6 +25,7 @@
 // Threading: GUI thread only.
 #pragma once
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -85,6 +86,11 @@ namespace rfhqt
 		void closeQueueMenu();			// MQ > MQClose: explicitCloseQ, "Queue closed" (DataArea.cpp:12469)
 		void closeQ();					// Close Q button: closeQ(close option), then discQM (General.cpp:1617)
 		void refreshQueueInfo();		// getQueueDepth: connect on demand, queue type, depth and maximum length
+		void loadNames();				// Load Names button: OnLoadQueueNames (General.cpp:1642) -> getQueueNames (DataArea.cpp:25198)
+
+		// The queue names the last Load Names found for a queue manager (the name as typed), sorted, each once; empty
+		// before the first load. Windows keeps the same per-queue-manager cache for the Queue Name drop down.
+		QStringList queueNames(const QString & queueManager) const;
 
 		// ---- queue messages (Read Q, Write Q, Browse Q and the browse session) --------------------------------------
 		void readQ();					// getMessage(READQ): destructive get, DataArea.cpp:7947
@@ -108,6 +114,7 @@ namespace rfhqt
 	signals:
 		void statusChanged();							// the log or the document changed because a flow ended
 		void flowFinished(const QString & flow);		// exactly once per flow call, also when it was refused
+		void queueNamesChanged(const QString & queueManager);	// Load Names stored a list (also an empty one)
 		void titleChanged(const QString & queue);		// the window title is the name of the last queue used (setWindowTitle)
 
 	private:
@@ -170,6 +177,6 @@ namespace rfhqt
 		QString resolvedLogged;			// the last "Queue name resolved to" that was logged, to say it once
 		bool userCancelled = false;		// cancelGet() was called for the running job
 		Running running;
-
+		QHash<QString, QStringList> loadedNames;	// queueNames()
 	};
 }

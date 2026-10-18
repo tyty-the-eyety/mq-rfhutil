@@ -24,6 +24,7 @@
 #include "AppDocument.h"
 #include "AppSettings.h"
 #include "fake_mq.h"
+#include "pcf_server.h"
 #include "Operations.h"
 #include "SessionController.h"
 #include "StatusLog.h"
@@ -3037,6 +3038,76 @@ private slots:
         QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
         QCOMPARE(settings.recentQueues(kQm), QStringList() << kQueue);
         QVERIFY(title.count() >= 1);
+    }
+
+    // ---- Load Names (OnLoadQueueNames General.cpp:1642, getQueueNames DataArea.cpp:25198) -------------------------------
+
+    void loadNamesStoresTheSortedNamesOfAllThreeTypesAndDisconnects()
+    {
+        Watchdog dog(60);
+        pcf_test::installCommandServer(fake, { { MQQT_LOCAL, { "B.LOCAL", "A.LOCAL" } }, { MQQT_REMOTE, { "R.REMOTE" } },
+                                               { MQQT_ALIAS, { "A.LOCAL", "S.ALIAS" } } });
+        Harness h;
+        QSignalSpy changed(&h.ops, &Operations::queueNamesChanged);
+        QVERIFY(h.run([&]() { h.ops.loadNames(); }));
+        QCOMPARE(h.ops.queueNames(kQm), QStringList() << "A.LOCAL" << "B.LOCAL" << "R.REMOTE" << "S.ALIAS");	// sorted, once each
+        QCOMPARE(changed.count(), 1);
+        QCOMPARE(changed.last().at(0).toString(), QString(kQm));
+        QVERIFY(h.entries().isEmpty());						// success says nothing (inventory 3.2)
+        QVERIFY(!h.doc.connected());						// getQueueNames ends with its own disconnect
+        QVERIFY(fake.liveHandles.empty());
+    }
+
+    void loadNamesClosesAnOpenQueueAndDropsTheOldConnectionFirst()
+    {
+        Watchdog dog(60);
+        pcf_test::installCommandServer(fake, { { MQQT_LOCAL, { "ONLY.ONE" } } });
+        Harness h;
+        fillQueue(1);
+        QVERIFY(h.run([&]() { h.ops.readQ(); }));
+        QVERIFY(h.doc.queueOpen());
+        const int connects = fake.connxCalls;
+        QVERIFY(h.run([&]() { h.ops.loadNames(); }));
+        QCOMPARE(fake.connxCalls, connects + 1);
+        QVERIFY(!h.doc.queueOpen());
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(h.ops.queueNames(kQm), QStringList() << "ONLY.ONE");
+    }
+
+    void aSilentCommandServerShowsTheReasonAndErrorGettingQueueNames()
+    {
+        Watchdog dog(60);
+        Harness h;
+        QSignalSpy changed(&h.ops, &Operations::queueNamesChanged);
+        QVERIFY(h.run([&]() { h.ops.loadNames(); }));
+        QVERIFY(h.ops.queueNames(kQm).isEmpty());
+        QVERIFY(h.newest().endsWith("Error getting queue names"));		// General.cpp:1710, after the MQ text
+        QVERIFY(h.newest().contains("\r\n"));
+        QCOMPARE(changed.count(), 0);
+        QVERIFY(!h.doc.connected());
+    }
+
+    void aFailedConnectShowsTheConnectTextAndErrorGettingQueueNames()
+    {
+        Watchdog dog(60);
+        fake.connxRc = MQRC_Q_MGR_NOT_AVAILABLE;
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.loadNames(); }));
+        QCOMPARE(h.newest(), QString("2059 Queue manager not available (Connect) - may not be started\r\nError getting queue names"));
+    }
+
+    void loadNamesIsRefusedWhileBrowsingLikeTheDisabledButton()
+    {
+        Watchdog dog(60);
+        Harness h;
+        BrowseState b;
+        b.active = true;
+        b.position = 1;
+        h.doc.setBrowse(b);
+        const int connects = fake.connxCalls;
+        QVERIFY(h.run([&]() { h.ops.loadNames(); }));
+        QCOMPARE(fake.connxCalls, connects);
+        QVERIFY(h.entries().isEmpty());
     }
 };
 
