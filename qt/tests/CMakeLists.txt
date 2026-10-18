@@ -13,3 +13,6 @@ endfunction()
 
 rfhqt_add_test(rfhqt_mainwindow_tests MainWindowTests.cpp)
 rfhqt_add_test(rfhqt_sessioncontroller_tests SessionControllerTests.cpp)
+rfhqt_add_test(rfhqt_appsettings_tests AppSettingsTests.cpp)
+rfhqt_add_test(rfhqt_statuslog_tests StatusLogTests.cpp)
+rfhqt_add_test(rfhqt_filetrace_tests FileTraceTests.cpp)
