@@ -84,11 +84,25 @@ namespace rfh
 			return Result::failure("Not connected to a queue manager");
 		}
 
-		// Reasons after which the connection or the queue manager can no longer be used.
+		// Reasons after which the connection or the queue manager can no longer be used. 2018 (the handle is not a
+		// connection) and 2203 (the connection is stopping) leave nothing to call.
 		bool connectionLost(MQLONG rc)
 		{
-			return (rc == MQRC_CONNECTION_BROKEN) || (rc == MQRC_Q_MGR_QUIESCING) ||
-			       (rc == MQRC_Q_MGR_STOPPING) || (rc == MQRC_CONNECTION_QUIESCING);
+			return (rc == MQRC_CONNECTION_BROKEN) || (rc == MQRC_HCONN_ERROR) || (rc == MQRC_CONNECTION_STOPPING) ||
+			       (rc == MQRC_Q_MGR_QUIESCING) || (rc == MQRC_Q_MGR_STOPPING) || (rc == MQRC_CONNECTION_QUIESCING);
+		}
+
+		// The subset of those after which the connection still works: the queue manager is only asking the
+		// application to end, so MQBACK can be issued before the disconnect that would otherwise commit.
+		bool connectionStillUsable(MQLONG rc)
+		{
+			return (rc == MQRC_Q_MGR_QUIESCING) || (rc == MQRC_Q_MGR_STOPPING) || (rc == MQRC_CONNECTION_QUIESCING);
+		}
+
+		// Room for a buffer that must grow by `factor`, never beyond what MQ allows and never wrapping.
+		size_t grownBuffer(size_t size, size_t factor)
+		{
+			return (size > kMaxBufferBytes / factor) ? kMaxBufferBytes : size * factor;
 		}
 
 		// Reasons after which a handle is gone even though its MQCLOSE failed.
@@ -117,23 +131,56 @@ namespace rfh
 
 	// After a lost connection every handle is unusable: release what MQ still holds
 	// and make the session ready for connect() again.
-	void MqSession::dropIfBroken(MQLONG rc)
+	//
+	// MQDISC commits a unit of work, and a connection that is only quiescing is still healthy, so releasing it
+	// as it is would publish whatever the connection had pending. A quiescing connection is therefore backed
+	// out first (mayBackOut), and the answer says what became of the unit of work: BackedOut when MQBACK
+	// worked, Unknown when it did not or when the connection broke (the queue manager settles those by itself
+	// and the caller cannot see how). Unaffected means the connection was not lost.
+	MqSession::UnitOutcome MqSession::dropIfBroken(MQLONG rc, bool mayBackOut)
 	{
 		if (!connectionLost(rc))
 		{
-			return;
+			return UnitOutcome::Unaffected;
 		}
 
+		UnitOutcome outcome = UnitOutcome::Unknown;
 		if (isConnected())
 		{
 			MQLONG cc = MQCC_OK;
 			MQLONG reason = MQRC_NONE;
+			if (mayBackOut && connectionStillUsable(rc))
+			{
+				api.back(hConn, &cc, &reason);
+				if (cc != MQCC_FAILED)
+				{
+					outcome = UnitOutcome::BackedOut;
+				}
+			}
 			api.disc(&hConn, &cc, &reason);	// the result is of no use: the connection is already gone
 		}
 
 		hConn = MQHC_UNUSABLE_HCONN;
 		clearHandleState();
 		qmInfo = QueueManagerInfo();
+		lastDrop = outcome;
+		return outcome;
+	}
+
+	// What a caller may say about the unit of work after dropIfBroken or commitUnit gave this outcome.
+	std::string MqSession::describeOutcome(UnitOutcome outcome)
+	{
+		switch (outcome)
+		{
+		case UnitOutcome::BackedOut:
+			return " - the unit of work was backed out before the connection was released, so uncommitted syncpoint work of this connection did not happen";
+		case UnitOutcome::Unknown:
+			return " - the outcome of the unit of work is unknown: the queue manager may have committed or backed it out";
+		case UnitOutcome::Committed:
+		case UnitOutcome::Unaffected:
+			break;
+		}
+		return std::string();
 	}
 
 	// Forgets the open queue handle and browse state; the handle itself is closed by
@@ -165,9 +212,10 @@ namespace rfh
 		// a stale queue handle from an earlier connection must never be reused, nor its queue manager's facts
 		clearHandleState();
 		qmInfo = QueueManagerInfo();
+		lastDrop = UnitOutcome::Unaffected;
 
 		if (apiInjected && ((api.connx == nullptr) || (api.disc == nullptr) || (api.open == nullptr) ||
-		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr) || (api.cmit == nullptr)))
+		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr) || (api.cmit == nullptr) || (api.back == nullptr)))
 		{
 			return Result::failure("Injected MQ API is incomplete");
 		}
@@ -524,7 +572,9 @@ namespace rfh
 		if ((cc == MQCC_FAILED) && !handleGone(rc))
 		{
 			// the handle is still live (for example MQCLOSE with an option the queue
-			// does not allow): keep it so it is neither leaked nor reopened blindly
+			// does not allow): keep it so it is neither leaked nor reopened blindly. A reason that says
+			// the connection can no longer be used (quiescing, stopping) still releases the connection.
+			dropIfBroken(rc);
 			return Result::fromMq("MQCLOSE", cc, rc);
 		}
 
@@ -575,6 +625,10 @@ namespace rfh
 		Result opened = ensureOpen(queue, options.remoteQm, openOpts, extras);
 		if (!opened.ok())
 		{
+			if (options.syncpoint && !isConnected())
+			{
+				opened.text += describeOutcome(lastDrop);	// the open found the connection lost
+			}
 			return opened;
 		}
 
@@ -621,9 +675,13 @@ namespace rfh
 
 		api.put(hConn, hObj, &message.mqmd, &pmo, (MQLONG)payload->size(),
 		        payload->empty() ? nullptr : payload->data(), &cc, &rc);
-		dropIfBroken(rc);
+		const UnitOutcome lost = dropIfBroken(rc);
 
 		Result r = Result::fromMq("MQPUT", cc, rc);
+		if (options.syncpoint)
+		{
+			r.text += describeOutcome(lost);	// puts made under syncpoint earlier on this connection
+		}
 		r.warnings.insert(r.warnings.end(), notes.begin(), notes.end());
 		if (r.ok() && !message.headers.empty() && (splitAt != message.headers.size()))
 		{
@@ -632,17 +690,20 @@ namespace rfh
 		return r;
 	}
 
-	// Windows cuts a selector at MQ_SELECTOR_LENGTH - 1 characters (openQ 12087-12095), which selects something
-	// else, so a longer one is refused. MQ below command level 700 has no selectors; an unknown level (0) is allowed.
+	// Windows cuts a selector at MQ_SELECTOR_LENGTH - 1 characters (openQ 12087-12095) because it copies it into
+	// a buffer with a terminator; the cut selects something else, so a longer one is refused. Here the selector
+	// travels in an MQCHARV with an explicit length (cmqc.h: MQ_SELECTOR_LENGTH is 10240, the longest a
+	// selection string may be) and has no terminator, so exactly MQ_SELECTOR_LENGTH bytes are legal.
+	// MQ below command level 700 has no selectors; an unknown level (0) is allowed.
 	Result MqSession::checkSelector(const std::string & selector) const
 	{
 		if (selector.empty())
 		{
 			return Result::success();
 		}
-		if (selector.size() >= MQ_SELECTOR_LENGTH)
+		if (selector.size() > MQ_SELECTOR_LENGTH)
 		{
-			return Result::failure("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH - 1) + " characters");
+			return Result::failure("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH) + " bytes");
 		}
 		if ((qmInfo.commandLevel > 0) && (qmInfo.commandLevel < MQCMDL_LEVEL_700))
 		{
@@ -654,6 +715,51 @@ namespace rfh
 
 	Result MqSession::commit()
 	{
+		UnitOutcome outcome = UnitOutcome::Unaffected;
+		return commitUnit(outcome);
+	}
+
+	// MQCMIT, and what became of the unit of work. A failed call did not commit, except that a connection
+	// that broke during it may have; MQ itself says 2003 when it backed the unit out; a warning (2123, 2124)
+	// means the resources did not agree or are still deciding. Any other failure leaves the unit open on a
+	// working connection, which this session cannot tell from the outside, so it too is Unknown.
+	Result MqSession::commitUnit(UnitOutcome & outcome)
+	{
+		if (!isConnected())
+		{
+			outcome = UnitOutcome::Unknown;
+			return notConnected();
+		}
+
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		api.cmit(hConn, &cc, &rc);
+		const UnitOutcome lost = dropIfBroken(rc);
+
+		Result r = Result::fromMq("MQCMIT", cc, rc);
+		if (lost != UnitOutcome::Unaffected)
+		{
+			outcome = lost;
+			r.text += describeOutcome(lost);
+		}
+		else if (cc == MQCC_FAILED)
+		{
+			outcome = (rc == MQRC_BACKED_OUT) ? UnitOutcome::BackedOut : UnitOutcome::Unknown;
+		}
+		else if (cc == MQCC_WARNING)
+		{
+			outcome = UnitOutcome::Unknown;
+			r.warnings.push_back("MQCMIT ended with a warning" + describeOutcome(UnitOutcome::Unknown));
+		}
+		else
+		{
+			outcome = UnitOutcome::Committed;
+		}
+		return r;
+	}
+
+	Result MqSession::rollback()
+	{
 		if (!isConnected())
 		{
 			return notConnected();
@@ -661,9 +767,16 @@ namespace rfh
 
 		MQLONG cc = MQCC_OK;
 		MQLONG rc = MQRC_NONE;
-		api.cmit(hConn, &cc, &rc);
-		dropIfBroken(rc);
-		return Result::fromMq("MQCMIT", cc, rc);
+		api.back(hConn, &cc, &rc);
+		// a quiescing reason here must not start another MQBACK: this one just failed
+		const UnitOutcome lost = dropIfBroken(rc, false);
+
+		Result r = Result::fromMq("MQBACK", cc, rc);
+		if (lost != UnitOutcome::Unaffected)
+		{
+			r.text += describeOutcome(lost);
+		}
+		return r;
 	}
 
 	Result MqSession::getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs)
@@ -673,7 +786,13 @@ namespace rfh
 		const bool browsing = (getOptions & (MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT)) != 0;
 		std::vector<unsigned char> buffer(std::min<size_t>(std::max<size_t>(options.initialBufferSize, 1), kMaxBufferBytes));
 		MQLONG remaining = unlimited ? 0 : waitMs;
-		bool retryByMsgId = false;
+		// How a repeated get finds the message again. The truncation retry (a destructive get that removed
+		// nothing, or a browse that did not move the cursor) matches the MsgId MQ reported. The converted-
+		// too-big retry of a browse reads the message the cursor has moved onto: matching its MsgId would
+		// find an earlier message that shares the MsgId, and MQ does not return a message that is not first
+		// in its group to a MQGMO_BROWSE_FIRST with MQGMO_LOGICAL_ORDER (2033).
+		enum class Reread { No, ByMsgId, UnderCursor };
+		Reread reread = Reread::No;
 		MQBYTE24 retryMsgId;
 		int convertRetries = 0;
 
@@ -702,22 +821,23 @@ namespace rfh
 				gmo.Options |= MQGMO_CONVERT;
 			}
 
-			if (options.matchMsgId)
+			// the message under the cursor has matched already
+			if (options.matchMsgId && (reread != Reread::UnderCursor))
 			{
 				gmo.MatchOptions |= MQMO_MATCH_MSG_ID;
 				memcpy(md.MsgId, options.msgId, sizeof(md.MsgId));
 			}
-			if (options.matchCorrelId)
+			if (options.matchCorrelId && (reread != Reread::UnderCursor))
 			{
 				gmo.MatchOptions |= MQMO_MATCH_CORREL_ID;
 				memcpy(md.CorrelId, options.correlId, sizeof(md.CorrelId));
 			}
-			if (options.matchGroupId)
+			if (options.matchGroupId && (reread != Reread::UnderCursor))
 			{
 				gmo.MatchOptions |= MQMO_MATCH_GROUP_ID;
 				memcpy(md.GroupId, options.groupId, sizeof(md.GroupId));
 			}
-			if (retryByMsgId)
+			if (reread == Reread::ByMsgId)
 			{
 				// The MsgId MQ returned identifies the message. (A MsgId of MQMI_NONE would
 				// match any message, but MQ assigns every message a non-zero MsgId.)
@@ -726,7 +846,7 @@ namespace rfh
 			}
 
 			MQLONG slice = unlimited ? kWaitSliceMs : std::min(remaining, kWaitSliceMs);
-			if ((slice > 0) && !retryByMsgId)
+			if ((slice > 0) && (reread == Reread::No))
 			{
 				gmo.Options |= MQGMO_WAIT;
 				gmo.WaitInterval = slice;
@@ -748,18 +868,20 @@ namespace rfh
 				// The message stays on the queue and a browse cursor does not move, so
 				// repeat the same get matched on the MsgId MQ just reported. dataLength is
 				// the unconverted length; converted text can be longer, so leave room.
-				size_t wanted = (size_t)dataLength;
+				size_t wanted = std::min((size_t)dataLength, kMaxBufferBytes);
 				if (options.convert)
 				{
-					wanted *= 4;
+					wanted = grownBuffer(wanted, 4);
 				}
-				wanted = std::min(wanted, kMaxBufferBytes);
 
 				if (wanted > buffer.size())
 				{
 					buffer.resize(wanted);
-					retryByMsgId = true;
-					memcpy(retryMsgId, md.MsgId, sizeof(retryMsgId));
+					if (reread != Reread::UnderCursor)
+					{
+						reread = Reread::ByMsgId;
+						memcpy(retryMsgId, md.MsgId, sizeof(retryMsgId));
+					}
 					continue;
 				}
 			}
@@ -768,13 +890,12 @@ namespace rfh
 			    browsing && (convertRetries < 2) && (buffer.size() < kMaxBufferBytes))
 			{
 				// The converted data did not fit and the unconverted message was returned.
-				// A browse consumed nothing, so read it again with room for the expansion.
-				// The browse cursor has moved past the message, so find it from the start.
-				buffer.resize(std::min(buffer.size() * 4, kMaxBufferBytes));
+				// A browse consumed nothing, so read it again with room for the expansion. The browse cursor
+				// is on the message, so read the message under the cursor; every other option stays.
+				buffer.resize(grownBuffer(buffer.size(), 4));
 				convertRetries++;
-				retryByMsgId = true;
-				memcpy(retryMsgId, md.MsgId, sizeof(retryMsgId));
-				getOptions = (getOptions & ~MQGMO_BROWSE_NEXT) | MQGMO_BROWSE_FIRST;
+				reread = Reread::UnderCursor;
+				getOptions = (getOptions & ~(MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT)) | MQGMO_BROWSE_MSG_UNDER_CURSOR;
 				continue;
 			}
 
@@ -809,7 +930,7 @@ namespace rfh
 
 			Result r = Result::fromMq("MQGET", cc, rc);
 			r.warnings.insert(r.warnings.end(), headerWarnings.begin(), headerWarnings.end());
-			if (retryByMsgId && (rc == MQRC_NO_MSG_AVAILABLE))
+			if ((reread != Reread::No) && (rc == MQRC_NO_MSG_AVAILABLE))
 			{
 				r.text += " - message was removed before it could be re-read";
 			}
@@ -1417,6 +1538,13 @@ namespace rfh
 
 	Result MqSession::purge(const std::string & queue, MQLONG & count, const PurgeOptions & options)
 	{
+		MQLONG uncertain = 0;
+		return purge(queue, count, options, uncertain);
+	}
+
+	Result MqSession::purge(const std::string & queue, MQLONG & count, const PurgeOptions & options, MQLONG & uncertain)
+	{
+		uncertain = 0;
 		count = 0;
 		if (!isConnected())
 		{
@@ -1451,25 +1579,42 @@ namespace rfh
 
 		MQLONG gotInUnit = 0;		// messages got since the last commit (Windows' uowCount)
 		MQLONG persistentInUnit = 0;	// those of them that are in the unit of work, so not yet removed
-		MQLONG lostWithUnit = 0;	// persistent messages whose removal was not committed
+		MQLONG backedOut = 0;		// persistent messages known to be back on the queue
 		Result r;
 		std::string stopped;		// why the loop ended, when it did not run out of messages
 
-		// Commits the unit of work. A message that was in it is not removed unless the commit worked.
-		auto commitUnit = [&]() -> Result
+		// Settles the persistent messages of the unit of work once its fate is known. They are in count until
+		// then. Only a commit that worked removes them; a back-out (MQ's 2003, or our own MQBACK) puts them
+		// back, which is the only case that may be called "remain on the queue"; anything else, including
+		// a commit that ended with a warning, is uncertain and kept apart from count.
+		auto settle = [&](UnitOutcome outcome)
 		{
-			Result c = commit();
-			if (c.ok())
-			{
-				gotInUnit = 0;
-				persistentInUnit = 0;
-			}
-			else
+			if (outcome != UnitOutcome::Committed)
 			{
 				count -= persistentInUnit;
-				lostWithUnit += persistentInUnit;
-				gotInUnit = 0;
-				persistentInUnit = 0;
+				if (outcome == UnitOutcome::BackedOut)
+				{
+					backedOut += persistentInUnit;
+				}
+				else
+				{
+					uncertain += persistentInUnit;
+				}
+			}
+			gotInUnit = 0;
+			persistentInUnit = 0;
+		};
+
+		// Commits the unit of work. A commit whose outcome is unknown ends the purge as a failure, because
+		// the next batch could not be trusted either.
+		auto commitBatch = [&]() -> Result
+		{
+			UnitOutcome outcome = UnitOutcome::Unknown;
+			Result c = commitUnit(outcome);
+			settle(outcome);
+			if (c.ok() && (outcome != UnitOutcome::Committed))
+			{
+				c.cc = MQCC_FAILED;
 			}
 			return c;
 		};
@@ -1493,12 +1638,12 @@ namespace rfh
 			MQLONG cc = MQCC_OK;
 			MQLONG rc = MQRC_NONE;
 			api.get(hConn, obj, &md, &gmo, 0, &unused, &dataLength, &cc, &rc);
-			dropIfBroken(rc);
+			UnitOutcome lost = dropIfBroken(rc);
 
 			if (options.syncpoint && (rc == MQRC_SYNCPOINT_LIMIT_REACHED) && isConnected())
 			{
 				// purgeQueue 10130-10138: commit what is pending, then ask again
-				Result c = commitUnit();
+				Result c = commitBatch();
 				if (!c.ok())
 				{
 					r = c;
@@ -1510,7 +1655,7 @@ namespace rfh
 				gmo.MatchOptions = MQMO_NONE;
 				gmo.Options = getOptions;
 				api.get(hConn, obj, &md, &gmo, 0, &unused, &dataLength, &cc, &rc);
-				dropIfBroken(rc);
+				lost = dropIfBroken(rc);
 			}
 
 			if (cc != MQCC_FAILED)
@@ -1530,7 +1675,7 @@ namespace rfh
 				}
 				if (options.syncpoint && (gotInUnit >= batch))
 				{
-					Result c = commitUnit();
+					Result c = commitBatch();
 					if (!c.ok())
 					{
 						r = c;
@@ -1544,13 +1689,15 @@ namespace rfh
 			if (rc != MQRC_NO_MSG_AVAILABLE)
 			{
 				r = Result::fromMq("MQGET", cc, rc);
-				if ((rc == MQRC_BACKED_OUT) || !isConnected())
+				if (rc == MQRC_BACKED_OUT)
 				{
 					// MQ has rolled the unit of work back (purgeQueue 10185 skips the commit for 2003)
-					count -= persistentInUnit;
-					lostWithUnit += persistentInUnit;
-					gotInUnit = 0;
-					persistentInUnit = 0;
+					settle(UnitOutcome::BackedOut);
+				}
+				else if (lost != UnitOutcome::Unaffected)
+				{
+					// the connection was released: backed out first when it was only quiescing, otherwise unknown
+					settle(lost);
 				}
 			}
 			break;
@@ -1564,7 +1711,7 @@ namespace rfh
 		if (options.syncpoint && isConnected() && (gotInUnit > 0))
 		{
 			// purgeQueue 10185-10189: what was done is committed, after a failed get as well
-			Result c = commitUnit();
+			Result c = commitBatch();
 			if (!c.ok())
 			{
 				if (r.ok() && stopped.empty())
@@ -1581,9 +1728,13 @@ namespace rfh
 		if (!r.ok())
 		{
 			r.text += " after " + std::to_string(count) + " messages";
-			if (lostWithUnit > 0)
+			if (backedOut > 0)
 			{
-				r.text += " (" + std::to_string(lostWithUnit) + " persistent messages got under syncpoint were not committed and remain on the queue)";
+				r.text += " (" + std::to_string(backedOut) + " persistent messages got under syncpoint were backed out and remain on the queue)";
+			}
+			if (uncertain > 0)
+			{
+				r.text += " (" + std::to_string(uncertain) + " persistent messages got under syncpoint have an unknown outcome: the queue manager may or may not have removed them; check the queue depth)";
 			}
 		}
 
@@ -1601,7 +1752,18 @@ namespace rfh
 
 		if (heldBySession && isConnected() && (r.ok() || (count > 0)))
 		{
-			browseCursor = 0;	// the session's own cursor now sits on a queue purged from under it
+			// The session's own browse cursor sits on a queue purged from under it, and the cursor belongs to the
+			// handle, so forgetting the position would leave MQ's cursor where it was. Close the handle: the
+			// next get opens a new one whose cursor is before the first message.
+			Result closed = closeQueue();
+			if (!closed.ok())
+			{
+				r.warnings.push_back(closed.text + " (the browse handle of the purged queue)");
+				if (hObj != MQHO_UNUSABLE_HOBJ)
+				{
+					browseCursor = -1;	// still open, with a cursor that may point anywhere
+				}
+			}
 		}
 
 		return r;

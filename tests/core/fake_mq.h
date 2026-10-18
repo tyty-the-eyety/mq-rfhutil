@@ -3,6 +3,30 @@
 // fakeApi() returns an MqApi whose entry points act on one FakeMq (fakeMq()).
 // Tests call fakeMq().reset() first, then configure what the fake should answer
 // and read back what it saw. Header-only.
+//
+// UNIT OF WORK (added in the cleanup of Tasks 13/14/19). A put with MQPMO_SYNCPOINT (or neither syncpoint
+// option, which is a syncpoint put in real MQ) waits in pendingPuts, invisible to gets and browses; a
+// destructive get under syncpoint (MQGMO_SYNCPOINT, or MQGMO_SYNCPOINT_IF_PERSISTENT of a persistent message)
+// takes its message off the queue into pendingGets. Then, as in MQ:
+//   MQCMIT   applies the puts and forgets the gets. A failing MQCMIT leaves the unit pending, except 2003
+//            (backed out) and 2009 (see lostUnitCommits); a warning (2123, 2124) has committed.
+//   MQBACK   discards the puts and returns the gets to the front of their queues, in their old order.
+//   MQDISC   COMMITS what is pending, like real MQ. After a call has reported 2009 (connectionBroken) the
+//            unit is resolved as lostUnitCommits says instead.
+//   2009     a connection that breaks leaves the unit's fate unknown to the caller. The fake settles it as
+//            lostUnitCommits (default false: backed out) so a test can check that a message is NOT claimed
+//            to be in the one state or the other whichever way the queue manager went.
+// The depth a queue reports includes pending puts and pending gets, as MQ's CURDEPTH does.
+//
+// WHAT THE FAKE DOES NOT MODEL (a passing fake test says nothing about these; the live tests in
+// MqSessionTests.cpp do):
+//   - message selectors are recorded in openLog but never applied;
+//   - option rules: structure versions and option combinations are not validated (for example MQGMO_LOGICAL_ORDER
+//     with MQMO_MATCH_MSG_ID, or MQGMO_BROWSE_MSG_UNDER_CURSOR with other options, are accepted);
+//   - report() makes every non-zero reason MQCC_FAILED; a warning needs warnGetRc, cmitCc or connxCc;
+//   - a handle used after its close is not detected (the fake answers as for an open one);
+//   - the unit of work is one per fake, not per connection, and has no locking against other connections;
+//   - the browse cursor exists only with browseCursors, and then ignores logical order and groups.
 
 #pragma once
 
@@ -123,6 +147,10 @@ namespace rfh_test
         MQLONG connxCc = MQCC_FAILED;
         MQLONG cmitRc = MQRC_NONE;    // MQCMIT answers with this reason (Task 14)
         MQLONG cmitCc = MQCC_FAILED;  // ... and this completion code when cmitRc is not MQRC_NONE (a test may ask for MQCC_WARNING)
+        MQLONG backRc = MQRC_NONE;    // MQBACK answers with this reason, completion code MQCC_FAILED
+        bool lostUnitCommits = false; // a unit of work whose connection broke: false backs it out, true commits it
+        int failPutsAfter = -1;       // from the put after this many puts (counting all of them), every put fails with failPutsRc; -1 never
+        MQLONG failPutsRc = MQRC_NONE;
         MQLONG platform = MQPL_UNIX;
         MQLONG commandLevel = 940;
         MQLONG qmgrMaxMsgLength = 4194304;   // answered for MQIA_MAX_MSG_LENGTH on the queue manager object (Task 13)
@@ -139,6 +167,15 @@ namespace rfh_test
         MQLONG maxUncommitted = 0;        // above 0: a destructive get under syncpoint (MQGMO_SYNCPOINT, or MQGMO_SYNCPOINT_IF_PERSISTENT with a persistent message) fails with 2024 when this many are uncommitted
         int uncommittedGets = 0;          // destructive gets under syncpoint since the last commit that worked
         std::vector<int> commitAtGet;     // getCalls at each MQCMIT, in order
+        std::vector<std::string> callOrder;   // "cmit", "back" and "disc", in the order the session called them
+        struct PendingChange
+        {
+            std::string queue;
+            FakeMessage message;
+        };
+        std::vector<PendingChange> pendingPuts;   // put under syncpoint, not yet committed
+        std::vector<PendingChange> pendingGets;   // got under syncpoint, not yet committed
+        bool connectionBroken = false;            // a call has reported 2009 since the last MQCONNX
         std::string dynamicQueueName; // the name an open of SYSTEM.DEFAULT.MODEL.QUEUE gives its dynamic queue; empty generates <prefix>FAKE<n>
         int dynamicQueueCount = 0;
         // Called after a put to the named queue, with the message just put. A test uses it to play the
@@ -153,6 +190,7 @@ namespace rfh_test
         int putCalls = 0;
         int getCalls = 0;
         int commitCalls = 0;
+        int backCalls = 0;
         int inqCalls = 0;
         int qmgrOpenCalls = 0;       // opens of the queue manager object (connect()'s inquiry)
         int qmgrInqCalls = 0;
@@ -202,6 +240,65 @@ namespace rfh_test
         {
             *reason = rc;
             *cc = (rc == MQRC_NONE) ? MQCC_OK : MQCC_FAILED;
+            if (rc == MQRC_CONNECTION_BROKEN)
+            {
+                fakeMq().connectionBroken = true;
+            }
+        }
+
+        inline FakeQueue * queueNamed(const std::string & name)
+        {
+            return fakeMq().find(name);
+        }
+
+        // Makes the pending puts visible, forgets the pending gets (their messages are gone for good).
+        inline void commitUnit()
+        {
+            FakeMq & fake = fakeMq();
+            std::vector<FakeMq::PendingChange> puts;
+            puts.swap(fake.pendingPuts);
+            fake.pendingGets.clear();
+            fake.uncommittedGets = 0;
+            for (size_t i = 0; i < puts.size(); i++)
+            {
+                FakeQueue * q = queueNamed(puts[i].queue);
+                if (q != nullptr)
+                {
+                    q->messages.push_back(puts[i].message);
+                }
+                std::map<std::string, std::function<void(const FakeMessage &)>>::iterator hook = fake.onPut.find(puts[i].queue);
+                if (hook != fake.onPut.end())
+                {
+                    std::function<void(const FakeMessage &)> run = hook->second;
+                    run(puts[i].message);
+                }
+            }
+        }
+
+        // Discards the pending puts and returns the pending gets to the front of their queues, in their old order.
+        inline void backUnit()
+        {
+            FakeMq & fake = fakeMq();
+            fake.pendingPuts.clear();
+            for (size_t i = fake.pendingGets.size(); i > 0; i--)
+            {
+                fake.queue(fake.pendingGets[i - 1].queue).messages.push_front(fake.pendingGets[i - 1].message);
+            }
+            fake.pendingGets.clear();
+            fake.uncommittedGets = 0;
+        }
+
+        // The unit of work of a connection that broke: the fake settles it as lostUnitCommits says.
+        inline void settleLostUnit()
+        {
+            if (fakeMq().lostUnitCommits)
+            {
+                commitUnit();
+            }
+            else
+            {
+                backUnit();
+            }
         }
 
         inline std::string trimmed(const char * text, size_t size)
@@ -222,6 +319,8 @@ namespace rfh_test
         {
             FakeMq & fake = fakeMq();
             fake.connxCalls++;
+
+            fake.connectionBroken = false;
 
             ConnxRecord record;
             if (qmName != nullptr)
@@ -280,8 +379,20 @@ namespace rfh_test
         {
             FakeMq & fake = fakeMq();
             fake.discCalls++;
+            fake.callOrder.push_back("disc");
             fake.liveHandles.clear();   // MQDISC releases every handle of the connection
             fake.cursors.clear();
+            if (fake.discRc == MQRC_NONE)
+            {
+                if (fake.connectionBroken)
+                {
+                    settleLostUnit();
+                }
+                else
+                {
+                    commitUnit();   // MQDISC commits what the connection left pending
+                }
+            }
             report(fake.discRc, cc, rc);
         }
 
@@ -406,7 +517,12 @@ namespace rfh_test
             }
 
             FakeQueue * q = queueOf(hObj);
-            if (fake.putRc == MQRC_NONE)
+            MQLONG putRc = fake.putRc;
+            if ((putRc == MQRC_NONE) && (fake.failPutsAfter >= 0) && (fake.putCalls > fake.failPutsAfter))
+            {
+                putRc = fake.failPutsRc;
+            }
+            if (putRc == MQRC_NONE)
             {
                 FakeMessage m;
                 if (md != nullptr)
@@ -427,18 +543,31 @@ namespace rfh_test
                 record.pmoVersion = (pmo != nullptr) ? static_cast<const MQPMO *>(pmo)->Version : 0;
                 fake.putLog.push_back(record);
 
-                if (q != nullptr)
+                // neither syncpoint option means under syncpoint, as in MQ
+                const bool syncpoint = (pmo == nullptr) || ((record.pmoOptions & MQPMO_SYNCPOINT) != 0) ||
+                                       ((record.pmoOptions & MQPMO_NO_SYNCPOINT) == 0);
+                if (syncpoint)
                 {
-                    q->messages.push_back(m);
+                    FakeMq::PendingChange change;
+                    change.queue = record.queue;
+                    change.message = m;
+                    fake.pendingPuts.push_back(change);
                 }
-                std::map<std::string, std::function<void(const FakeMessage &)>>::iterator hook = fake.onPut.find(record.queue);
-                if (hook != fake.onPut.end())
+                else
                 {
-                    std::function<void(const FakeMessage &)> run = hook->second;
-                    run(m);
+                    if (q != nullptr)
+                    {
+                        q->messages.push_back(m);
+                    }
+                    std::map<std::string, std::function<void(const FakeMessage &)>>::iterator hook = fake.onPut.find(record.queue);
+                    if (hook != fake.onPut.end())
+                    {
+                        std::function<void(const FakeMessage &)> run = hook->second;
+                        run(m);
+                    }
                 }
             }
-            report(fake.putRc, cc, rc);
+            report(putRc, cc, rc);
         }
 
         inline void fakeGet(MQHCONN, MQHOBJ hObj, PMQVOID md, PMQVOID gmoIn, MQLONG bufferLength, PMQVOID buffer, PMQLONG length, PMQLONG cc, PMQLONG rc)
@@ -478,11 +607,19 @@ namespace rfh_test
             if (fake.getRc != MQRC_NONE)
             {
                 report(fake.getRc, cc, rc);
+                if (fake.getRc == MQRC_BACKED_OUT)
+                {
+                    backUnit();		// MQ has backed the unit of work out when it says so
+                }
                 return;
             }
             if ((fake.failGetsAfter >= 0) && (fake.getCalls > fake.failGetsAfter))
             {
                 report(fake.failGetsRc, cc, rc);
+                if (fake.failGetsRc == MQRC_BACKED_OUT)
+                {
+                    backUnit();
+                }
                 return;
             }
 
@@ -495,15 +632,17 @@ namespace rfh_test
 
             const bool browseFirst = (gmo != nullptr) && ((gmo->Options & MQGMO_BROWSE_FIRST) != 0);
             const bool browseNext = (gmo != nullptr) && ((gmo->Options & MQGMO_BROWSE_NEXT) != 0);
+            const bool browseUnderCursor = (gmo != nullptr) && ((gmo->Options & MQGMO_BROWSE_MSG_UNDER_CURSOR) != 0);
             size_t index = 0;
-            if (fake.browseCursors && (browseFirst || browseNext))
+            if (fake.browseCursors && (browseFirst || browseNext || browseUnderCursor))
             {
                 int & cursor = fake.cursors.emplace(hObj, -1).first->second;
                 if (browseFirst)
                 {
                     cursor = -1;   // a browse first starts over, even when it then finds nothing
                 }
-                index = (size_t)(cursor + 1);
+                // under the cursor is the message the last browse returned; before the first browse there is none
+                index = browseUnderCursor ? (size_t)std::max(cursor, 0) : (size_t)(cursor + 1);
             }
             const bool available = index < q->messages.size();
 
@@ -527,7 +666,7 @@ namespace rfh_test
                 return;
             }
 
-            const bool browsing = browseFirst || browseNext;
+            const bool browsing = browseFirst || browseNext || browseUnderCursor;
             const bool underSyncpoint = (gmo != nullptr) && !browsing &&
                 (((gmo->Options & MQGMO_SYNCPOINT) != 0) ||
                  (((gmo->Options & MQGMO_SYNCPOINT_IF_PERSISTENT) != 0) && (q->messages[index].md.Persistence == MQPER_PERSISTENT)));
@@ -565,7 +704,7 @@ namespace rfh_test
             {
                 memcpy(buffer, m.data.data(), (size_t)copied);
             }
-            const bool browse = browseFirst || browseNext;
+            const bool browse = browsing;
             if (browse)
             {
                 if (fake.browseCursors)
@@ -575,6 +714,13 @@ namespace rfh_test
             }
             else
             {
+                if (underSyncpoint)
+                {
+                    FakeMq::PendingChange change;
+                    change.queue = fake.handleNames[hObj];
+                    change.message = q->messages.front();
+                    fake.pendingGets.push_back(change);
+                }
                 q->messages.pop_front();
                 for (std::map<MQHOBJ, int>::iterator it = fake.cursors.begin(); it != fake.cursors.end(); ++it)
                 {
@@ -598,6 +744,22 @@ namespace rfh_test
                 return;
             }
             report(MQRC_NONE, cc, rc);
+        }
+
+        // Uncommitted puts and gets of a queue; MQ's CURDEPTH counts both.
+        inline size_t pendingFor(const std::string & queue)
+        {
+            FakeMq & fake = fakeMq();
+            size_t n = 0;
+            for (size_t i = 0; i < fake.pendingPuts.size(); i++)
+            {
+                n += (fake.pendingPuts[i].queue == queue) ? 1 : 0;
+            }
+            for (size_t i = 0; i < fake.pendingGets.size(); i++)
+            {
+                n += (fake.pendingGets[i].queue == queue) ? 1 : 0;
+            }
+            return n;
         }
 
         // Integer selectors come first in the selector list, character selectors after.
@@ -652,7 +814,7 @@ namespace rfh_test
                 }
                 else if (s == MQIA_CURRENT_Q_DEPTH)
                 {
-                    value = (q == nullptr) ? 7 : q->hasDepthOverride ? q->depthOverride : (MQLONG)q->messages.size();
+                    value = (q == nullptr) ? 7 : q->hasDepthOverride ? q->depthOverride : (MQLONG)(q->messages.size() + pendingFor(fake.handleNames[hObj]));
                 }
                 else if (s == MQIA_Q_TYPE)
                 {
@@ -669,11 +831,13 @@ namespace rfh_test
     }
 
     // MQCMIT (Task 14): counted in commitCalls; answers with cmitRc (cmitCc when that is not MQRC_NONE).
+    // What happens to the unit of work is described at the top of this file.
     inline void fakeCmit(MQHCONN, PMQLONG cc, PMQLONG rc)
     {
         FakeMq & fake = fakeMq();
         fake.commitCalls++;
         fake.commitAtGet.push_back(fake.getCalls);
+        fake.callOrder.push_back("cmit");
         fake_detail::report(fake.cmitRc, cc, rc);
         if (fake.cmitRc != MQRC_NONE)
         {
@@ -681,7 +845,33 @@ namespace rfh_test
         }
         if (*cc != MQCC_FAILED)
         {
-            fake.uncommittedGets = 0;
+            fake_detail::commitUnit();		// success, or a warning such as 2123 and 2124: the queue manager has committed
+        }
+        else if (fake.cmitRc == MQRC_BACKED_OUT)
+        {
+            fake_detail::backUnit();
+        }
+        else if (fake.cmitRc == MQRC_CONNECTION_BROKEN)
+        {
+            fake_detail::settleLostUnit();
+        }
+        // any other failure leaves the unit of work pending
+    }
+
+    // MQBACK: counted in backCalls; answers with backRc (MQCC_FAILED when that is not MQRC_NONE).
+    inline void fakeBack(MQHCONN, PMQLONG cc, PMQLONG rc)
+    {
+        FakeMq & fake = fakeMq();
+        fake.backCalls++;
+        fake.callOrder.push_back("back");
+        fake_detail::report(fake.backRc, cc, rc);
+        if (fake.backRc == MQRC_NONE)
+        {
+            fake_detail::backUnit();
+        }
+        else if (fake.backRc == MQRC_CONNECTION_BROKEN)
+        {
+            fake_detail::settleLostUnit();
         }
     }
 
@@ -696,6 +886,7 @@ namespace rfh_test
         api.get = fake_detail::fakeGet;
         api.inq = fake_detail::fakeInq;
         api.cmit = fakeCmit;
+        api.back = fakeBack;
         api.serverLibrary = true;
         api.bindingsAvailable = true;
         api.libraryPath = "fake";

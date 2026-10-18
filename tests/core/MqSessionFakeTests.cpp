@@ -257,6 +257,72 @@ TEST(FakeMq, CommitIsCounted)
     EXPECT_EQ(2, fake.commitCalls);
 }
 
+// ---- the fake's unit of work (see the top of fake_mq.h) ----
+
+TEST(FakeMq, ASyncpointPutIsInvisibleUntilTheCommit)
+{
+    fake.reset();
+    fake.queue("RFHUTIL.TEST.Q");
+    MqSession session(fakeApi());
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    ASSERT_TRUE(session.connect(options).ok());
+
+    PutOptions put;
+    put.syncpoint = true;
+    Message m;
+    m.body.assign({'a'});
+    ASSERT_TRUE(session.put("RFHUTIL.TEST.Q", m, put).ok());
+    EXPECT_EQ(0u, fake.queue("RFHUTIL.TEST.Q").messages.size()) << "not visible before the commit";
+    MQLONG depth = -1;
+    ASSERT_TRUE(session.depth("RFHUTIL.TEST.Q", depth).ok());
+    EXPECT_EQ(1, depth) << "CURDEPTH counts uncommitted puts";
+
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(1u, fake.queue("RFHUTIL.TEST.Q").messages.size());
+}
+
+TEST(FakeMq, ADisconnectCommitsWhatIsPending)
+{
+    fake.reset();
+    fake.queue("RFHUTIL.TEST.Q");
+    MqSession session(fakeApi());
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    ASSERT_TRUE(session.connect(options).ok());
+
+    PutOptions put;
+    put.syncpoint = true;
+    Message m;
+    m.body.assign({'a'});
+    ASSERT_TRUE(session.put("RFHUTIL.TEST.Q", m, put).ok());
+    ASSERT_EQ(0u, fake.queue("RFHUTIL.TEST.Q").messages.size());
+    ASSERT_TRUE(session.disconnect().ok());
+    EXPECT_EQ(1u, fake.queue("RFHUTIL.TEST.Q").messages.size()) << "MQDISC commits";
+}
+
+TEST(FakeMq, MessagesGotUnderSyncpointReturnWhenTheCommitBacksOut)
+{
+    fake.reset();
+    for (int i = 0; i < 3; i++)
+    {
+        rfh_test::FakeMessage m;
+        m.md.Persistence = MQPER_PERSISTENT;
+        fake.queue("RFHUTIL.TEST.Q").messages.push_back(m);
+    }
+    fake.cmitRc = MQRC_BACKED_OUT;
+    MqSession session(fakeApi());
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    ASSERT_TRUE(session.connect(options).ok());
+
+    PurgeOptions purge;
+    purge.syncpoint = true;
+    MQLONG count = 0;
+    EXPECT_FALSE(session.purge("RFHUTIL.TEST.Q", count, purge).ok());
+    EXPECT_EQ(3u, fake.queue("RFHUTIL.TEST.Q").messages.size()) << "the backed out gets are on the queue again";
+}
+
 // ---- MqSession::queueInfo (Windows: getQueueType 18244, getCurrentDepth 18200, openQ 12268-12310) ----
 
 namespace
@@ -1213,11 +1279,38 @@ TEST_F(MqSessionFakeTest, PurgeRefusesASelectorTheQueueManagerCannotUse)
     fake.reset();
     ASSERT_TRUE(session.disconnect().ok());
     connect();
-    options.selector = std::string(MQ_SELECTOR_LENGTH, 'a');
+    options.selector = std::string(MQ_SELECTOR_LENGTH + 1, 'a');
     r = session.purge(kPurgeQueue, purged, options);
     EXPECT_FALSE(r.ok());
-    EXPECT_NE(std::string::npos, r.text.find("longer than")) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find("longer than " + std::to_string(MQ_SELECTOR_LENGTH) + " bytes")) << r.text;
     EXPECT_EQ(0, fake.openCalls);
+}
+
+TEST_F(MqSessionFakeTest, ASelectorOfExactlyTheHeaderLengthReachesTheOpen)
+{
+    // cmqc.h: MQ_SELECTOR_LENGTH is 10240 and the selector travels in an MQCHARV with a length, so no byte is
+    // kept for a terminator. Windows cut at one byte less because it copied into a buffer with a terminator.
+    connect();
+    addPurgeMessages(1, false);
+    PurgeOptions options;
+    options.selector = std::string(MQ_SELECTOR_LENGTH, 'a');
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kPurgeQueue, purged, options).ok());
+    ASSERT_EQ(1u, fake.openLog.size());
+    EXPECT_EQ((size_t)MQ_SELECTOR_LENGTH, fake.openLog[0].selector.size());
+
+    GetOptions get;
+    get.selector = std::string(MQ_SELECTOR_LENGTH, 'b');
+    Message m;
+    session.get(kPurgeQueue, m, get);
+    ASSERT_EQ(2u, fake.openLog.size());
+    EXPECT_EQ((size_t)MQ_SELECTOR_LENGTH, fake.openLog[1].selector.size());
+
+    get.selector = std::string(MQ_SELECTOR_LENGTH + 1, 'b');
+    Result refused = session.get(kPurgeQueue, m, get);
+    EXPECT_FALSE(refused.ok());
+    EXPECT_EQ("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH) + " bytes", refused.text);
+    EXPECT_EQ(2u, fake.openLog.size()) << "refused before any open";
 }
 
 TEST_F(MqSessionFakeTest, PurgeSyncpointCommitsInBatchesAndAtTheEnd)
@@ -1539,4 +1632,544 @@ TEST_F(MqSessionFakeTest, PurgeReportsACloseFailureAsAWarningAndKeepsTheCount)
     EXPECT_TRUE(r.ok()) << r.text;
     EXPECT_EQ(3, purged);
     EXPECT_EQ(1u, r.warnings.size());
+}
+
+// ---- outcomes of interrupted units of work (cleanup of Tasks 13/14/19) ----
+//
+// MQDISC commits what a connection left pending, and a connection that is quiescing is still healthy, so
+// disconnecting it publishes the unit of work. The session therefore backs the unit out before it releases a
+// connection that reported 2161, 2162 or 2202, and it says "remain on the queue" only when it knows. When it
+// does not (the connection broke, the back-out failed, MQCMIT lost the connection or ended with a warning) the
+// outcome is reported as unknown and the persistent messages are counted apart, as `uncertain`.
+
+namespace
+{
+    // The text the session uses when it cannot tell; it must never contain the certain phrase.
+    const char * kRemain = "remain on the queue";
+
+    const MQLONG kQuiescing[] = { MQRC_Q_MGR_QUIESCING, MQRC_Q_MGR_STOPPING, MQRC_CONNECTION_QUIESCING };
+
+    bool contains(const std::string & text, const char * part)
+    {
+        return text.find(part) != std::string::npos;
+    }
+}
+
+TEST_F(MqSessionFakeTest, AQuiescingConnectionIsBackedOutBeforeItIsReleasedAndSaysWhatRemains)
+{
+    for (MQLONG quiescing : kQuiescing)
+    {
+        SCOPED_TRACE(quiescing);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        addPurgeMessages(10, true);
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = quiescing;
+
+        MQLONG purged = -1;
+        MQLONG uncertain = -1;
+        Result r = local.purge(kPurgeQueue, purged, syncpointOptions(3), uncertain);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ(quiescing, r.rc);
+        EXPECT_FALSE(local.isConnected());
+        EXPECT_EQ(3, purged) << "the commit after 3 worked";
+        EXPECT_EQ(0, uncertain);
+        EXPECT_EQ((std::vector<std::string>{ "cmit", "back", "disc" }), fake.callOrder) << "MQBACK before MQDISC, which would commit";
+        EXPECT_EQ(7u, queued()) << "the two got after the commit went back to the queue";
+        EXPECT_TRUE(contains(r.text, "2 persistent messages")) << r.text;
+        EXPECT_TRUE(contains(r.text, kRemain)) << r.text;
+        EXPECT_TRUE(fake.liveHandles.empty());
+    }
+}
+
+TEST_F(MqSessionFakeTest, AFailedBackOutOfAQuiescingConnectionMakesTheOutcomeUnknown)
+{
+    for (bool queueManagerCommitted : { false, true })
+    {
+        SCOPED_TRACE(queueManagerCommitted);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        addPurgeMessages(10, true);
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = MQRC_Q_MGR_QUIESCING;
+        fake.backRc = MQRC_CONNECTION_BROKEN;
+        fake.lostUnitCommits = queueManagerCommitted;
+
+        MQLONG purged = -1;
+        MQLONG uncertain = -1;
+        Result r = local.purge(kPurgeQueue, purged, syncpointOptions(3), uncertain);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ(3, purged) << "only what the commit made certain";
+        EXPECT_EQ(2, uncertain);
+        EXPECT_EQ(queueManagerCommitted ? 5u : 7u, queued()) << "the fake settled the unit as the queue manager might have";
+        EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+        EXPECT_TRUE(contains(r.text, "2 persistent messages")) << r.text;
+        EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+        EXPECT_FALSE(local.isConnected());
+    }
+}
+
+TEST_F(MqSessionFakeTest, ALostConnectionLeavesThePurgedMessagesUnknownWhicheverWayTheQueueManagerWent)
+{
+    for (bool queueManagerCommitted : { false, true })
+    {
+        SCOPED_TRACE(queueManagerCommitted);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        addPurgeMessages(10, true);
+        fake.failGetsAfter = 5;
+        fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+        fake.lostUnitCommits = queueManagerCommitted;
+
+        MQLONG purged = -1;
+        MQLONG uncertain = -1;
+        Result r = local.purge(kPurgeQueue, purged, syncpointOptions(3), uncertain);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+        EXPECT_EQ(3, purged);
+        EXPECT_EQ(2, uncertain);
+        EXPECT_EQ(queueManagerCommitted ? 5u : 7u, queued());
+        EXPECT_FALSE(contains(r.text, kRemain)) << "the old text claimed this and was wrong when the queue manager committed: " << r.text;
+        EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+        EXPECT_TRUE(contains(r.text, "after 3 messages")) << r.text;
+        EXPECT_EQ((std::vector<std::string>{ "cmit", "disc" }), fake.callOrder) << "a broken connection is not backed out, only released";
+    }
+}
+
+TEST_F(MqSessionFakeTest, AWarningFromTheCommitInThePurgeLoopStopsThePurgeWithAnUnknownOutcome)
+{
+    for (MQLONG warning : { MQRC_OUTCOME_MIXED, MQRC_OUTCOME_PENDING })
+    {
+        SCOPED_TRACE(warning);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        addPurgeMessages(10, true);
+        fake.cmitRc = warning;
+        fake.cmitCc = MQCC_WARNING;
+
+        MQLONG purged = -1;
+        MQLONG uncertain = -1;
+        Result r = local.purge(kPurgeQueue, purged, syncpointOptions(2), uncertain);
+        EXPECT_FALSE(r.ok()) << "a purge cannot go on over a batch whose fate it does not know";
+        EXPECT_EQ(0, purged);
+        EXPECT_EQ(2, uncertain);
+        EXPECT_EQ(2, fake.getCalls);
+        EXPECT_EQ(1, fake.commitCalls);
+        EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+        EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+        EXPECT_TRUE(contains(r.text, "after 0 messages")) << r.text;
+        EXPECT_TRUE(local.isConnected());
+    }
+}
+
+TEST_F(MqSessionFakeTest, AConnectionLostDuringTheCommitLeavesTheBatchUnknown)
+{
+    for (bool queueManagerCommitted : { false, true })
+    {
+        SCOPED_TRACE(queueManagerCommitted);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        addPurgeMessages(3, true);
+        fake.cmitRc = MQRC_CONNECTION_BROKEN;
+        fake.lostUnitCommits = queueManagerCommitted;
+
+        // the final commit, after the queue was found empty
+        MQLONG purged = -1;
+        MQLONG uncertain = -1;
+        Result r = local.purge(kPurgeQueue, purged, syncpointOptions(100), uncertain);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ(0, purged);
+        EXPECT_EQ(3, uncertain);
+        EXPECT_EQ(queueManagerCommitted ? 0u : 3u, queued());
+        EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+        EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+        EXPECT_FALSE(local.isConnected());
+    }
+}
+
+TEST_F(MqSessionFakeTest, AConnectionLostDuringACommitInTheLoopLeavesThatBatchUnknown)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.cmitRc = MQRC_CONNECTION_BROKEN;
+    MQLONG purged = -1;
+    MQLONG uncertain = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(2), uncertain);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(2, uncertain);
+    EXPECT_EQ(2, fake.getCalls);
+    EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+    EXPECT_FALSE(session.isConnected());
+}
+
+TEST_F(MqSessionFakeTest, ACommitThatFailsOtherwiseLeavesTheUnitOpenAndTheOutcomeUnknownUntilRolledBack)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.cmitRc = MQRC_STORAGE_NOT_AVAILABLE;
+    MQLONG purged = -1;
+    MQLONG uncertain = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(2), uncertain);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(2, uncertain);
+    EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+    EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+    EXPECT_TRUE(session.isConnected());
+    EXPECT_EQ(2u, fake.pendingGets.size()) << "MQ keeps the unit of work open";
+    EXPECT_EQ(8u, queued());
+
+    Result back = session.rollback();
+    EXPECT_TRUE(back.ok()) << back.text;
+    EXPECT_EQ(10u, queued()) << "rollback() gives the caller the means to settle it";
+}
+
+TEST_F(MqSessionFakeTest, ABackedOutUnitOfWorkReallyLeavesTheMessagesOnTheQueue)
+{
+    // 2003 is MQ's own word that the unit was backed out, so "remain on the queue" is certain here
+    connect();
+    addPurgeMessages(10, true);
+    fake.cmitRc = MQRC_BACKED_OUT;
+    MQLONG purged = -1;
+    MQLONG uncertain = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(2), uncertain);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(0, purged);
+    EXPECT_EQ(0, uncertain);
+    EXPECT_EQ(10u, queued());
+    EXPECT_TRUE(contains(r.text, "2 persistent messages")) << r.text;
+    EXPECT_TRUE(contains(r.text, kRemain)) << r.text;
+
+    // and a get that is told 2003 has had its unit backed out by MQ
+    fake.reset();
+    MqSession local(fakeApi());
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    ASSERT_TRUE(local.connect(options).ok());
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 3;
+    fake.failGetsRc = MQRC_BACKED_OUT;
+    r = local.purge(kPurgeQueue, purged, syncpointOptions(2), uncertain);
+    EXPECT_EQ(2, purged);
+    EXPECT_EQ(8u, queued());
+    EXPECT_TRUE(contains(r.text, kRemain)) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, PurgeWithoutAnOutcomeOutParameterStillReportsTheUncertainBatch)
+{
+    connect();
+    addPurgeMessages(10, true);
+    fake.failGetsAfter = 5;
+    fake.failGetsRc = MQRC_CONNECTION_BROKEN;
+    MQLONG purged = -1;
+    Result r = session.purge(kPurgeQueue, purged, syncpointOptions(3));
+    EXPECT_EQ(3, purged);
+    EXPECT_TRUE(contains(r.text, "2 persistent messages")) << r.text;
+    EXPECT_TRUE(contains(r.text, "unknown outcome")) << r.text;
+}
+
+// ---- commit() and rollback() ----
+
+TEST_F(MqSessionFakeTest, CommitAfterALostConnectionSaysTheOutcomeIsUnknown)
+{
+    connect();
+    fake.cmitRc = MQRC_CONNECTION_BROKEN;
+    Result r = session.commit();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_TRUE(contains(r.text, "outcome of the unit of work is unknown")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, CommitThatEndsWithAWarningIsOkButSaysTheOutcomeIsUnknown)
+{
+    for (MQLONG warning : { MQRC_OUTCOME_MIXED, MQRC_OUTCOME_PENDING })
+    {
+        SCOPED_TRACE(warning);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        fake.cmitRc = warning;
+        fake.cmitCc = MQCC_WARNING;
+        Result r = local.commit();
+        EXPECT_TRUE(r.ok());
+        EXPECT_EQ(warning, r.rc);
+        ASSERT_EQ(1u, r.warnings.size());
+        EXPECT_TRUE(contains(r.warnings[0], "outcome of the unit of work is unknown")) << r.warnings[0];
+        EXPECT_TRUE(local.isConnected());
+    }
+}
+
+TEST_F(MqSessionFakeTest, CommitThatFindsTheConnectionQuiescingBacksTheUnitOutAndSaysSo)
+{
+    connect();
+    fake.cmitRc = MQRC_Q_MGR_QUIESCING;
+    Result r = session.commit();
+    EXPECT_FALSE(r.ok());
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ((std::vector<std::string>{ "cmit", "back", "disc" }), fake.callOrder);
+    EXPECT_TRUE(contains(r.text, "backed out")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, RollbackDiscardsThePendingSyncpointPuts)
+{
+    connect();
+    fake.queue("RFHUTIL.TEST.OTHER");
+    PutOptions put;
+    put.syncpoint = true;
+    Message m = putText();
+    ASSERT_TRUE(session.put("RFHUTIL.TEST.OTHER", m, put).ok());
+    ASSERT_EQ(1u, fake.pendingPuts.size());
+
+    Result r = session.rollback();
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(1, fake.backCalls);
+    EXPECT_EQ(0u, fake.pendingPuts.size());
+    EXPECT_TRUE(session.isConnected());
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(0u, fake.queue("RFHUTIL.TEST.OTHER").messages.size()) << "nothing was left to publish";
+}
+
+TEST_F(MqSessionFakeTest, RollbackWithoutAConnectionFails)
+{
+    Result r = session.rollback();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Not connected to a queue manager", r.text);
+    EXPECT_EQ(0, fake.backCalls);
+}
+
+TEST_F(MqSessionFakeTest, RollbackThatFindsTheConnectionLostSaysTheOutcomeIsUnknown)
+{
+    connect();
+    fake.backRc = MQRC_CONNECTION_BROKEN;
+    Result r = session.rollback();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(MQRC_CONNECTION_BROKEN, r.rc);
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_TRUE(contains(r.text, "outcome of the unit of work is unknown")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, RollbackRefusedWithQuiescingDoesNotBackOutAgain)
+{
+    connect();
+    fake.backRc = MQRC_Q_MGR_QUIESCING;
+    Result r = session.rollback();
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ(1, fake.backCalls) << "the failing MQBACK is not repeated by the release";
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(1, fake.discCalls);
+    EXPECT_TRUE(contains(r.text, "outcome of the unit of work is unknown")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, RollbackThatFailsOtherwiseKeepsTheConnection)
+{
+    connect();
+    fake.backRc = MQRC_UNEXPECTED_ERROR;
+    Result r = session.rollback();
+    EXPECT_FALSE(r.ok());
+    EXPECT_TRUE(session.isConnected());
+}
+
+TEST(MqSessionFakeApi, ApiWithoutABackEntryIsRejected)
+{
+    fake.reset();
+    MqApi api = fakeApi();
+    api.back = nullptr;
+    MqSession session(api);
+
+    ConnectOptions options;
+    options.mode = Mode::Bindings;
+    Result r = session.connect(options);
+    EXPECT_FALSE(r.ok());
+    EXPECT_EQ("Injected MQ API is incomplete", r.text);
+    EXPECT_EQ(0, fake.connxCalls);
+}
+
+// ---- puts under syncpoint on a connection that is lost ----
+
+TEST_F(MqSessionFakeTest, ASyncpointPutOnAQuiescingConnectionSaysTheEarlierWorkWasBackedOut)
+{
+    connect();
+    fake.queue(kPurgeQueue);
+    PutOptions put;
+    put.syncpoint = true;
+    Message first = putText();
+    ASSERT_TRUE(session.put(kPurgeQueue, first, put).ok());
+    fake.failPutsAfter = 1;
+    fake.failPutsRc = MQRC_Q_MGR_QUIESCING;
+    Message second = putText();
+    Result r = session.put(kPurgeQueue, second, put);
+    EXPECT_FALSE(r.ok());
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ((std::vector<std::string>{ "back", "disc" }), fake.callOrder);
+    EXPECT_EQ(0u, queued()) << "the first put was backed out, not published by MQDISC";
+    EXPECT_TRUE(contains(r.text, "backed out")) << r.text;
+    EXPECT_FALSE(contains(r.text, "unknown")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, ASyncpointPutOnABrokenConnectionSaysTheEarlierWorkIsUnknown)
+{
+    for (bool queueManagerCommitted : { false, true })
+    {
+        SCOPED_TRACE(queueManagerCommitted);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        fake.queue(kPurgeQueue);
+        PutOptions put;
+        put.syncpoint = true;
+        Message first = putText();
+        ASSERT_TRUE(local.put(kPurgeQueue, first, put).ok());
+        fake.failPutsAfter = 1;
+        fake.failPutsRc = MQRC_CONNECTION_BROKEN;
+        fake.lostUnitCommits = queueManagerCommitted;
+        Message second = putText();
+        Result r = local.put(kPurgeQueue, second, put);
+        EXPECT_FALSE(r.ok());
+        EXPECT_EQ(queueManagerCommitted ? 1u : 0u, queued());
+        EXPECT_TRUE(contains(r.text, "unknown")) << r.text;
+        EXPECT_FALSE(contains(r.text, kRemain)) << r.text;
+        EXPECT_EQ(0, fake.backCalls);
+    }
+}
+
+TEST_F(MqSessionFakeTest, ASyncpointPutWhoseOpenFindsTheConnectionQuiescingSaysTheEarlierWorkWasBackedOut)
+{
+    connect();
+    fake.queue(kPurgeQueue);
+    PutOptions put;
+    put.syncpoint = true;
+    Message first = putText();
+    ASSERT_TRUE(session.put(kPurgeQueue, first, put).ok());
+    fake.openRcByName["RFHUTIL.TEST.OTHER"] = MQRC_CONNECTION_QUIESCING;
+    Message second = putText();
+    Result r = session.put("RFHUTIL.TEST.OTHER", second, put);
+    EXPECT_FALSE(r.ok());
+    EXPECT_FALSE(session.isConnected());
+    EXPECT_EQ(0u, queued()) << "backed out, not published by MQDISC";
+    EXPECT_TRUE(contains(r.text, "backed out")) << r.text;
+}
+
+TEST_F(MqSessionFakeTest, APutWithoutSyncpointAddsNoUnitOfWorkNoteWhenTheConnectionIsLost)
+{
+    connect();
+    fake.putRc = MQRC_Q_MGR_QUIESCING;
+    Message m = putText();
+    Result r = session.put(kPurgeQueue, m, PutOptions());
+    EXPECT_FALSE(r.ok());
+    EXPECT_FALSE(contains(r.text, "unit of work")) << r.text;
+    EXPECT_FALSE(contains(r.text, "syncpoint")) << r.text;
+}
+
+TEST(FakeMq, AnUnusedSessionCommitsPendingPutsWhenItIsDestroyed)
+{
+    fake.reset();
+    fake.queue("RFHUTIL.TEST.Q");
+    {
+        MqSession session(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(session.connect(options).ok());
+        PutOptions put;
+        put.syncpoint = true;
+        Message m;
+        m.body.assign({'a'});
+        ASSERT_TRUE(session.put("RFHUTIL.TEST.Q", m, put).ok());
+    }
+    EXPECT_EQ(1u, fake.queue("RFHUTIL.TEST.Q").messages.size()) << "~MqSession disconnects, and MQDISC commits";
+}
+
+// ---- reasons that release the connection, and closeQueue ----
+
+TEST_F(MqSessionFakeTest, ConnectionStoppingAndAHandleErrorReleaseTheConnection)
+{
+    for (MQLONG rc : { MQRC_CONNECTION_STOPPING, MQRC_HCONN_ERROR })
+    {
+        SCOPED_TRACE(rc);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions options;
+        options.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(options).ok());
+        fake.openRc = rc;
+        Message m;
+        Result r = local.get("Q", m, GetOptions());
+        EXPECT_EQ(rc, r.rc);
+        EXPECT_FALSE(local.isConnected());
+        EXPECT_EQ(1, fake.discCalls);
+        EXPECT_EQ(0, fake.backCalls) << "neither says the connection can still be used";
+    }
+}
+
+TEST_F(MqSessionFakeTest, ACloseThatFailsBecauseTheQueueManagerIsQuiescingReleasesTheConnection)
+{
+    connect();
+    Message m;
+    ASSERT_TRUE(session.get("Q", m, GetOptions()).ok());
+    fake.closeRc = MQRC_Q_MGR_QUIESCING;
+    Result r = session.closeQueue();
+    EXPECT_EQ(MQRC_Q_MGR_QUIESCING, r.rc);
+    EXPECT_FALSE(session.isConnected()) << "the early return for a live handle skipped the release";
+    EXPECT_EQ(1, fake.discCalls);
+    EXPECT_EQ((std::vector<std::string>{ "back", "disc" }), fake.callOrder);
+}
+
+// ---- the browse handle of a purged queue ----
+
+TEST_F(MqSessionFakeTest, PurgeOfTheBrowsedQueueClosesTheBrowseHandleSoTheNextBrowseStartsClean)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    ASSERT_EQ(2, session.browsePosition());
+    const int opensBefore = fake.openCalls;
+
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(kBrowseQueue, purged).ok());
+    EXPECT_EQ(opensBefore + 1, fake.openCalls);
+    EXPECT_EQ(2, fake.closeCalls) << "the purge's own handle and the browse handle";
+    EXPECT_EQ(0u, fake.liveHandles.size()) << "the browse handle is closed, not just forgotten";
+    EXPECT_EQ(0, session.browsePosition());
+
+    addNamedMessages(kBrowseQueue, 2);
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseNext)).ok());
+    EXPECT_EQ(opensBefore + 2, fake.openCalls) << "a new handle, whose cursor is before the first message";
+    EXPECT_EQ(1, session.browsePosition());
+}
+
+TEST_F(MqSessionFakeTest, PurgeThatCannotOpenTheQueueKeepsTheBrowseHandle)
+{
+    fake.browseCursors = true;
+    connect();
+    addNamedMessages(kBrowseQueue, 3);
+    Message m;
+    ASSERT_TRUE(session.get(kBrowseQueue, m, modeOptions(GetMode::BrowseFirst)).ok());
+    fake.openRcByName[kBrowseQueue] = MQRC_OBJECT_IN_USE;
+    MQLONG purged = 0;
+    EXPECT_FALSE(session.purge(kBrowseQueue, purged).ok());
+    EXPECT_EQ(1, session.browsePosition()) << "nothing was removed, so the browse is undisturbed";
+    EXPECT_EQ(1u, fake.liveHandles.size());
 }

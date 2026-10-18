@@ -32,6 +32,7 @@ namespace rfh
 		decltype(&::MQGET) get = nullptr;
 		decltype(&::MQINQ) inq = nullptr;
 		decltype(&::MQCMIT) cmit = nullptr;		// both mqm and mqic export it; a library without it is unusable
+		decltype(&::MQBACK) back = nullptr;		// likewise (Windows' rollbackUOW uses it); MqSession::rollback and the back-out before a disconnect need it
 
 		bool serverLibrary = false;		// the library can make local connections (mqm); false for the client library
 		// A local queue manager can be reached: serverLibrary and, on Linux,

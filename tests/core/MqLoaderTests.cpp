@@ -72,6 +72,7 @@ TEST(MqLoader, LoadsALibraryWithAllEntryPoints)
     EXPECT_NE(nullptr, api.get);
     EXPECT_NE(nullptr, api.inq);
     EXPECT_NE(nullptr, api.cmit) << "MQCMIT must resolve in " << api.libraryPath;
+    EXPECT_NE(nullptr, api.back) << "MQBACK must resolve in " << api.libraryPath;
     EXPECT_FALSE(api.libraryPath.empty());
     EXPECT_EQ(api.libraryPath.find("libmqm_r") != std::string::npos, api.serverLibrary);
 
@@ -116,9 +117,26 @@ TEST(MqLoader, ALibraryWithoutMqcmitFailsNamingTheEntryPoint)
 }
 #endif
 
+#ifdef RFH_STUB_NO_BACK
+TEST(MqLoader, ALibraryWithoutMqbackFailsNamingTheEntryPoint)
+{
+    MqApi api;
+    detail::LibraryCandidate stub;
+    stub.path = RFH_STUB_NO_BACK;
+    stub.serverLibrary = true;
+    Result r = detail::loadFrom({stub}, api);
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("IBM MQ library unusable")) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find("missing entry point MQBACK")) << r.text;
+    EXPECT_NE(std::string::npos, r.text.find(RFH_STUB_NO_BACK)) << r.text;
+    EXPECT_EQ(nullptr, api.connx) << "a failed load leaves the caller's MqApi untouched";
+    EXPECT_EQ(nullptr, api.back);
+}
+#endif
+
 #ifndef _WIN32
-// Both libraries the loader may pick must export MQCMIT; the one it picks first is checked above.
-TEST(MqLoader, EveryInstalledLibraryExportsMqcmit)
+// Both libraries the loader may pick must export MQCMIT and MQBACK; the one it picks first is checked above.
+TEST(MqLoader, EveryInstalledLibraryExportsMqcmitAndMqback)
 {
     const char * home = getenv("MQ_INSTALLATION_PATH");
     const std::string root = (home != nullptr && home[0] != 0) ? home : "/opt/mqm";
@@ -137,6 +155,7 @@ TEST(MqLoader, EveryInstalledLibraryExportsMqcmit)
         }
         ASSERT_NE(nullptr, h) << c.path << ": " << dlerror();
         EXPECT_NE(nullptr, dlsym(h, "MQCMIT")) << c.path << " lacks MQCMIT";
+        EXPECT_NE(nullptr, dlsym(h, "MQBACK")) << c.path << " lacks MQBACK";
         checked++;
     }
     if (checked == 0)

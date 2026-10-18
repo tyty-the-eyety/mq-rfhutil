@@ -15,7 +15,6 @@
 
 #include <gtest/gtest.h>
 
-#include <dlfcn.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1346,29 +1345,6 @@ TEST_F(MqBindingsTest, InputSharedLetsASecondSessionOpenAQueueWhoseDefaultIsExcl
 
 namespace
 {
-    // MQBACK is not in MqApi (Windows' rollbackUOW is not part of this task), so the test resolves it from the
-    // library the session loaded. The library is already in the process; RTLD_NOLOAD never loads another one.
-    bool backOut(MQHCONN connection, MQLONG & cc, MQLONG & rc)
-    {
-        MqApi api;
-        if (!MqLoader::load(api).ok())
-        {
-            return false;
-        }
-        void * library = dlopen(api.libraryPath.c_str(), RTLD_NOW | RTLD_NOLOAD);
-        if (library == nullptr)
-        {
-            return false;
-        }
-        decltype(&::MQBACK) back = reinterpret_cast<decltype(&::MQBACK)>(dlsym(library, "MQBACK"));
-        if (back == nullptr)
-        {
-            return false;
-        }
-        back(connection, &cc, &rc);
-        return true;
-    }
-
     MQLONG depthOf(MqSession & s, const char * queue)
     {
         MQLONG count = -1;
@@ -1415,48 +1391,111 @@ TEST_F(MqBindingsTest, SyncpointPutsAreInvisibleToAnotherSessionUntilTheyAreComm
     ASSERT_TRUE(other.disconnect().ok());
 }
 
-TEST_F(MqBindingsTest, ASyncpointPutThatIsBackedOutNeverBecomesVisible)
+TEST_F(MqBindingsTest, ASyncpointPutThatIsRolledBackNeverBecomesVisible)
 {
-    // MqSession has no back-out and does not expose its connection handle, so the test makes a connection of
-    // its own with the loaded entry points, puts under syncpoint exactly as MqSession::put does, and backs out.
     ConnectOptions connectOptions;
     connectOptions.mode = Mode::Bindings;
     connectOptions.qmName = bindingsQm();
     MqSession other;
     ASSERT_TRUE(other.connect(connectOptions).ok());
 
-    MqApi api;
-    ASSERT_TRUE(MqLoader::load(api).ok());
-    MQHCONN raw = MQHC_UNUSABLE_HCONN;
-    MQCNO cno = { MQCNO_DEFAULT };
-    cno.Options = MQCNO_STANDARD_BINDING;
-    MQLONG cc = MQCC_OK;
-    MQLONG rc = MQRC_NONE;
-    std::string qmName = bindingsQm();
-    api.connx(const_cast<char *>(qmName.c_str()), &cno, &raw, &cc, &rc);
-    ASSERT_EQ(MQCC_OK, cc) << rc;
-
-    MQOD od = { MQOD_DEFAULT };
-    strncpy(od.ObjectName, kQueue, sizeof(od.ObjectName));
-    MQHOBJ obj = MQHO_UNUSABLE_HOBJ;
-    api.open(raw, &od, MQOO_OUTPUT | MQOO_FAIL_IF_QUIESCING, &obj, &cc, &rc);
-    ASSERT_EQ(MQCC_OK, cc) << rc;
-    MQMD md = { MQMD_DEFAULT };
-    MQPMO pmo = { MQPMO_DEFAULT };
-    pmo.Options = MQPMO_SYNCPOINT | MQPMO_NEW_MSG_ID;
-    char text[] = "backed out";
-    api.put(raw, obj, &md, &pmo, (MQLONG)strlen(text), text, &cc, &rc);
-    ASSERT_EQ(MQCC_OK, cc) << rc;
+    PutOptions options;
+    options.syncpoint = true;
+    Message out = textMessage("rolled back");
+    ASSERT_TRUE(session.put(kQueue, out, options).ok());
     EXPECT_EQ(1, depthOf(other, kQueue)) << "the uncommitted put is counted";
-    ASSERT_TRUE(backOut(raw, cc, rc));
-    EXPECT_EQ(MQCC_OK, cc) << rc;
-    api.close(raw, &obj, MQCO_NONE, &cc, &rc);
-    api.disc(&raw, &cc, &rc);
 
+    Result rolled = session.rollback();
+    ASSERT_TRUE(rolled.ok()) << rolled.text;
+    EXPECT_TRUE(session.isConnected());
     EXPECT_EQ(0, depthOf(other, kQueue));
     Message in;
     EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, other.get(kQueue, in, GetOptions()).rc);
+
+    // a commit after the rollback has nothing to publish, and the queue handle is still usable
+    ASSERT_TRUE(session.commit().ok());
+    EXPECT_EQ(0, depthOf(other, kQueue));
     ASSERT_TRUE(other.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, RollbackWithNothingPendingSucceeds)
+{
+    Result r = session.rollback();
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc);
+}
+
+TEST_F(MqBindingsTest, APurgeWithSyncpointCommitsTheEarlierSyncpointPutsOfTheSessionToo)
+{
+    // The unit of work belongs to the connection, so a purge's commit (and commit()) publishes every
+    // syncpoint put the session made before it, and a purge that fails with 2003 backs them out with it.
+    // This is why PurgeOptions and commit() say the unit is connection-wide.
+    TempQueue other("RFHUTIL.TEST.PURGEUOW", "");
+    ASSERT_TRUE(other.created);
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession watcher;
+    ASSERT_TRUE(watcher.connect(connectOptions).ok());
+
+    PutOptions put;
+    put.syncpoint = true;
+    Message earlier = textMessage("earlier");
+    ASSERT_TRUE(session.put(kQueue, earlier, put).ok());
+    Message victim = textMessage("victim");
+    ASSERT_TRUE(session.put(other.name, victim, PutOptions()).ok());
+    Message in;
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, watcher.get(kQueue, in, GetOptions()).rc) << "not published yet";
+
+    PurgeOptions purge;
+    purge.syncpoint = true;
+    MQLONG purged = 0;
+    ASSERT_TRUE(session.purge(other.name, purged, purge).ok());
+    EXPECT_EQ(1, purged);
+
+    ASSERT_TRUE(watcher.get(kQueue, in, GetOptions()).ok()) << "the purge's commit published the earlier put on another queue";
+    EXPECT_EQ("earlier", bodyText(in));
+    ASSERT_TRUE(watcher.disconnect().ok());
+}
+
+TEST_F(MqBindingsTest, ABrowseRetryWithDuplicateMsgIdsStillAdvances)
+{
+    // Replayed messages can share a MsgId. Reading the message again by MsgId found the first of them and
+    // the browse did not move on; the retry now reads the message under the cursor.
+    MQBYTE24 shared = { 'D', 'U', 'P', 'M', 'S', 'G', 'I', 'D' };
+    const std::string bodies[] = { std::string(2000, 'x'), std::string(2000, 'y'), "z" };
+    for (const std::string & body : bodies)
+    {
+        Message m = textMessage(body);
+        m.mqmd.CodedCharSetId = 1208;
+        memcpy(m.mqmd.MsgId, shared, sizeof(shared));
+        PutOptions put;
+        put.newMsgId = false;
+        ASSERT_TRUE(session.put(kQueue, m, put).ok());
+    }
+
+    GetOptions browse;
+    browse.mode = GetMode::BrowseFirst;
+    browse.convert = true;
+    browse.convertCcsid = 1200;
+    browse.initialBufferSize = 2500;
+
+    Message m;
+    Result first = session.get(kQueue, m, browse);
+    ASSERT_TRUE(first.ok()) << first.text;
+    ASSERT_EQ(4000u, m.body.size());
+    EXPECT_EQ('x', m.body[0]) << "UCS-2, little endian";
+
+    browse.mode = GetMode::BrowseNext;
+    Result second = session.get(kQueue, m, browse);
+    ASSERT_TRUE(second.ok()) << second.text;
+    ASSERT_EQ(4000u, m.body.size());
+    EXPECT_EQ('y', m.body[0]) << "not the first message again";
+
+    Result third = session.get(kQueue, m, browse);
+    ASSERT_TRUE(third.ok()) << third.text;
+    ASSERT_EQ(2u, m.body.size());
+    EXPECT_EQ('z', m.body[0]);
 }
 
 TEST_F(MqBindingsTest, ADisconnectWithoutACommitCommitsTheSyncpointPuts)
@@ -1663,4 +1702,113 @@ TEST_F(MqBindingsTest, PropertiesModeSurvivesABrowsePrevious)
     Result r = session.get(kQueue, m, get);
     ASSERT_TRUE(r.ok()) << r.text;
     EXPECT_EQ("b1", bodyText(m));
+}
+
+// ---- retries combined with group options, and the selector limit (cleanup of Tasks 13/14/19) ----
+//
+// Both buffer-growth retries add MQMO_MATCH_MSG_ID to a get that may carry MQGMO_LOGICAL_ORDER and
+// MQGMO_COMPLETE_MSG. The fake cannot say whether real MQ accepts that combination (it applies no option
+// rules), so these run against the queue manager.
+
+namespace
+{
+    // Three messages of one group, each 2000 'a' (4000 bytes in CCSID 1200), put in group order.
+    void putThreeMessageGroup(MqSession & s, const char * queue, const unsigned char (&group)[24])
+    {
+        for (MQLONG seq = 1; seq <= 3; seq++)
+        {
+            Message m = groupMessage(std::string(2000, (char)('a' + seq - 1)), group, seq, seq == 3);
+            m.mqmd.CodedCharSetId = 1208;
+            Result r = s.put(queue, m, PutOptions());
+            ASSERT_TRUE(r.ok()) << r.text;
+        }
+    }
+
+    GetOptions groupBrowse(GetMode mode)
+    {
+        GetOptions o;
+        o.mode = mode;
+        o.logicalOrder = true;
+        o.completeMsg = true;
+        o.allAvailable = true;
+        return o;
+    }
+}
+
+TEST_F(MqBindingsTest, TheTruncationRetryIsAcceptedWithLogicalOrderAndCompleteMsgOnABrowse)
+{
+    const unsigned char group[24] = { 'T', 'R', 'U', '1', 'T', 'R', 'U', '1', 'T', 'R', 'U', '1', 'T', 'R', 'U', '1', 'T', 'R', 'U', '1', 'T', 'R', 'U', '1' };
+    putThreeMessageGroup(session, kQueue, group);
+
+    GetOptions options = groupBrowse(GetMode::BrowseFirst);
+    options.initialBufferSize = 100;
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(std::string(2000, 'a'), bodyText(in));
+
+    options.mode = GetMode::BrowseNext;
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(std::string(2000, 'b'), bodyText(in)) << "a browse next goes on after the retry";
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(std::string(2000, 'c'), bodyText(in));
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, session.get(kQueue, in, options).rc);
+}
+
+TEST_F(MqBindingsTest, TheConvertedTooBigRetryIsAcceptedWithLogicalOrderAndCompleteMsgOnABrowse)
+{
+    const unsigned char group[24] = { 'C', 'V', 'T', '1', 'C', 'V', 'T', '1', 'C', 'V', 'T', '1', 'C', 'V', 'T', '1', 'C', 'V', 'T', '1', 'C', 'V', 'T', '1' };
+    putThreeMessageGroup(session, kQueue, group);
+
+    GetOptions options = groupBrowse(GetMode::BrowseFirst);
+    options.convert = true;
+    options.convertCcsid = 1200;
+    options.initialBufferSize = 2500;	// holds the 2000 bytes MQ reads, not the 4000 it converts to
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc) << r.text;
+    EXPECT_EQ(4000u, in.body.size());
+    EXPECT_EQ(1200, in.mqmd.CodedCharSetId);
+
+    // The retry of a browse next restarts the browse with MQGMO_BROWSE_FIRST matched on the MsgId.
+    options.mode = GetMode::BrowseNext;
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(MQRC_NONE, r.rc) << r.text;
+    ASSERT_EQ(4000u, in.body.size());
+    EXPECT_EQ('b', in.body[0]) << "UCS-2 little endian of the second message";
+
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    ASSERT_EQ(4000u, in.body.size());
+    EXPECT_EQ('c', in.body[0]) << "the third message";
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, session.get(kQueue, in, options).rc);
+}
+
+TEST_F(MqBindingsTest, ASelectorOfTheFullHeaderLengthIsAcceptedAndOneByteMoreIsNot)
+{
+    // MQ_SELECTOR_LENGTH is 10240 in cmqc.h and the selector travels as an MQCHARV with a length, so no
+    // terminator takes a byte from it. 10240 bytes are legal; the queue manager decides about more.
+    if (session.queueManagerInfo().commandLevel < MQCMDL_LEVEL_700)
+    {
+        GTEST_SKIP() << "selectors need command level 700";
+    }
+
+    const std::string prefix = "color = '";
+    GetOptions options;
+    options.selector = prefix + std::string(MQ_SELECTOR_LENGTH - prefix.size() - 1, 'x') + "'";
+    ASSERT_EQ((size_t)MQ_SELECTOR_LENGTH, options.selector.size());
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << "opened with the longest selector, found nothing: " << r.text;
+
+    options.selector = prefix + std::string(MQ_SELECTOR_LENGTH - prefix.size(), 'x') + "'";
+    ASSERT_EQ((size_t)MQ_SELECTOR_LENGTH + 1, options.selector.size());
+    r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_NE(MQRC_NO_MSG_AVAILABLE, r.rc) << r.text;
+    ASSERT_TRUE(session.isConnected());
 }

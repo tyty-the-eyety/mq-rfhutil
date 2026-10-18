@@ -6,6 +6,17 @@
 // it may be used from another thread than the one that connected (for example to
 // destroy it), but a session is not safe for concurrent use: call it from one
 // thread at a time (the Qt application gives it a dedicated worker thread).
+//
+// UNITS OF WORK. The connection has one unit of work and the session keeps no state about it. A put with
+// PutOptions::syncpoint and a purge with PurgeOptions::syncpoint join it; commit() publishes it and rollback()
+// backs it out, both for everything the connection has pending, not only the call that came last. MQDISC
+// (disconnect(), ~MqSession and the release of a lost connection) COMMITS what is pending, so a session that is
+// simply dropped publishes its syncpoint puts. A connection that reports quiescing (2161, 2162, 2202) is still
+// healthy, so the session backs its unit of work out with MQBACK before it releases it, rather than let MQDISC
+// publish it; a connection that broke (2009, 2018, 2203) cannot be backed out and the queue manager settles its
+// unit by itself. The calls that take part in syncpoint (put with syncpoint, commit, rollback, purge with
+// syncpoint) say in their failure text whether the unit was backed out or its outcome is unknown, and never
+// claim a message "remains on the queue" unless a back-out is certain.
 #pragma once
 
 #include <cmqc.h>
@@ -91,7 +102,10 @@ namespace rfh
 		bool logicalOrder = false;			// MQPMO_LOGICAL_ORDER (and a version 2 MQPMO, as Windows sets)
 		// MQPMO_SYNCPOINT instead of MQPMO_NO_SYNCPOINT. Windows has no such choice: it puts under syncpoint
 		// exactly when the MQMD tab marks a group or segment message (6342-6351), so the caller sets this
-		// from those flags. The put never commits; see MqSession::commit.
+		// from those flags. The put itself does not commit, but nothing keeps a later call or the end of
+		// the session from committing it: MqSession::commit() and a syncpoint purge commit the whole
+		// connection, and disconnect() and ~MqSession commit through MQDISC. Only rollback() (MQBACK), a
+		// 2003, or the back-out of a quiescing connection discards it. See MqSession::commit.
 		bool syncpoint = false;
 		// MQOO_ALTERNATE_USER_AUTHORITY with this user id at open; empty means none. At most 12 characters are
 		// used, as in Windows, and a warning says so. It belongs to the queue handle: a put with another id
@@ -121,11 +135,13 @@ namespace rfh
 		// browse grows the buffer and repeats; a destructive get has already removed the
 		// message, so a 2120/2190 warning delivers the unconverted data. Browse first
 		// when that matters.
-		// When a converted message is too big for the buffer during a browse, the
-		// message is re-read by matching its MsgId. If several messages share that MsgId
-		// (e.g. replayed with newMsgId=false), the re-read can return an earlier message
-		// with the same MsgId, and the browse does not advance past it.
-		// In that case the re-read is reported as success, and browse positions after it are unreliable.
+		// When a converted message is too big for the buffer during a browse (2120, 2190), MQ has moved
+		// the browse cursor onto it, so it is read again with MQGMO_BROWSE_MSG_UNDER_CURSOR and a larger
+		// buffer. Every other option is sent again unchanged, and the message is not looked up by MsgId, so
+		// messages that share a MsgId and the MQGMO_LOGICAL_ORDER and MQGMO_COMPLETE_MSG options (which
+		// MQ answers 2033 to when a BROWSE_FIRST asks for a message that is not first in its group) are no
+		// problem. (The buffer growth after a truncation, 2080, does match the MsgId MQ reported, as the
+		// message and the cursor have not moved: messages with a shared MsgId can be confused there.)
 		bool convert = false;
 		MQLONG convertCcsid = MQCCSI_Q_MGR;		// target CCSID; MQCCSI_Q_MGR is the queue manager's
 		MQLONG convertEncoding = MQENC_NATIVE;	// target encoding
@@ -166,6 +182,12 @@ namespace rfh
 	// Windows' DataArea::purgeQueue (10065-10244). Every get accepts truncation with a zero-length buffer, so
 	// a message is removed without its data being read; a truncated message is counted, not an error.
 	//
+	// THE UNIT OF WORK IS THE CONNECTION'S. A syncpoint purge commits every batch with MQCMIT, which publishes
+	// every syncpoint put the session made earlier on any queue, and a purge that ends in 2003 or in a
+	// back-out of a quiescing connection backs those puts out with it. The session does not refuse a syncpoint
+	// purge while a put is pending (the operations that drive it should; Task 23). Without syncpoint nothing
+	// is committed or backed out.
+	//
 	// selector: given to MQOPEN in a version 4 MQOD (openQ 12056-12105): only matching messages are removed.
 	//   Needs command level 700; the same checks as get (too long, level below 700) fail before any open.
 	// syncpoint: gets use MQGMO_SYNCPOINT_IF_PERSISTENT as Windows always does (persistent messages in a unit
@@ -178,13 +200,24 @@ namespace rfh
 	// cancel: set from another thread, it stops the purge before the next get (Windows has no cancel). What
 	//   was got is committed, count is kept and the Result is a failure that says so.
 	//
-	// count is the number of messages removed, kept as a fact on every failure. Under syncpoint, persistent
-	// messages got since the last commit are not removed until the commit succeeds: when the commit fails,
-	// the connection is lost or MQ backs the unit of work out (2003), they are taken off count and the text
-	// says how many. (Windows counts them as purged.) A get that fails with 2024 (too many uncommitted
-	// messages) is retried once after a commit, as Windows does. Any other failed or warning get ends the
-	// purge; a warning get other than the accepted truncation has removed its message, which is counted
-	// (Windows ends the loop without counting it). Failure text: "... after N messages".
+	// count is the number of messages known to be removed, kept as a fact on every failure. Under syncpoint,
+	// persistent messages got since the last commit are not removed until the commit succeeds, so they leave
+	// count when the commit fails or the unit is lost, and the text says how many and what is known:
+	//   - backed out: MQ answered 2003, or the session backed out a quiescing connection with MQBACK. The text
+	//     says "N persistent messages ... were backed out and remain on the queue". Only this case says so.
+	//   - unknown: the connection broke, the back-out failed, MQCMIT lost the connection or ended with a
+	//     warning (2123, 2124), or MQCMIT failed in any other way. The text says "N persistent messages ...
+	//     have an unknown outcome": the queue manager may or may not have removed them. These messages are
+	//     counted in `uncertain` of the overload below, not in count. A commit whose outcome is unknown ends the
+	//     purge (a warning from it makes the Result a failure), because the next batch could not be trusted.
+	// (Windows counts such messages as purged.) A get that fails with 2024 (too many uncommitted messages) is
+	// retried once after a commit, as Windows does. Any other failed or warning get ends the purge; a warning
+	// get other than the accepted truncation has removed its message, which is counted (Windows ends the loop
+	// without counting it). Failure text: "... after N messages". count and uncertain are bounded by the
+	// queue manager's maximum queue depth (999 999 999), which an MQLONG holds. Whatever the Result, an open
+	// browse handle of the purged queue is closed after a purge that removed anything, because its cursor
+	// would otherwise stay where it was while the messages under it are gone: browsePosition() is then 0 and the
+	// next browse of the queue opens a new handle.
 	struct PurgeOptions
 	{
 		std::string selector;
@@ -235,7 +268,7 @@ namespace rfh
 
 		// For tests and embedding: use the given entry points instead of loading the
 		// IBM MQ library with MqLoader. Every entry point (connx, disc, open, close, put,
-		// get, inq, cmit) must be set; connect() fails otherwise.
+		// get, inq, cmit, back) must be set; connect() fails otherwise.
 		explicit MqSession(const MqApi & injectedApi) : api(injectedApi), apiInjected(true) {}
 		~MqSession();
 
@@ -243,6 +276,8 @@ namespace rfh
 		MqSession & operator=(const MqSession &) = delete;
 
 		Result connect(const ConnectOptions & options);
+		// Closes the open queue and disconnects. MQDISC COMMITS the connection's pending syncpoint work (see the
+		// note on units of work at the top); call rollback() first to discard it.
 		Result disconnect();
 		bool isConnected() const { return hConn != MQHC_UNUSABLE_HCONN; }
 
@@ -334,7 +369,13 @@ namespace rfh
 		// Options and rules: see PurgeOptions.
 		Result purge(const std::string & queue, MQLONG & count, const PurgeOptions & options);
 
-		// MQCMIT on the connection: commits the puts and gets this connection made under syncpoint. With
+		// As above; uncertain also receives the number of persistent messages whose removal is unknown (see
+		// PurgeOptions), which are in neither count nor on a queue that is known to still hold them.
+		Result purge(const std::string & queue, MQLONG & count, const PurgeOptions & options, MQLONG & uncertain);
+
+		// MQCMIT on the connection: commits the puts and gets this connection made under syncpoint. THE UNIT OF
+		// WORK BELONGS TO THE CONNECTION, so this publishes every syncpoint put the session has pending (on any
+		// queue, from put() or purge()), not only the last one's, and a 2003 backs all of them out. With
 		// nothing pending MQ succeeds and so does this; the session keeps no unit-of-work state of its own
 		// (Windows' unitOfWorkActive is set only by MQBEGIN, never by a put). Fails without a connection, where
 		// Windows (commitUOW 12566) does nothing and says nothing. A failure is the MQCMIT reason in the Result
@@ -342,7 +383,21 @@ namespace rfh
 		// disconnects after any cc other than OK (12584-12588) and treats a warning as that failure; here a
 		// warning is ok() with its rc, and what to do after a failure is the caller's flow. The queue handle
 		// stays open.
+		//
+		// Outcomes the text does not leave open: a connection lost during MQCMIT may or may not have committed
+		// ("the outcome of the unit of work is unknown" in the text); a warning (2123 mixed, 2124 pending) is
+		// ok() with the same statement in warnings; a quiescing connection is backed out and released ("was
+		// backed out" in the text); 2003 is MQ's own word that the unit was backed out. Any other failure leaves
+		// the unit as it was, which the session cannot tell from the call alone.
 		Result commit();
+
+		// MQBACK on the connection: discards the syncpoint puts and returns the syncpoint gets of the whole
+		// connection (see commit). Windows: DataArea::rollbackUOW, 12600. With nothing pending MQ succeeds and so
+		// does this. Fails without a connection. A connection lost during MQBACK is released and the text says
+		// the outcome is unknown; a quiescing reason releases the connection without a second MQBACK. Any other
+		// failure keeps the connection and its unit of work. Windows disconnects after any failure; here that is
+		// the caller's flow.
+		Result rollback();
 		// Closes the open queue handle, if any.
 		Result closeQueue(CloseOption option = CloseOption::None);
 
@@ -363,7 +418,18 @@ namespace rfh
 		bool isOpenAs(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras) const;
 		Result ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras = OpenExtras());
 		Result getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs);
-		void dropIfBroken(MQLONG rc);
+		// What became of the unit of work of a connection, as far as the session can say.
+		enum class UnitOutcome
+		{
+			Unaffected,		// the connection was not lost, nothing was settled
+			Committed,
+			BackedOut,		// MQ said so (2003), or MQBACK worked
+			Unknown			// the connection broke, MQBACK failed or MQCMIT ended with a warning or a failure that says nothing
+		};
+
+		UnitOutcome dropIfBroken(MQLONG rc, bool mayBackOut = true);
+		static std::string describeOutcome(UnitOutcome outcome);
+		Result commitUnit(UnitOutcome & outcome);
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
 
 		Result checkSelector(const std::string & selector) const;
@@ -387,6 +453,7 @@ namespace rfh
 		std::string openAlternateUser;	// the alternate user id it was opened with, cut to 12 characters
 		QueueManagerInfo qmInfo;
 		std::vector<char> passwordScratch;	// the password as MQCSP sees it during MQCONNX; zeroed (not freed) afterwards
+		UnitOutcome lastDrop = UnitOutcome::Unaffected;	// what dropIfBroken last settled, for a call that learns of the loss from a nested one
 		long browseCursor = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
 	};
 }

@@ -292,13 +292,14 @@ TEST_F(GetOptionsFake, ASelectorIsNotCutToAnythingShorter)
     EXPECT_EQ(options.selector, queueOpens()[0].selector);
 }
 
-TEST_F(GetOptionsFake, ASelectorLongerThanWindowsKeepsIsRefusedNotCut)
+TEST_F(GetOptionsFake, ASelectorLongerThanMqAllowsIsRefusedNotCut)
 {
     // Windows copies at most MQ_SELECTOR_LENGTH - 1 characters and selects with the rest dropped
-    // (openQ 12087-12091). A cut selector selects something else, so the core refuses it.
+    // (openQ 12087-12091). A cut selector selects something else, so the core refuses what is longer than
+    // MQ_SELECTOR_LENGTH bytes (the length is explicit in an MQCHARV, so exactly that many are legal).
     ASSERT_TRUE(connect().ok());
     GetOptions options;
-    options.selector = std::string(MQ_SELECTOR_LENGTH, 'a');
+    options.selector = std::string(MQ_SELECTOR_LENGTH + 1, 'a');
     Result r = getWith(options);
     EXPECT_FALSE(r.ok());
     EXPECT_NE(std::string::npos, r.text.find("selector"));
@@ -875,4 +876,102 @@ TEST_F(GetOptionsFake, ConnectionLostDuringAGetWithAModeReleasesEverything)
     EXPECT_FALSE(session.isConnected());
     EXPECT_TRUE(fake.liveHandles.empty());
     EXPECT_EQ(0, session.browsePosition());
+}
+
+// ---- the converted-too-big browse retry keeps every other option (review follow-up I5) ----
+//
+// A browse whose converted data does not fit gets the unconverted message with 2120 or 2190 and the browse
+// cursor has moved onto it. The retry reads that message again, with a larger buffer, and nothing else may
+// change: the group options, the property options, the conversion, NO_SYNCPOINT and the structure version
+// all have to be sent again. Only the way of finding the message and the wait differ.
+
+namespace
+{
+    const MQLONG kLocatingBits = MQGMO_BROWSE_FIRST | MQGMO_BROWSE_NEXT | MQGMO_BROWSE_MSG_UNDER_CURSOR;
+    const MQLONG kWaitBits = MQGMO_WAIT | MQGMO_NO_WAIT;
+}
+
+TEST_F(GetOptionsFake, TheConvertedTooBigRetryOfABrowseKeepsEveryOtherOption)
+{
+    for (GetMode mode : { GetMode::BrowseFirst, GetMode::BrowseNext })
+    {
+        SCOPED_TRACE((int)mode);
+        fake.reset();
+        MqSession local(fakeApi());
+        ConnectOptions connectOptions;
+        connectOptions.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(connectOptions).ok());
+        fake.browseCursors = true;
+        for (int i = 0; i < 2; i++)
+        {
+            rfh_test::FakeMessage m;
+            m.data.assign(10, (unsigned char)('a' + i));
+            fake.queue(kQueue).messages.push_back(m);
+        }
+
+        GetOptions options;
+        options.mode = GetMode::BrowseFirst;
+        options.convert = true;
+        options.convertCcsid = 1200;
+        options.completeMsg = true;
+        options.logicalOrder = true;
+        options.allAvailable = true;
+        options.properties = PropertiesMode::Rfh2;
+        options.waitMs = 0;
+        Message out;
+        if (mode == GetMode::BrowseNext)
+        {
+            ASSERT_TRUE(local.get(kQueue, out, options).ok());
+            options.mode = GetMode::BrowseNext;
+        }
+        const size_t firstGet = fake.getLog.size();
+        fake.warnGetRc[fake.getCalls + 1] = MQRC_CONVERTED_MSG_TOO_BIG;
+
+        Result r = local.get(kQueue, out, options);
+        ASSERT_TRUE(r.ok()) << r.text;
+        ASSERT_EQ(firstGet + 2, fake.getLog.size()) << "one get that was too small and one retry";
+        const rfh_test::GetRecord & original = fake.getLog[firstGet];
+        const rfh_test::GetRecord & retry = fake.getLog[firstGet + 1];
+
+        EXPECT_EQ((original.options & ~(kLocatingBits | kWaitBits)), (retry.options & ~(kLocatingBits | kWaitBits)))
+            << "everything but how the message is found and waited for is sent again";
+        EXPECT_NE(0, retry.options & MQGMO_COMPLETE_MSG);
+        EXPECT_NE(0, retry.options & MQGMO_LOGICAL_ORDER);
+        EXPECT_NE(0, retry.options & MQGMO_ALL_MSGS_AVAILABLE);
+        EXPECT_NE(0, retry.options & MQGMO_ALL_SEGMENTS_AVAILABLE);
+        EXPECT_NE(0, retry.options & MQGMO_CONVERT);
+        EXPECT_EQ(original.options & (MQGMO_NO_SYNCPOINT | MQGMO_SYNCPOINT | MQGMO_SYNCPOINT_IF_PERSISTENT),
+                  retry.options & (MQGMO_NO_SYNCPOINT | MQGMO_SYNCPOINT | MQGMO_SYNCPOINT_IF_PERSISTENT)) << "a browse sets none of them, and the retry must not add one";
+        EXPECT_NE(0, retry.options & MQGMO_FAIL_IF_QUIESCING);
+        EXPECT_EQ(MQGMO_PROPERTIES_FORCE_MQRFH2, retry.options & kPropertyBits);
+        EXPECT_EQ(0, retry.options & MQGMO_WAIT) << "MQGMO_NO_WAIT is zero";
+        EXPECT_EQ(original.gmoVersion, retry.gmoVersion);
+
+        // the message the cursor is on is read again where it is; it is not looked for by MsgId, which
+        // MQ answers 2033 to for a message that is not first in its group when LOGICAL_ORDER is set
+        EXPECT_EQ(MQGMO_BROWSE_MSG_UNDER_CURSOR, retry.options & kLocatingBits);
+        EXPECT_EQ(MQMO_NONE, retry.matchOptions);
+        EXPECT_EQ((size_t)(mode == GetMode::BrowseNext ? 2 : 1), (size_t)local.browsePosition());
+    }
+}
+
+TEST_F(GetOptionsFake, TheConvertedTooBigRetryKeepsTheCallersMatchOptionsOffTheCursorRead)
+{
+    // the message under the cursor already matched; asking MQ to match again could only lose it
+    rfh_test::FakeMessage m;
+    m.data.assign(10, 'a');
+    fake.queue(kQueue).messages.push_back(m);
+    fake.browseCursors = true;
+    ASSERT_TRUE(connect().ok());
+    fake.warnGetRc[fake.getCalls + 1] = MQRC_CONVERTED_STRING_TOO_BIG;
+
+    GetOptions options;
+    options.mode = GetMode::BrowseFirst;
+    options.convert = true;
+    options.matchCorrelId = true;
+    Message out;
+    ASSERT_TRUE(session.get(kQueue, out, options).ok());
+    ASSERT_EQ(2u, fake.getLog.size());
+    EXPECT_EQ(MQMO_MATCH_CORREL_ID, fake.getLog[0].matchOptions);
+    EXPECT_EQ(MQMO_NONE, fake.getLog[1].matchOptions);
 }

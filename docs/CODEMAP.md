@@ -279,7 +279,7 @@ Use `tools/index/q sym NAME` for the current range.
 | Which queue managers exist on this machine? | `mq::listLocalQueueManagers` in `core/mq/rfh_queue_managers.cpp` (reads `mqs.ini`); tests `tests/core/QueueManagersTests.cpp` (`QueueManagers.*`) |
 | Get options (group, logical order, complete message, selector, alternate user), queue manager level | `MqSession::get`, `connect` in `core/mq/rfh_mq_session.cpp`; tests `tests/core/GetOptionsTests.cpp` |
 | The fake MQI used by core and Qt tests | `tests/core/fake_mq.h` (`rfh_test::fakeApi()`, `fakeMq()`; used by `MqSessionFakeTests.cpp`, `ListQueuesTests.cpp`, `GetOptionsTests.cpp`) |
-| Why does `MqLoaderTests` report a missing entry point? | `tests/core/stub_mqm_no_cmit.cpp`: a stub library without `MQCMIT`, built as `rfh_stub_mqm_no_cmit` |
+| Why does `MqLoaderTests` report a missing entry point? | `tests/core/stub_mqm_no_cmit.cpp` and `stub_mqm_no_back.cpp`: stub libraries without `MQCMIT` and without `MQBACK`, built as `rfh_stub_mqm_no_cmit` and `rfh_stub_mqm_no_back` |
 | How is the MQ library found and loaded? | `MqLoader::load`, `detail::libraryCandidates`, `detail::loadFrom` in `core/mq/rfh_mq_loader.cpp` |
 | MQ failure text (`RC=2033 ...`) | `Result::fromMq`, `reasonName` in `core/mq/rfh_result.cpp`; `RFHUtil/mqerror.cpp` |
 | How do I render a view? | `format::render` (`core/format/rfh_format.cpp`) -> `DataFormatter::getXxxData` (`RFHUtil/DataFormatter.cpp`) |
