@@ -35,6 +35,7 @@ add_library(rfhcore STATIC
     mq/rfh_mq_session.cpp
     mq/rfh_pcf_queues.cpp
     mq/rfh_queue_managers.cpp
+    mq/rfh_connect_string.cpp
     message/rfh_mqmd_fields.cpp
     message/rfh_id_display.cpp
     message/rfh_header_chain.cpp
@@ -70,7 +71,7 @@ if(NOT WIN32)
     # their historic warnings, which are only in trace formatting.
     set_source_files_properties(
         platform/rfh_platform.cpp platform/rfh_codepage.cpp platform/rfh_trace.cpp
-        mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp mq/rfh_pcf_queues.cpp mq/rfh_status_text.cpp mq/rfh_queue_managers.cpp
+        mq/rfh_mq_loader.cpp mq/rfh_mq_session.cpp mq/rfh_pcf_queues.cpp mq/rfh_status_text.cpp mq/rfh_queue_managers.cpp mq/rfh_connect_string.cpp
         message/rfh_mqmd_fields.cpp
         message/rfh_id_display.cpp
         message/rfh_header_chain.cpp

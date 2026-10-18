@@ -44,7 +44,7 @@ gtest_discover_tests(rfhutil_unit_tests)
 add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core/MqmdFieldsTests.cpp core/HeaderChainTests.cpp core/MessageFileTests.cpp
     core/GuardMallocTests.cpp core/DataFormatterTests.cpp
     core/FormatTests.cpp core/FormatFuzzTests.cpp core/StatusTextTests.cpp core/IdDisplayTests.cpp
-    core/QueueManagersTests.cpp)
+    core/QueueManagersTests.cpp core/ConnectStringTests.cpp)
 if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")
@@ -113,6 +113,9 @@ rfh_add_memcheck_test(memcheck.DataFormatter rfhutil_core_tests "DataFormatter.*
 
 # The PCF reply parser and the queue listing read replies of any length and shape; run them with exact-size buffers under the guard allocator.
 rfh_add_memcheck_test(memcheck.ListQueues rfhutil_mq_fake_tests "ListQueues.*:PcfQueueReply.*")
+
+# The connection string parser reads caller text of any shape; run it on exact-size strings under the guard allocator.
+rfh_add_memcheck_test(memcheck.ConnectString rfhutil_core_tests "ConnectString.*")
 
 rfh_add_memcheck_test(memcheck.Parsers rfhutil_unit_tests "JsonParse*:Xmlsubs*:XMLParse*")
 rfh_add_memcheck_test(memcheck.Format rfhutil_core_tests "Format_*")
