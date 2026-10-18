@@ -20,20 +20,22 @@ namespace rfhqt
 	{
 		// ---- the worker side: building blocks of the jobs. They run on the worker thread, with the session. ----
 
-		void addStep(JobResult & r, const char * operation, const rfh::Result & result, bool detail = false)
+		void addStep(JobResult & r, const char * operation, const rfh::Result & result, bool detail = false, bool syncpoint = false)
 		{
 			JobStep step;
 			step.operation = operation;
 			step.result = result;
 			step.detail = detail;
+			step.syncpoint = syncpoint;
 			r.steps.push_back(step);
 			r.result = result;
 		}
 
 		// Adds the step; setErrorMsg case 6104 (DataArea.cpp:9859) closes the queue as part of reporting the error.
-		void record(rfh::MqSession & s, JobResult & r, const char * operation, const rfh::Result & result, bool detail = false)
+		void record(rfh::MqSession & s, JobResult & r, const char * operation, const rfh::Result & result, bool detail = false,
+		            bool syncpoint = false)
 		{
-			addStep(r, operation, result, detail);
+			addStep(r, operation, result, detail, syncpoint);
 			if ((result.rc == MQRC_ATTRIBUTE_LOCKED) && s.isConnected())
 			{
 				addStep(r, "Close", s.closeQueue(rfh::CloseOption::None));
@@ -51,6 +53,25 @@ namespace rfhqt
 			if (s.isConnected())
 			{
 				record(s, r, "Close", s.closeQueue(option));
+			}
+		}
+
+		const char * const kKeptConnection = "The connection was kept open: a group or segment put is waiting for its commit";
+
+		// The end of a browse (discQM after a browse that ended or failed: DA 8281, 8648, 9208, 8438). A browse never
+		// touches the unit of work of the put flows: the queue handle is closed without a rollback, and when a unit is
+		// pending the connection stays, because MQDISC would commit it. Windows would commit it at the disconnect; the
+		// Qt program does not publish an unfinished group as a side effect of a browse, and says why.
+		void leaveBrowse(rfh::MqSession & s, bool pendingUnit, JobResult & r)
+		{
+			closeQueue(s, false, rfh::CloseOption::None, r);
+			if (pendingUnit && s.isConnected())
+			{
+				r.notes.push_back(kKeptConnection);
+			}
+			else
+			{
+				addStep(r, "Disc", s.disconnect());
 			}
 		}
 
@@ -90,6 +111,10 @@ namespace rfhqt
 	Operations::~Operations()
 	{
 		options.connect.wipePassword();
+		if (doc.shell().busy)
+		{
+			mirrorBusy(false);			// a job still running at this point reports to nobody: the document must not stay busy
+		}
 	}
 
 	void Operations::setOptions(const MainOptions & newOptions)
@@ -138,7 +163,7 @@ namespace rfhqt
 
 	bool Operations::admit(const QString & flow, bool enabled)
 	{
-		if (controller.busy())
+		if (controller.busy() || prompting)		// a confirmation is open: its flow has not finished
 		{
 			addStatus(QStringList() << QStringLiteral("Another operation is still running"));
 			finishFlow(flow);
@@ -216,11 +241,18 @@ namespace rfhqt
 	{
 		applyEffects(r);		// before the job's own queue facts: a depth read after the 2033 wins (browseNext, DA 8640)
 		doc.applyJobResult(r.reconnected ? QStringLiteral("connect") : name, r);
+		// The unit of work follows the steps in order: a commit or rollback that worked ends the unit that was open at
+		// that point (the old connection's, when checkConnection backed it out before a put), and a put under
+		// syncpoint that worked opens the next one.
 		for (const JobStep & step : r.steps)
 		{
 			if (step.result.ok() && ((step.operation == "rollback") || (step.operation == "commit")))
 			{
 				pendingUnit = false;
+			}
+			else if ((step.operation == "Put") && step.syncpoint && (step.result.cc != MQCC_FAILED))
+			{
+				pendingUnit = true;
 			}
 		}
 		if (!r.connected)
@@ -303,6 +335,16 @@ namespace rfhqt
 		{
 			lines += describeStep(step, closeFailed);
 			closeFailed = closeFailed || ((step.operation == "Close") && !step.result.ok());
+		}
+		return lines + noteLines(result);
+	}
+
+	QStringList Operations::noteLines(const JobResult & result)
+	{
+		QStringList lines;
+		for (const std::string & note : result.notes)
+		{
+			lines << QString::fromStdString(note);
 		}
 		return lines;
 	}
@@ -459,7 +501,7 @@ namespace rfhqt
 	void Operations::refreshQueueInfo()
 	{
 		const QString flow = QStringLiteral("queueInfo");
-		if (controller.busy())
+		if (controller.busy() || prompting)
 		{
 			admit(flow, false);
 			return;
@@ -725,7 +767,7 @@ namespace rfhqt
 			}
 			closeFailed = closeFailed || ((step.operation == "Close") && !step.result.ok());
 		}
-		return lines;
+		return lines + noteLines(result);
 	}
 
 	void Operations::readQ()
@@ -851,8 +893,8 @@ namespace rfhqt
 				}
 				else if (s.isConnected())
 				{
-					closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);		// discQM closes the queue and disconnects
-					addStep(r, "Disc", s.disconnect());
+					leaveBrowse(s, env.pendingUnit, r);		// discQM closes the queue and disconnects
+
 				}
 			}
 			return r;
@@ -882,6 +924,7 @@ namespace rfhqt
 			else if (reasonOfStep(r, "StartBr") == MQRC_NO_MSG_AVAILABLE)
 			{
 				lines << QStringLiteral("No messages in %1 queue").arg(queue);		// replaces the pending text, DA 8263
+				lines += noteLines(r);
 			}
 			else
 			{
@@ -922,8 +965,7 @@ namespace rfhqt
 				// getCurrentDepth, then discQM: the browse ends whatever went wrong (DA 8638-8648)
 				r.hasQueueInfo = true;
 				s.queueInfo(env.queue, r.queue);
-				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
-				addStep(r, "Disc", s.disconnect());
+				leaveBrowse(s, env.pendingUnit, r);
 			}
 			return r;
 		}, [this, flow, queue](const JobResult & r)
@@ -949,6 +991,7 @@ namespace rfhqt
 				if (reasonOfStep(r, "BrowseNext") == MQRC_NO_MSG_AVAILABLE)
 				{
 					lines << QStringLiteral("No more messages in queue");		// replaces the pending text, DA 8638
+					lines += noteLines(r);
 				}
 				else
 				{
@@ -990,8 +1033,7 @@ namespace rfhqt
 			}
 			else if (s.isConnected() && !cancelFlag->load())
 			{
-				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);		// the previous message cannot be found: discQM (DA 9208)
-				addStep(r, "Disc", s.disconnect());
+				leaveBrowse(s, env.pendingUnit, r);		// the previous message cannot be found: discQM (DA 9208)
 			}
 			return r;
 		}, [this, flow, queue](const JobResult & r)
@@ -1045,8 +1087,7 @@ namespace rfhqt
 			{
 				r.hasQueueInfo = true;
 				s.queueInfo(env.queue, r.queue);										// getCurrentDepth
-				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
-				addStep(r, "Disc", s.disconnect());
+				leaveBrowse(s, env.pendingUnit, r);
 			}
 			return r;
 		}, [this, flow](const JobResult & r)
@@ -1087,12 +1128,12 @@ namespace rfhqt
 		context.setIdentity = shell.setIdentity;
 		context.setAll = shell.setAll;
 		context.osUser = rfh_current_user();
-		rfh::Message message;
-		message.mqmd = MQMD2 { MQMD2_DEFAULT };
-		rfh::mqmd_fields::toPutMqmd(fields, context, message.mqmd);
-		message.headers = doc.message().headers;
-		message.body = doc.message().body;
-		const MQLONG length = (MQLONG)(message.headers.size() + message.body.size());
+		auto message = std::make_shared<rfh::Message>();
+		message->mqmd = MQMD2 { MQMD2_DEFAULT };
+		rfh::mqmd_fields::toPutMqmd(fields, context, message->mqmd);
+		message->headers = doc.message().headers;
+		message->body = doc.message().body;
+		const MQLONG length = (MQLONG)(message->headers.size() + message->body.size());
 
 		rfh::PutOptions put = options.put;
 		put.remoteQm = doc.remoteQueueManager().toStdString();
@@ -1105,14 +1146,16 @@ namespace rfhqt
 		const bool commit = fields.segmentYes ? (fields.segmentLast && (!fields.groupYes || fields.groupLast)) : fields.groupLast;
 
 		const Env env = capture(true);
-		submitFlow(flow, env, false, [env, message, put, commit](rfh::MqSession & s)
+		// The job runs once, on the worker, and nothing else reads the snapshot: it is put in place, without a copy
+		// of the body, and std::function copies of the job share it.
+		submitFlow(flow, env, false, [env, message = std::move(message), put, commit](rfh::MqSession & s)
 		{
 			JobResult r;
 			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
 			{
-				rfh::Message sent = message;
+				rfh::Message & sent = *message;
 				const rfh::Result res = s.put(env.queue, sent, put);
-				record(s, r, "Put", res, put.syncpoint);
+				record(s, r, "Put", res, put.syncpoint, put.syncpoint);
 				if (res.cc != MQCC_FAILED)
 				{
 					r.message.mqmd = sent.mqmd;				// the descriptor MQ returned
@@ -1137,11 +1180,10 @@ namespace rfhqt
 				}
 			}
 			return r;
-		}, [this, flow, queue, fields, length, put](const JobResult & r)
+		}, [this, flow, queue, fields, length](const JobResult & r)
 		{
 			logResolvedName(r);
 			QStringList lines;
-			bool settled = false;
 			for (const JobStep & step : r.steps)
 			{
 				lines += describeStep(step, false);
@@ -1152,11 +1194,6 @@ namespace rfhqt
 					doc.setMqmd(after);
 					lines << QStringLiteral("Message sent to %1 length=%2").arg(queue).arg(length);
 				}
-				settled = settled || (step.result.ok() && ((step.operation == "commit") || (step.operation == "rollback")));
-			}
-			if (r.hasMessage && put.syncpoint && !settled && r.connected)
-			{
-				pendingUnit = true;					// the group or segment is not complete: nothing is published yet
 			}
 			if (r.hasMessage || r.queueOpen)
 			{
@@ -1181,24 +1218,24 @@ namespace rfhqt
 			return;
 		}
 		trace(QStringLiteral("Entering Operations::openFile %1").arg(path));
-		// A file larger than the largest message cannot be shown (render fails above it) or put: refuse it before
-		// it is read, so the document is not replaced by something unusable.
-		const QFileInfo info(path);
-		if (info.isFile() && (info.size() > (qint64)rfh::format::kMaxRenderBody))
-		{
-			addStatus(QStringList() << QStringLiteral("File %1 is too large: %2 bytes, the limit is %3 bytes (the largest MQ message)")
-				.arg(path).arg(info.size()).arg((qint64)rfh::format::kMaxRenderBody));
-			finishFlow(flow);
-			return;
-		}
 		rfh::fileio::ReadOptions readOptions = options.read;
 		readOptions.fileCcsid = options.fileCodePage;
 		const rfh::MqmdFields fields = doc.mqmd();				// the MQMD tab supplies the defaults, as in Windows
 		const std::string name = path.toStdString();
 		const Env env = capture(false);
-		submitFlow(flow, env, false, [name, readOptions, fields](rfh::MqSession &)
+		submitFlow(flow, env, false, [path, name, readOptions, fields](rfh::MqSession &)
 		{
 			JobResult r;
+			// A file larger than the largest message cannot be shown (render fails above it) or put: refuse it before
+			// it is read, so the document is not replaced by something unusable. The size is read here, on the worker:
+			// a hung mount must not block the GUI thread.
+			const QFileInfo info(path);
+			if (info.isFile() && (info.size() > (qint64)rfh::format::kMaxRenderBody))
+			{
+				addStep(r, "Read", rfh::Result::failure(QStringLiteral("File %1 is too large: %2 bytes, the limit is %3 bytes (the largest MQ message)")
+					.arg(path).arg(info.size()).arg((qint64)rfh::format::kMaxRenderBody).toStdString()));
+				return r;
+			}
 			auto read = std::make_shared<rfh::fileio::ReadResult>();
 			auto tab = std::make_shared<rfh::MqmdFields>(fields);
 			const rfh::Result res = rfh::fileio::read(name, readOptions, *tab, *read);
@@ -1248,18 +1285,20 @@ namespace rfhqt
 		}
 		trace(QStringLiteral("Entering Operations::saveFile %1").arg(path));
 		// The MQMD written is the tab's (buildMQMD, DataArea.cpp:1807), not the one MQ returned
-		rfh::Message message;
-		message.mqmd = MQMD2 { MQMD2_DEFAULT };
-		rfh::mqmd_fields::toMqmd(doc.mqmd(), message.mqmd);
-		message.headers = doc.message().headers;
-		message.body = doc.message().body;
+		// One snapshot of the message (the document keeps its own, and may change while the worker writes). The job and
+		// every std::function copy of it share it: a large body is copied once, not once per hand-over.
+		auto message = std::make_shared<rfh::Message>();
+		message->mqmd = MQMD2 { MQMD2_DEFAULT };
+		rfh::mqmd_fields::toMqmd(doc.mqmd(), message->mqmd);
+		message->headers = doc.message().headers;
+		message->body = doc.message().body;
 		const rfh::fileio::WriteOptions writeOptions = options.write;
 		const std::string name = path.toStdString();
 		const Env env = capture(false);
-		submitFlow(flow, env, false, [name, message, writeOptions](rfh::MqSession &)
+		submitFlow(flow, env, false, [name, message = std::shared_ptr<const rfh::Message>(std::move(message)), writeOptions](rfh::MqSession &)
 		{
 			JobResult r;
-			addStep(r, "Write", rfh::fileio::write(name, message, writeOptions));
+			addStep(r, "Write", rfh::fileio::write(name, *message, writeOptions));
 			return r;
 		}, [this, flow, path](const JobResult & r)
 		{
@@ -1355,7 +1394,10 @@ namespace rfhqt
 				finishFlow(flow);
 				return;
 			}
-			if (!prompter->confirm(AppDocument::purgeConfirmation(queue)))
+			prompting = true;
+			const bool confirmed = prompter->confirm(AppDocument::purgeConfirmation(queue));
+			prompting = false;
+			if (!confirmed)
 			{
 				clearAfterGet(false);
 				finishFlow(flow);
@@ -1394,6 +1436,17 @@ namespace rfhqt
 			else if (r.result.rc == MQRC_BACKED_OUT)
 			{
 				lines << QStringLiteral("Commit failed (rc=2003) - the MQ log may be too small");		// DA 10212
+				// What the core knows follows (Windows has only the line above): the count, what remains on the queue
+				// and what is unknown from earlier batches.
+				const QString detail = QString::fromStdString(r.result.text);
+				if (!detail.isEmpty())
+				{
+					lines << detail;
+				}
+				if ((r.uncertain > 0) && !detail.contains(QStringLiteral("unknown outcome")))
+				{
+					lines << QStringLiteral("%1 persistent messages got under syncpoint have an unknown outcome: check the queue depth").arg(r.uncertain);
+				}
 			}
 			else if (r.result.rc != MQRC_NONE)
 			{

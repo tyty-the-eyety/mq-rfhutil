@@ -38,6 +38,7 @@ namespace rfhqt
 		std::string operation;
 		rfh::Result result;
 		bool detail = false;		// a failure also shows the core's own text: it says what became of the unit of work
+		bool syncpoint = false;		// a put under syncpoint: when it worked, a unit of work is open
 	};
 
 	// What a job hands back. Plain values: no reference to the session crosses the thread boundary.
@@ -57,6 +58,7 @@ namespace rfhqt
 
 		// Set by the multi-step jobs of Operations (the controller's ready-made jobs leave them empty).
 		std::vector<JobStep> steps;
+		std::vector<std::string> notes;				// facts the job wants shown that are not the result of an MQ call (shown after the steps)
 		bool reconnected = false;					// the job connected (queueManager is then valid)
 		bool hasMessage = false;					// get: message holds the message; put: message.mqmd holds the descriptor MQ returned
 		std::shared_ptr<rfh::fileio::ReadResult> fileRead;		// openFile: what fileio::read produced

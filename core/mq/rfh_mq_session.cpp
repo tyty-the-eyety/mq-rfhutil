@@ -288,6 +288,14 @@ namespace rfh
 			}
 		}
 
+		// The session's copy of the password is zeroed on every way out of here, an exception included. The explicit
+		// wipe after MQCONNX stays: it shortens the time the copy exists.
+		struct ScratchWipe
+		{
+			std::vector<char> & scratch;
+			~ScratchWipe() { detail::wipePasswordScratch(scratch); }
+		} scratchWipe = { passwordScratch };
+
 		// TLS, security exit, local address and credentials (rfh_connect_security.h); nothing reaches MQ if a value is refused
 		std::vector<std::string> securityWarnings;
 		Result secured = detail::applyConnectSecurity(options, cno, (cno.ClientConnPtr != nullptr) ? &cd : nullptr, sco, csp,

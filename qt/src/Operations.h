@@ -159,6 +159,7 @@ namespace rfhqt
 		void absorb(const QString & name, const Running & flow, const JobResult & result);
 		QStringList describeStep(const JobStep & step, bool closeFailed) const;
 		QStringList describe(const JobResult & result) const;
+		static QStringList noteLines(const JobResult & result);
 		void applyEffects(const JobResult & result);
 		void logResolvedName(const JobResult & result);
 		void rememberQueue(const QString & queue);
@@ -175,6 +176,7 @@ namespace rfhqt
 		QString connectedQm;			// the queue manager name the connection was made for (Windows currentQM)
 		bool pendingUnit = false;		// a put under syncpoint has not been committed or backed out yet
 		QString resolvedLogged;			// the last "Queue name resolved to" that was logged, to say it once
+		bool prompting = false;			// a confirmation is open (the purge's): flows are refused until it is answered
 		bool userCancelled = false;		// cancelGet() was called for the running job
 		Running running;
 		QHash<QString, QStringList> loadedNames;	// queueNames()

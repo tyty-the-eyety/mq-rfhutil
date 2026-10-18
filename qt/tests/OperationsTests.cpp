@@ -19,6 +19,7 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <stdexcept>
 #include <thread>
 
 #include "AppDocument.h"
@@ -306,6 +307,67 @@ namespace
         FakePrompter prompter;
         QSignalSpy finished;
     };
+
+    const QString kKept = "The connection was kept open: a group or segment put is waiting for its commit";
+
+    // A group put that is still open, then the browse of a queue with one message.
+    void pendGroupThenBrowseOpen(Harness & h, int messages = 1)
+    {
+        fake.browseCursors = true;
+        fillQueue(messages);
+        rfh::MqmdFields f;
+        f.groupYes = true;
+        h.doc.setMqmd(f);
+        QVERIFY(h.run([&]() { h.ops.writeQ(); }));
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+        h.doc.setMqmd(rfh::MqmdFields());
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        QVERIFY(h.doc.browse().active);
+        h.log.clear();
+    }
+
+    void expectGroupStillPendingAndConnected(Harness & h)
+    {
+        QCOMPARE(fake.backCalls, 0);
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+        QVERIFY(h.doc.connected());
+        QVERIFY(!h.doc.queueOpen());
+        QCOMPARE(fake.discCalls, 0);
+        QVERIFY(!h.doc.browse().active);
+    }
+
+    // Peak resident set (VmHWM) of this process in KiB, or -1 without /proc. Writing 5 to clear_refs restarts the peak
+    // at the current size, so one test can measure its own peak.
+    long peakRssKiB()
+    {
+        QFile f("/proc/self/status");
+        if (!f.open(QIODevice::ReadOnly))
+        {
+            return -1;
+        }
+        for (const QByteArray & line : f.readAll().split('\n'))
+        {
+            if (line.startsWith("VmHWM:"))
+            {
+                return line.mid(6).trimmed().split(' ').value(0).toLong();
+            }
+        }
+        return -1;
+    }
+
+    bool restartPeakRss()
+    {
+        QFile f("/proc/self/clear_refs");
+        return f.open(QIODevice::WriteOnly) && (f.write("5") == 1);
+    }
+
+    // The path as the data source shows it: a name longer than 75 characters is cut to "..." and its last 75
+    // (DataArea.cpp:1294-1297).
+    std::string shownPath(const QString & path)
+    {
+        const std::string full = path.toStdString();
+        return (full.size() > 75) ? "..." + full.substr(full.size() - 75) : full;
+    }
 }
 
 class OperationsTests : public QObject
@@ -2143,6 +2205,104 @@ private slots:
         QVERIFY2(h.newest().startsWith("Unit of work rolled back\r\nQueue closed\r\nDisconnected from queue manager"), qPrintable(h.newest()));
     }
 
+    // ---- review follow-ups: a pending unit of work is the put flows' alone ------------------------------------------
+
+    void aGroupGoesOnPendingAfterAQueueManagerChangeBackedOutTheOldOne()
+    {
+        // The rollback that checkConnection does for the OLD connection is not the outcome of the new group member
+        Watchdog dog(60);
+        Harness h;
+        rfh::MqmdFields f;
+        f.groupYes = true;
+        h.doc.setMqmd(f);
+        QVERIFY(h.run([&]() { h.ops.writeQ(); }));
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));
+        h.doc.setQueueManager("QM2");
+        QVERIFY(h.run([&]() { h.ops.writeQ(); }));
+        QCOMPARE(fake.backCalls, 1);									// the old unit
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));					// the new member waits
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.closeQ(); }));
+        QCOMPARE(fake.backCalls, 2);									// the new unit is backed out, not committed by MQDISC
+        QVERIFY(fake.queue(kQueue).messages.empty());
+        QCOMPARE(fake.callOrder.back(), std::string("disc"));
+        QCOMPARE(fake.callOrder.at(fake.callOrder.size() - 2), std::string("back"));
+    }
+
+    void browseToTheEndLeavesAPendingGroupAndTheConnectionAlone()
+    {
+        Watchdog dog(60);
+        Harness h;
+        pendGroupThenBrowseOpen(h);
+        QVERIFY(h.run([&]() { h.ops.browseNext(); }));					// 2033: the browse ends
+        expectGroupStillPendingAndConnected(h);
+        QCOMPARE(h.entries(), QStringList() << ("No more messages in queue\r\n" + kKept));
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.closeQ(); }));						// the put flows still own the unit
+        QCOMPARE(fake.backCalls, 1);
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));
+    }
+
+    void endBrowseLeavesAPendingGroupAndTheConnectionAlone()
+    {
+        Watchdog dog(60);
+        Harness h;
+        pendGroupThenBrowseOpen(h);
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));
+        expectGroupStillPendingAndConnected(h);
+        QCOMPARE(h.entries(), QStringList() << (kKept + "\r\nBrowse operation ended"));
+    }
+
+    void aFailedBrowseNextLeavesAPendingGroupAndTheConnectionAlone()
+    {
+        Watchdog dog(60);
+        Harness h;
+        pendGroupThenBrowseOpen(h);
+        fake.getRc = MQRC_NOT_AUTHORIZED;
+        QVERIFY(h.run([&]() { h.ops.browseNext(); }));
+        expectGroupStillPendingAndConnected(h);
+        QVERIFY2(h.newest().startsWith("2035 Not authorized (BrowseNext)"), qPrintable(h.newest()));
+        QVERIFY2(h.newest().endsWith(kKept), qPrintable(h.newest()));
+    }
+
+    void aFailedBrowsePrevLeavesAPendingGroupAndTheConnectionAlone()
+    {
+        Watchdog dog(60);
+        Harness h;
+        pendGroupThenBrowseOpen(h, 2);
+        QVERIFY(h.run([&]() { h.ops.browseNext(); }));
+        QVERIFY(h.doc.browse().active);
+        h.log.clear();
+        fake.getRc = MQRC_NOT_AUTHORIZED;
+        QVERIFY(h.run([&]() { h.ops.browsePrev(); }));
+        expectGroupStillPendingAndConnected(h);
+        QVERIFY2(h.newest().endsWith(kKept), qPrintable(h.newest()));
+    }
+
+    void aFailedStartBrowseLeavesAPendingGroupAndTheConnectionAlone()
+    {
+        Watchdog dog(60);
+        Harness h;
+        pendGroupThenBrowseOpen(h);
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));					// the browse over, the group still open
+        h.log.clear();
+        fake.queue(kQueue).messages.clear();							// nothing to browse: 2033
+        QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
+        expectGroupStillPendingAndConnected(h);
+        QCOMPARE(h.entries(), QStringList() << ("No messages in RFHUTIL.TEST.OPS queue\r\n" + kKept));
+    }
+
+    void anExceptionInAJobShowsItsTextInTheStatusLog()
+    {
+        Watchdog dog(60);
+        Harness h;
+        enqueue(fakeMessage("x"));
+        fake.onGet = [](int) { throw std::runtime_error("boom"); };
+        QVERIFY(h.run([&]() { h.ops.readQ(); }));
+        fake.onGet = nullptr;
+        QCOMPARE(h.entries(), QStringList() << "The operation failed with an exception: boom");
+    }
+
     void aFailedCommitShowsTheCommitTextBacksTheUnitOutAndDisconnects()
     {
         // commitUOW (DA 12584-12588): setErrorMsg(cc, rc, "commit"), discQM. The core's MQDISC would commit what
@@ -2330,7 +2490,7 @@ private slots:
         QVERIFY(h.run([&]() { h.ops.openFile(path); }));
         QCOMPARE(h.lastFlow(), QString("openFile"));
         QCOMPARE(QByteArray((const char *)h.doc.message().body.data(), (int)h.doc.message().body.size()), golden("plain-crlf.txt"));
-        QCOMPARE(h.doc.dataSource(), std::string("Message Data (56) from ") + path.toStdString());
+        QCOMPARE(h.doc.dataSource(), std::string("Message Data (56) from ") + shownPath(path));
         QCOMPARE(h.doc.filePath(), path);
         QVERIFY(!h.doc.dirty());
         QCOMPARE(h.entries(), QStringList() << QString("56 bytes read from file %1").arg(path));
@@ -2494,6 +2654,125 @@ private slots:
         QVERIFY2(h.newest().startsWith("10 bytes read from file"), qPrintable(h.newest()));
     }
 
+    void openFileShowsAPathOfExactlySeventyFiveCharactersWhole()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString base = dir.path() + "/";
+        QString name = "p";
+        while ((size_t)(base + name + ".msg").toStdString().size() < 75)
+        {
+            name += "x";
+        }
+        const QString path = base + name + ".msg";
+        QCOMPARE(path.toStdString().size(), size_t(75));
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("abc");
+        f.close();
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        QCOMPARE(h.doc.dataSource(), std::string("Message Data (3) from ") + path.toStdString());		// 75 is not cut
+    }
+
+    void openFileShortensALongPathInTheDataSourceButNotInTheStatus()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QString deep = dir.path();
+        while (deep.toStdString().size() < 100)
+        {
+            deep += "/a-rather-long-directory-name";
+        }
+        QVERIFY(QDir().mkpath(deep));
+        const QString path = deep + "/message.msg";
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("abc");
+        f.close();
+        Harness h;
+        QVERIFY(h.run([&]() { h.ops.openFile(path); }));
+        const std::string expected = "..." + path.toStdString().substr(path.toStdString().size() - 75);
+        QCOMPARE(h.doc.dataSource(), std::string("Message Data (3) from ") + expected);
+        QCOMPARE(h.doc.dataSource().size(), std::string("Message Data (3) from ").size() + 78);
+        QCOMPARE(h.doc.filePath(), path);					// the document keeps the whole path
+        QVERIFY(h.newest().contains(path));
+    }
+
+    void openFileChecksTheSizeOnTheWorkerNotOnTheGuiThread()
+    {
+        Watchdog dog(60);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString big = dir.filePath("big.msg");
+        QFile f(big);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        QVERIFY(f.resize((qint64)rfh::format::kMaxRenderBody + 1));
+        f.close();
+        Harness h;
+        h.finished.clear();
+        h.ops.openFile(big);
+        QCOMPARE(h.finished.count(), 0);					// the call returned before the size was looked at
+        QVERIFY(h.controller.busy());
+        QVERIFY(h.finished.wait(5000));
+        QVERIFY(h.newest().contains("is too large"));
+    }
+
+    void aDestroyedOperationsLeavesTheDocumentNotBusy()
+    {
+        Watchdog dog(60);
+        AppDocument doc;
+        StatusLog log;
+        SessionController controller(rfh_test::fakeApi());
+        std::atomic<bool> release{false};
+        {
+            Operations ops(doc, controller, log);
+            QVERIFY(controller.submit("block", [&](rfh::MqSession &)
+            {
+                while (!release.load())
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                return JobResult();
+            }));
+            QVERIFY(doc.shell().busy);
+        }
+        QVERIFY(!doc.shell().busy);
+        release = true;
+    }
+
+    void aFlowIsRefusedWhileAConfirmationIsOpen()
+    {
+        Watchdog dog(60);
+        Harness h;
+        fillQueue(3);
+        QStringList duringConfirm;
+        int getsDuringConfirm = -1;
+        h.prompter.onAsk = [&]()
+        {
+            h.ops.readQ();									// a button pressed while the box is open
+            h.ops.writeQ();
+            h.ops.refreshQueueInfo();
+            duringConfirm = h.entries();
+            getsDuringConfirm = fake.getCalls;
+        };
+        h.prompter.answer = false;
+        QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
+        QCOMPARE(duringConfirm.size(), 3);
+        for (const QString & entry : duringConfirm)
+        {
+            QCOMPARE(entry, QString("Another operation is still running"));
+        }
+        QCOMPARE(getsDuringConfirm, 0);
+        QCOMPARE(fake.putLog.size(), size_t(0));
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(3));
+        h.log.clear();
+        QVERIFY(h.run([&]() { h.ops.readQ(); }));				// after the answer, flows run again
+        QVERIFY(h.doc.hasData());
+    }
+
     void openFileKeepsTheNameInTheStatusWhenItIsLong()
     {
         Watchdog dog(60);
@@ -2573,6 +2852,37 @@ private slots:
             QCOMPARE(h.doc.filePath(), out);
             QVERIFY(!h.doc.dirty());
         }
+    }
+
+    void savingALargeMessageHoldsAtMostOneExtraCopyOfTheBody()
+    {
+        // Save File used to copy the body into the Message, into the job, into the controller's std::function and into
+        // the put-sized copy of the write: the peak grew by about three bodies. One snapshot (the document keeps its
+        // own) is the floor.
+        Watchdog dog(120);
+        const size_t size = 64u * 1024 * 1024;
+        if (!restartPeakRss() || (peakRssKiB() < 0))
+        {
+            QSKIP("/proc/self/clear_refs or VmHWM is not available");
+        }
+        QTemporaryDir dir;
+        Harness h;
+        rfh::Message m;
+        m.body.assign(size, 'a');
+        h.doc.setMessage(std::move(m), "big", true);
+        MainOptions o;
+        o.write.includeMqmd = false;
+        h.ops.setOptions(o);
+        const QString out = dir.filePath("big.dat");
+        QVERIFY(restartPeakRss());
+        const long before = peakRssKiB();
+        QVERIFY(h.run([&]() { h.ops.saveFile(out); }));
+        const long after = peakRssKiB();
+        QVERIFY2(h.newest().contains("written to file"), qPrintable(h.newest()));
+        const long growthMiB = (after - before) / 1024;
+        printf("save of 64 MiB: peak RSS grew by %ld MiB\n", growthMiB);
+        fflush(stdout);
+        QVERIFY2(growthMiB < 96, qPrintable(QString::number(growthMiB)));
     }
 
     void saveFileWritesTheMqmdOfTheTabWithTheDataAndSaysSo()
@@ -2906,7 +3216,10 @@ private slots:
         fake.failGetsAfter = 4;
         fake.failGetsRc = MQRC_BACKED_OUT;
         QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
-        QVERIFY2(h.newest().contains("Commit failed (rc=2003) - the MQ log may be too small"), qPrintable(h.newest()));	// DA 10212
+        QVERIFY2(h.newest().startsWith("Commit failed (rc=2003) - the MQ log may be too small"), qPrintable(h.newest()));	// DA 10212
+        // what the core knows follows: the count, and that the backed out messages remain on the queue
+        QVERIFY2(h.newest().contains("after "), qPrintable(h.newest()));
+        QVERIFY2(h.newest().contains("remain on the queue"), qPrintable(h.newest()));
         QVERIFY(h.doc.connected());
     }
 

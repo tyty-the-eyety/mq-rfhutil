@@ -497,6 +497,29 @@ private slots:
         QCOMPARE(fake.connxCalls, 1);
     }
 
+    void connectAndWipeWipesThePasswordWhenTheConnectThrows()
+    {
+        fake.reset();
+        rfh::MqSession session(rfh_test::fakeApi());
+        rfh::ConnectOptions o;
+        o.qmName = "QM1";
+        o.userId = "mqapp";
+        o.password = "PwMarker-7f3a9c1e";
+        fake.onConnx = []() { throw std::runtime_error("boom"); };
+        bool threw = false;
+        try
+        {
+            rfhqt::connectAndWipe(session, o);
+        }
+        catch (const std::runtime_error &)
+        {
+            threw = true;
+        }
+        fake.onConnx = nullptr;
+        QVERIFY(threw);
+        QVERIFY(o.password.empty());
+    }
+
     void aJobThatThrowsBecomesAFailedResult()
     {
         Watchdog dog(60);

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -913,6 +914,22 @@ TEST_F(ConnectSecurityTest, TheSessionsPasswordCopyIsZeroedAfterAFailedConnect)
     fake.connxRc = MQRC_NOT_AUTHORIZED;
     EXPECT_FALSE(session.connect(o).ok());
 
+    const char * seen = static_cast<const char *>(last().passwordPtr);
+    ASSERT_NE(nullptr, seen);
+    EXPECT_TRUE(std::all_of(seen, seen + strlen(kMarker), [](char c) { return c == '\0'; }));
+}
+
+TEST_F(ConnectSecurityTest, TheSessionsPasswordCopyIsZeroedWhenTheConnectThrows)
+{
+    // bad_alloc or any other exception out of the MQ call must not leave the password in the session's buffer
+    ConnectOptions o = client();
+    o.userId = "mqapp";
+    o.password = kMarker;
+    fake.onConnx = []() { throw std::runtime_error("boom"); };
+    EXPECT_THROW(session.connect(o), std::runtime_error);
+    fake.onConnx = nullptr;
+
+    ASSERT_EQ(strlen(kMarker), last().password.size());     // MQ did see it
     const char * seen = static_cast<const char *>(last().passwordPtr);
     ASSERT_NE(nullptr, seen);
     EXPECT_TRUE(std::all_of(seen, seen + strlen(kMarker), [](char c) { return c == '\0'; }));

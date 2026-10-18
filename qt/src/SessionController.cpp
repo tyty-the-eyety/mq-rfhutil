@@ -5,11 +5,38 @@
 
 namespace rfhqt
 {
+	namespace
+	{
+		// Wipes the password when it goes out of scope, so a connect that throws (bad_alloc in the core) leaves none behind.
+		class PasswordWipe
+		{
+		public:
+			explicit PasswordWipe(rfh::ConnectOptions & target) : options(target) {}
+			~PasswordWipe() { options.wipePassword(); }
+			PasswordWipe(const PasswordWipe &) = delete;
+			PasswordWipe & operator=(const PasswordWipe &) = delete;
+		private:
+			rfh::ConnectOptions & options;
+		};
+
+		// What a job that threw leaves: a failed result, and one step that carries the text, so every consumer of
+		// the steps shows it.
+		JobResult thrownJob(const std::string & text)
+		{
+			JobResult outcome;
+			outcome.result = rfh::Result::failure(text);
+			JobStep step;
+			step.operation = "Job";
+			step.result = outcome.result;
+			outcome.steps.push_back(step);
+			return outcome;
+		}
+	}
+
 	rfh::Result connectAndWipe(rfh::MqSession & session, rfh::ConnectOptions & options)
 	{
-		rfh::Result result = session.connect(options);
-		options.wipePassword();
-		return result;
+		PasswordWipe wipe(options);
+		return session.connect(options);
 	}
 
 	// Lives on the worker thread; its only job is to give queued calls a thread to run on.
@@ -67,7 +94,7 @@ namespace rfhqt
 		emit busyChanged(true);
 
 		rfh::MqSession * s = session.get();
-		QMetaObject::invokeMethod(worker, [this, s, name, job]()
+		QMetaObject::invokeMethod(worker, [this, s, name, job = std::move(job)]()
 		{
 			JobResult outcome;
 			try
@@ -76,13 +103,11 @@ namespace rfhqt
 			}
 			catch (const std::exception & e)
 			{
-				outcome = JobResult();
-				outcome.result = rfh::Result::failure(std::string("The operation failed with an exception: ") + e.what());
+				outcome = thrownJob(std::string("The operation failed with an exception: ") + e.what());
 			}
 			catch (...)
 			{
-				outcome = JobResult();
-				outcome.result = rfh::Result::failure("The operation failed with an unknown exception");
+				outcome = thrownJob("The operation failed with an unknown exception");
 			}
 			outcome.connected = s->isConnected();
 			outcome.queueOpen = s->isQueueOpen();

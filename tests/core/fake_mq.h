@@ -147,6 +147,7 @@ namespace rfh_test
         MQLONG putRc = MQRC_NONE;
         MQLONG connxRc = MQRC_NONE;   // MQCONNX answers with this reason, completion code connxCc (Task 16)
         MQLONG connxCc = MQCC_FAILED;
+        std::function<void()> onConnx;   // called inside MQCONNX after the call is recorded; a test throws from it
         MQLONG cmitRc = MQRC_NONE;    // MQCMIT answers with this reason (Task 14)
         MQLONG cmitCc = MQCC_FAILED;  // ... and this completion code when cmitRc is not MQRC_NONE (a test may ask for MQCC_WARNING)
         MQLONG backRc = MQRC_NONE;    // MQBACK answers with this reason, completion code MQCC_FAILED
@@ -368,6 +369,10 @@ namespace rfh_test
                 }
             }
             fake.connxLog.push_back(record);
+            if (fake.onConnx)
+            {
+                fake.onConnx();
+            }
 
             *hConn = 1;
             report(fake.connxRc, cc, rc);
