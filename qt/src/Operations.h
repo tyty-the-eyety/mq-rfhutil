@@ -81,12 +81,22 @@ namespace rfhqt
 		void closeQ();					// Close Q button: closeQ(close option), then discQM (General.cpp:1617)
 		void refreshQueueInfo();		// getQueueDepth: connect on demand, queue type, depth and maximum length
 
+		// ---- queue messages (Read Q, Write Q, Browse Q and the browse session) --------------------------------------
+		void readQ();					// getMessage(READQ): destructive get, DataArea.cpp:7947
+		void writeQ();					// putMessage: the MQMD of the tab, the data of the document, DataArea.cpp:6166
+		void browseQ();					// getMessage(BROWSEQ): one browse, then closeQ
+		void startBrowse();				// startBrowse -> readFirstMessage (DataArea.cpp:8346, 8180)
+		void browseNext();				// browseNext (DataArea.cpp:8459)
+		void browsePrev();				// browsePrev (DataArea.cpp:8895)
+		void endBrowse();				// endBrowse: depth, close, disconnect, "Browse operation ended" (DataArea.cpp:8425)
+
 		// Stops the running job that polls the cancel flag (a waiting get, a purge, a Browse Prev walk).
 		void cancelGet();
 
 	signals:
 		void statusChanged();							// the log or the document changed because a flow ended
 		void flowFinished(const QString & flow);		// exactly once per flow call, also when it was refused
+		void titleChanged(const QString & queue);		// the window title is the name of the last queue used (setWindowTitle)
 
 	private:
 		// What a job needs, captured on the GUI thread when the flow starts (the lambda that runs on the worker
@@ -98,6 +108,7 @@ namespace rfhqt
 			std::string queue;
 			std::string remoteQm;
 			bool pendingUnit = false;				// a put under syncpoint is waiting for its commit
+			bool checks = true;						// the flow runs checkConnection (so the connection is for qm afterwards)
 			rfh::CloseOption closeOption = rfh::CloseOption::None;
 			std::shared_ptr<rfh::ConnectOptions> connect;	// a copy for a connect the flow may need; the job wipes it
 		};
@@ -111,10 +122,18 @@ namespace rfhqt
 			std::function<void(const JobResult &)> done;
 		};
 
+		enum class GetKind { Read, BrowseQ, Start, Next, Prev };
+
 		bool admit(const QString & flow, bool enabled);
 		void finishFlow(const QString & flow);
 		void addStatus(const QStringList & lines);
-		Env capture() const;
+		Env capture(bool mayConnect) const;
+		rfh::GetOptions buildGet(rfh::GetMode mode, bool useMatch, MQLONG hostEncoding, bool wait) const;
+		void queueGet(GetKind kind);
+		void acceptMessage(const rfh::Message & message, const std::string & source, QStringList & warnings);
+		void clearAfterGet(bool clearFileName);
+		QString depthText() const;
+		QStringList describeBrowseFailure(const JobResult & result, const char * secondWord) const;
 		bool submitFlow(const QString & flow, const Env & env, bool cancellable, SessionController::Job job, std::function<void(const JobResult &)> done);
 		void onFinished(const QString & name, const JobResult & result);
 		void absorb(const QString & name, const Running & flow, const JobResult & result);

@@ -5,6 +5,11 @@
 #include <utility>
 
 #include "AppSettings.h"
+#include "rfh_format.h"
+#include "rfh_header_chain.h"
+#include "rfh_id_display.h"
+#include "rfh_mqmd_fields.h"
+#include "rfh_platform.h"
 #include "rfh_status_text.h"
 #include "rfh_trace.h"
 
@@ -14,19 +19,20 @@ namespace rfhqt
 	{
 		// ---- the worker side: building blocks of the jobs. They run on the worker thread, with the session. ----
 
-		void addStep(JobResult & r, const char * operation, const rfh::Result & result)
+		void addStep(JobResult & r, const char * operation, const rfh::Result & result, bool detail = false)
 		{
 			JobStep step;
 			step.operation = operation;
 			step.result = result;
+			step.detail = detail;
 			r.steps.push_back(step);
 			r.result = result;
 		}
 
 		// Adds the step; setErrorMsg case 6104 (DataArea.cpp:9859) closes the queue as part of reporting the error.
-		void record(rfh::MqSession & s, JobResult & r, const char * operation, const rfh::Result & result)
+		void record(rfh::MqSession & s, JobResult & r, const char * operation, const rfh::Result & result, bool detail = false)
 		{
-			addStep(r, operation, result);
+			addStep(r, operation, result, detail);
 			if ((result.rc == MQRC_ATTRIBUTE_LOCKED) && s.isConnected())
 			{
 				addStep(r, "Close", s.closeQueue(rfh::CloseOption::None));
@@ -145,15 +151,20 @@ namespace rfhqt
 		return true;
 	}
 
-	Operations::Env Operations::capture() const
+	Operations::Env Operations::capture(bool mayConnect) const
 	{
 		Env env;
+		env.checks = mayConnect;
 		env.qm = doc.queueManager().toStdString();
 		env.connectedQm = connectedQm.toStdString();
 		env.queue = doc.queueName().toStdString();
 		env.remoteQm = doc.remoteQueueManager().toStdString();
 		env.pendingUnit = pendingUnit;
 		env.closeOption = options.closeOption;
+		if (mayConnect && (!doc.connected() || (connectedQm != doc.queueManager())))
+		{
+			env.connect = std::make_shared<rfh::ConnectOptions>(options.connect);		// the job wipes this copy
+		}
 		return env;
 	}
 
@@ -163,7 +174,7 @@ namespace rfhqt
 		running = Running();
 		running.name = flow;
 		running.qm = QString::fromStdString(env.qm);
-		running.checked = true;
+		running.checked = env.checks;
 		running.cancellable = cancellable;
 		running.done = std::move(done);
 		userCancelled = false;
@@ -202,6 +213,7 @@ namespace rfhqt
 	// (through AppDocument::applyJobResult); the unit of work and the connection name are Operations' own.
 	void Operations::absorb(const QString & name, const Running & flow, const JobResult & r)
 	{
+		applyEffects(r);		// before the job's own queue facts: a depth read after the 2033 wins (browseNext, DA 8640)
 		doc.applyJobResult(r.reconnected ? QStringLiteral("connect") : name, r);
 		for (const JobStep & step : r.steps)
 		{
@@ -220,7 +232,15 @@ namespace rfhqt
 		{
 			connectedQm = flow.qm;
 		}
-		applyEffects(r);
+		if (r.reconnected && (settings != nullptr))
+		{
+			// connect2QM remembers the latest queue manager (saveClientQM, DataArea.cpp:11222) and the connection values
+			rfh::ConnectOptions remembered = options.connect;
+			remembered.wipePassword();
+			remembered.qmName = flow.qm.toStdString();
+			settings->addQueueManager(flow.qm);
+			settings->setConnection(remembered);
+		}
 	}
 
 	// The state changes of DataArea::setErrorMsg that a text function does not make: 2009 is the connection flag
@@ -257,6 +277,10 @@ namespace rfhqt
 		if ((step.operation == "rollback") && r.ok())
 		{
 			lines << QStringLiteral("Unit of work rolled back");		// DataArea::rollbackUOW (12618)
+		}
+		if (step.detail && !r.ok() && !r.text.empty())
+		{
+			lines << QString::fromStdString(r.text);					// what became of the unit of work, as the core says it
 		}
 		// A failed close leaves the handle to the disconnect, which closes it again and warns of the same failure
 		// that the Close step already reported: Windows reports a failed close once (closeQ clears the handle).
@@ -324,20 +348,15 @@ namespace rfhqt
 		{
 			return;
 		}
-		const Env base = capture();
-		trace(QStringLiteral("Entering Operations::connectQm QM=%1").arg(doc.queueManager()));
-		Env env = base;
-		env.connect = std::make_shared<rfh::ConnectOptions>(options.connect);
+		const Env env = capture(true);
 		const QString qm = doc.queueManager();
-		rfh::ConnectOptions remembered = options.connect;
-		remembered.wipePassword();
-		remembered.qmName = qm.toStdString();
+		trace(QStringLiteral("Entering Operations::connectQm QM=%1").arg(qm));
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
 			JobResult r;
 			checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r);
 			return r;
-		}, [this, flow, qm, remembered](const JobResult & r)
+		}, [this, flow, qm](const JobResult & r)
 		{
 			QStringList lines;
 			if (r.connected)
@@ -345,11 +364,6 @@ namespace rfhqt
 				lines << QStringLiteral("Connected to ") + qm;		// explicitConnect: sprintf "Connected to %s" (11796)
 			}
 			lines += describe(r);
-			if (r.connected && r.result.ok() && (settings != nullptr))
-			{
-				settings->addQueueManager(qm);
-				settings->setConnection(remembered);
-			}
 			addStatus(lines);
 			finishFlow(flow);
 		});
@@ -362,7 +376,7 @@ namespace rfhqt
 		{
 			return;
 		}
-		const Env env = capture();
+		const Env env = capture(false);
 		trace(QStringLiteral("Entering Operations::disconnectQm QM=%1").arg(doc.queueManager()));
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
@@ -403,7 +417,7 @@ namespace rfhqt
 		{
 			return;
 		}
-		const Env env = capture();
+		const Env env = capture(false);
 		trace(QStringLiteral("Entering Operations::closeQueueMenu Q=%1").arg(doc.queueName()));
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
@@ -426,7 +440,7 @@ namespace rfhqt
 		{
 			return;
 		}
-		const Env env = capture();
+		const Env env = capture(false);
 		trace(QStringLiteral("Entering Operations::closeQ QM=%1 Q=%2").arg(doc.queueManager(), doc.queueName()));
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
@@ -456,11 +470,7 @@ namespace rfhqt
 			finishFlow(flow);
 			return;
 		}
-		Env env = capture();
-		if (!doc.connected() || (connectedQm != doc.queueManager()))
-		{
-			env.connect = std::make_shared<rfh::ConnectOptions>(options.connect);
-		}
+		const Env env = capture(true);
 		const QString queue = doc.queueName();
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
@@ -482,6 +492,592 @@ namespace rfhqt
 			{
 				rememberQueue(queue);
 			}
+			finishFlow(flow);
+		});
+	}
+
+	// ---- messages from queues -------------------------------------------------------------------------------------
+
+	namespace
+	{
+		// " (data %d dlq %d rfh %d cics %d ims %d)" when any header was found (getMessage, DataArea.cpp:8135-8145).
+		// The lengths are the header chain's (the core's own walk of the message); an MQMDE is not counted.
+		QString headerSuffix(const rfh::Message & m)
+		{
+			const rfh::HeaderChain chain = rfh::walkHeaders(m.headers.data(), m.headers.size(), m.mqmd);
+			size_t rfh = 0, dlq = 0, cics = 0, ims = 0;
+			for (const rfh::HeaderInfo & h : chain.headers)
+			{
+				switch (h.type)
+				{
+				case rfh::HeaderType::Rfh1:
+				case rfh::HeaderType::Rfh2: rfh += h.length; break;
+				case rfh::HeaderType::DeadLetter: dlq += h.length; break;
+				case rfh::HeaderType::Cics: cics += h.length; break;
+				case rfh::HeaderType::Ims: ims += h.length; break;
+				case rfh::HeaderType::MdExtension: break;
+				}
+			}
+			if (rfh + dlq + cics + ims == 0)
+			{
+				return QString();
+			}
+			return QStringLiteral(" (data %1 dlq %2 rfh %3 cics %4 ims %5)").arg(m.body.size()).arg(dlq).arg(rfh).arg(cics).arg(ims);
+		}
+
+		// The reason code of the step that did the get (the last step of a failed browse is the disconnect)
+		MQLONG reasonOfStep(const JobResult & r, const char * operation)
+		{
+			for (const JobStep & step : r.steps)
+			{
+				if (step.operation == operation)
+				{
+					return step.result.rc;
+				}
+			}
+			return MQRC_NONE;
+		}
+
+		QString trimmedLine(const std::string & text)
+		{
+			QString line = QString::fromStdString(text);
+			while (line.endsWith(QLatin1Char('\r')) || line.endsWith(QLatin1Char('\n')))
+			{
+				line.chop(1);
+			}
+			return line;
+		}
+	}
+
+	rfh::GetOptions Operations::buildGet(rfh::GetMode mode, bool useMatch, MQLONG hostEncoding, bool wait) const
+	{
+		rfh::GetOptions g = options.get;
+		const rfh::MqmdFields & f = doc.mqmd();
+		g.mode = mode;
+		g.waitMs = wait ? options.get.waitMs : 0;
+		// Get by Msg Id / Correl Id / Group Id apply only when the MQMD tab holds a non-zero id (getMessage 8043-8059)
+		g.matchMsgId = useMatch && options.get.matchMsgId && !rfh::id_display::isZero(f.msgId);
+		g.matchCorrelId = useMatch && options.get.matchCorrelId && !rfh::id_display::isZero(f.correlId);
+		g.matchGroupId = useMatch && options.get.matchGroupId && !rfh::id_display::isZero(f.groupId);
+		memcpy(g.msgId, f.msgId, sizeof(g.msgId));
+		memcpy(g.correlId, f.correlId, sizeof(g.correlId));
+		memcpy(g.groupId, f.groupId, sizeof(g.groupId));
+		if (g.convert)
+		{
+			// the code page of the MQMD tab (the queue manager's when it is empty) and the tab's integer format (8000-8030)
+			g.convertCcsid = f.ccsid.empty() ? MQCCSI_Q_MGR : (MQLONG)atoi(f.ccsid.c_str());
+			g.convertEncoding = (f.encoding == NUMERIC_PC) ? 546 : hostEncoding;
+		}
+		g.alternateUser = doc.shell().alternateUser ? f.userId : std::string();
+		g.cancel = controller.cancelFlag();
+		return g;
+	}
+
+	QString Operations::depthText() const
+	{
+		return (doc.queueInfo().depth >= 0) ? QString::number(doc.queueInfo().depth) : QStringLiteral("?");
+	}
+
+	// processMessage: the MQMD tab, the display formats and the data come from the message; the document keeps the
+	// only copy. The formats go in first so a tab that redraws on messageChanged() sees them.
+	void Operations::acceptMessage(const rfh::Message & message, const std::string & source, QStringList & warnings)
+	{
+		rfh::MqmdFields fields = doc.mqmd();				// keeps the float format, as the Windows page does
+		rfh::mqmd_fields::fromGetMqmd(message.mqmd, fields);
+		std::vector<std::string> formatWarnings;
+		rfh::format::RenderOptions render = doc.render();
+		render.apply(rfh::format::defaultsFor(message, formatWarnings));
+		for (const std::string & w : formatWarnings)
+		{
+			warnings << trimmedLine(w);
+		}
+		doc.setMqmd(fields);
+		doc.setRender(render);
+		rfh::Message copy = message;
+		doc.setMessage(std::move(copy), source, true);
+	}
+
+	void Operations::clearAfterGet(bool clearFileName)
+	{
+		ShellState shell = doc.shell();
+		if (shell.setIdentity)
+		{
+			shell.setIdentity = false;			// m_set_UserID = FALSE: the user id may have changed
+			doc.setShell(shell);
+		}
+		if (clearFileName && doc.hasFile())
+		{
+			doc.setFilePath(QString());			// fileName[0] = 0: the data came from a queue
+		}
+	}
+
+	// A failure that processMQGet reported with one operation word and its caller again with another (startBrowse,
+	// browseNext): both texts, unless they are the same text.
+	QStringList Operations::describeBrowseFailure(const JobResult & result, const char * secondWord) const
+	{
+		QStringList lines;
+		bool closeFailed = false;
+		for (const JobStep & step : result.steps)
+		{
+			const QStringList first = describeStep(step, closeFailed);
+			lines += first;
+			if (!step.result.ok() && ((step.operation == "StartBr") || (step.operation == "BrowseNext")))
+			{
+				JobStep again = step;
+				again.operation = secondWord;
+				again.result.warnings.clear();
+				for (const QString & line : describeStep(again, closeFailed))
+				{
+					if (!first.contains(line))
+					{
+						lines << line;
+					}
+				}
+			}
+			closeFailed = closeFailed || ((step.operation == "Close") && !step.result.ok());
+		}
+		return lines;
+	}
+
+	void Operations::readQ()
+	{
+		queueGet(GetKind::Read);
+	}
+
+	void Operations::browseQ()
+	{
+		queueGet(GetKind::BrowseQ);
+	}
+
+	// Read Q and Browse Q: getMessage(READQ / BROWSEQ), then the handler's own clean-up (OnReadq GEN 276, OnBrowse GEN 372)
+	void Operations::queueGet(GetKind kind)
+	{
+		const bool browse = (kind == GetKind::BrowseQ);
+		const QString flow = browse ? QStringLiteral("browseQ") : QStringLiteral("readQ");
+		if (!admit(flow, browse ? doc.enables().browseQ : doc.enables().readQ))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::%1 QM=%2 Q=%3").arg(flow, doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required*"));		// DA 7991 (no blank)
+			clearAfterGet(true);
+			emit titleChanged(queue);
+			finishFlow(flow);
+			return;
+		}
+		const Env env = capture(true);
+		const rfh::GetOptions g = buildGet(browse ? rfh::GetMode::BrowseFirst : rfh::GetMode::Destructive, true, 273, !browse);
+		const bool waits = !browse && (g.waitMs != 0);
+		submitFlow(flow, env, waits, [env, g, browse](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				rfh::Message m;
+				const rfh::Result got = s.get(env.queue, m, g);
+				r.browsePosition = s.browsePosition();
+				record(s, r, "Get", got);
+				if (got.cc != MQCC_FAILED)
+				{
+					r.message = std::move(m);
+					r.hasMessage = true;
+					r.hasQueueInfo = true;
+					s.queueInfo(env.queue, r.queue);		// getCurrentDepth, getQueueType, the maximum length
+					if (browse)
+					{
+						record(s, r, "Close", s.closeQueue());		// closeQ(Q_CLOSE_NONE), DA 8151
+					}
+				}
+			}
+			return r;
+		}, [this, flow, queue, browse](const JobResult & r)
+		{
+			logResolvedName(r);
+			QStringList lines;
+			if (r.hasMessage)
+			{
+				const QString source = QStringLiteral("Message Data (%1) from %2").arg(r.message.body.size()).arg(queue);
+				QStringList warnings;
+				acceptMessage(r.message, source.toStdString(), warnings);
+				lines += describe(r);
+				lines += warnings;
+				lines << QStringLiteral("Msg %1 from %2 length=%3%4").arg(browse ? "browse" : "read", queue)
+					.arg(r.message.body.size()).arg(headerSuffix(r.message));
+			}
+			else if (userCancelled && !browse && (r.result.rc == MQRC_NO_MSG_AVAILABLE))
+			{
+				lines << QStringLiteral("Get cancelled");			// NEW: the wait was stopped, which is not a 2033 report
+			}
+			else
+			{
+				lines += describe(r);
+			}
+			clearAfterGet(true);
+			if (r.hasMessage || r.queueOpen)
+			{
+				rememberQueue(queue);
+			}
+			emit titleChanged(queue);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::startBrowse()
+	{
+		const QString flow = QStringLiteral("startBrowse");
+		if (!admit(flow, doc.enables().startBrowse))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::startBrowse QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required* "));		// DA 8368
+			finishFlow(flow);
+			return;
+		}
+		const Env env = capture(true);
+		// readFirstMessage sets only the PC encoding for a conversion: host integers keep the native one (8226-8240)
+		const rfh::GetOptions g = buildGet(rfh::GetMode::BrowseFirst, true, MQENC_NATIVE, false);
+		submitFlow(flow, env, false, [env, g](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				rfh::Message m;
+				const rfh::Result got = s.get(env.queue, m, g);
+				r.browsePosition = s.browsePosition();
+				record(s, r, "StartBr", got);
+				if (got.cc != MQCC_FAILED)
+				{
+					r.message = std::move(m);
+					r.hasMessage = true;
+					r.hasQueueInfo = true;
+					s.queueInfo(env.queue, r.queue);
+				}
+				else if (s.isConnected())
+				{
+					closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);		// discQM closes the queue and disconnects
+					addStep(r, "Disc", s.disconnect());
+				}
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			logResolvedName(r);
+			QStringList lines;
+			if (r.hasMessage)
+			{
+				const QString source = QStringLiteral("Message Data (%1) msg 1 of %2 from %3").arg(r.message.body.size()).arg(depthText(), queue);
+				QStringList warnings;
+				acceptMessage(r.message, source.toStdString(), warnings);
+				lines += describe(r);
+				lines += warnings;
+				lines << QStringLiteral("First message read from %1 length=%2%3").arg(queue).arg(r.message.body.size()).arg(headerSuffix(r.message));
+				BrowseState state;
+				state.active = true;
+				state.position = (r.browsePosition > 0) ? r.browsePosition : 1;
+				doc.setBrowse(state);
+				if (doc.hasFile())
+				{
+					doc.setFilePath(QString());
+				}
+				emit titleChanged(queue);
+				rememberQueue(queue);
+			}
+			else if (reasonOfStep(r, "StartBr") == MQRC_NO_MSG_AVAILABLE)
+			{
+				lines << QStringLiteral("No messages in %1 queue").arg(queue);		// replaces the pending text, DA 8263
+			}
+			else
+			{
+				lines += describeBrowseFailure(r, "Get (Browse)");
+			}
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::browseNext()
+	{
+		const QString flow = QStringLiteral("browseNext");
+		if (!admit(flow, doc.enables().browseNext))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::browseNext Q=%1").arg(queue));
+		const Env env = capture(false);
+		const rfh::GetOptions g = buildGet(rfh::GetMode::BrowseNext, false, MQENC_NATIVE, false);
+		submitFlow(flow, env, false, [env, g](rfh::MqSession & s)
+		{
+			JobResult r;
+			rfh::Message m;
+			const rfh::Result got = s.get(env.queue, m, g);
+			r.browsePosition = s.browsePosition();
+			record(s, r, "BrowseNext", got);
+			if (got.cc != MQCC_FAILED)
+			{
+				r.message = std::move(m);
+				r.hasMessage = true;
+				r.hasQueueInfo = true;
+				s.queueInfo(env.queue, r.queue);
+			}
+			else if (s.isConnected())
+			{
+				// getCurrentDepth, then discQM: the browse ends whatever went wrong (DA 8638-8648)
+				r.hasQueueInfo = true;
+				s.queueInfo(env.queue, r.queue);
+				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
+				addStep(r, "Disc", s.disconnect());
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			QStringList lines;
+			if (r.hasMessage)
+			{
+				const QString source = QStringLiteral("Message Data (%1) msg %2 of %3 from %4")
+					.arg(r.message.body.size()).arg(r.browsePosition).arg(depthText(), queue);
+				QStringList warnings;
+				acceptMessage(r.message, source.toStdString(), warnings);
+				lines += describe(r);
+				lines += warnings;
+				lines << QStringLiteral("Next message (%1) read from %2 length=%3%4").arg(r.browsePosition).arg(queue)
+					.arg(r.message.body.size()).arg(headerSuffix(r.message));
+				BrowseState state;
+				state.active = true;
+				state.position = r.browsePosition;
+				doc.setBrowse(state);
+			}
+			else
+			{
+				if (reasonOfStep(r, "BrowseNext") == MQRC_NO_MSG_AVAILABLE)
+				{
+					lines << QStringLiteral("No more messages in queue");		// replaces the pending text, DA 8638
+				}
+				else
+				{
+					lines += describeBrowseFailure(r, "GetNext");
+				}
+				doc.setBrowse(BrowseState());
+			}
+			clearAfterGet(false);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::browsePrev()
+	{
+		const QString flow = QStringLiteral("browsePrev");
+		if (!admit(flow, doc.enables().browsePrev))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::browsePrev Q=%1").arg(queue));
+		const Env env = capture(false);
+		const rfh::GetOptions g = buildGet(rfh::GetMode::BrowsePrevious, false, 273, false);
+		const std::atomic<bool> * cancelFlag = controller.cancelFlag();
+		submitFlow(flow, env, true, [env, g, cancelFlag](rfh::MqSession & s)
+		{
+			JobResult r;
+			rfh::Message m;
+			const rfh::Result got = s.get(env.queue, m, g);
+			r.browsePosition = s.browsePosition();
+			record(s, r, "BrowsePrevGet", got);
+			if (got.cc != MQCC_FAILED)
+			{
+				r.message = std::move(m);
+				r.hasMessage = true;
+				r.hasQueueInfo = true;
+				s.queueInfo(env.queue, r.queue);
+			}
+			else if (s.isConnected() && !cancelFlag->load())
+			{
+				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);		// the previous message cannot be found: discQM (DA 9208)
+				addStep(r, "Disc", s.disconnect());
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			QStringList lines;
+			if (r.hasMessage)
+			{
+				const QString source = QStringLiteral("Message Data (%1) msg %2 of %3 from %4")
+					.arg(r.message.body.size()).arg(r.browsePosition).arg(depthText(), queue);
+				QStringList warnings;
+				acceptMessage(r.message, source.toStdString(), warnings);
+				lines += describe(r);
+				lines += warnings;
+				lines << QStringLiteral("Previous message (%1) read from %2 length=%3%4").arg(r.browsePosition).arg(queue)
+					.arg(r.message.body.size()).arg(headerSuffix(r.message));
+			}
+			else
+			{
+				lines += describe(r);
+			}
+			if (r.connected && r.queueOpen)
+			{
+				BrowseState state;				// a cancelled walk keeps the browse where it stopped
+				state.active = true;
+				state.position = r.browsePosition;
+				doc.setBrowse(state);
+			}
+			else
+			{
+				doc.setBrowse(BrowseState());
+			}
+			clearAfterGet(false);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	void Operations::endBrowse()
+	{
+		const QString flow = QStringLiteral("endBrowse");
+		if (!admit(flow, doc.enables().endBrowse))
+		{
+			return;
+		}
+		trace(QStringLiteral("Entering Operations::endBrowse Q=%1").arg(doc.queueName()));
+		const Env env = capture(false);
+		submitFlow(flow, env, false, [env](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (s.isQueueOpen())
+			{
+				r.hasQueueInfo = true;
+				s.queueInfo(env.queue, r.queue);										// getCurrentDepth
+				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
+				addStep(r, "Disc", s.disconnect());
+			}
+			return r;
+		}, [this, flow](const JobResult & r)
+		{
+			QStringList lines = describe(r);
+			if (!r.steps.empty())
+			{
+				lines << QStringLiteral("Browse operation ended");
+			}
+			doc.setBrowse(BrowseState());
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	// ---- Write Q ---------------------------------------------------------------------------------------------------
+
+	void Operations::writeQ()
+	{
+		const QString flow = QStringLiteral("writeQ");
+		if (!admit(flow, doc.enables().writeQ))
+		{
+			return;
+		}
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::writeQ QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required* "));		// DA 6218
+			finishFlow(flow);
+			return;
+		}
+
+		// the MQMD of the tab (setMessageMQMD), the headers and data of the document (DA 6296)
+		const rfh::MqmdFields fields = doc.mqmd();
+		const ShellState shell = doc.shell();
+		rfh::PutContext context;
+		context.setIdentity = shell.setIdentity;
+		context.setAll = shell.setAll;
+		context.osUser = rfh_current_user();
+		rfh::Message message;
+		message.mqmd = MQMD2 { MQMD2_DEFAULT };
+		rfh::mqmd_fields::toPutMqmd(fields, context, message.mqmd);
+		message.headers = doc.message().headers;
+		message.body = doc.message().body;
+		const MQLONG length = (MQLONG)(message.headers.size() + message.body.size());
+
+		rfh::PutOptions put = options.put;
+		put.remoteQm = doc.remoteQueueManager().toStdString();
+		put.setIdentityContext = shell.setIdentity;
+		put.setAllContext = shell.setAll;
+		put.alternateUser = shell.alternateUser ? fields.userId : std::string();
+		// Windows has no syncpoint choice: a group or segment flag of the tab puts under syncpoint (DA 6342-6351)
+		put.syncpoint = fields.segmentYes || fields.segmentLast || fields.groupYes || fields.groupLast;
+		// commit after the last segment (of the last message of a group) or after the last message of a group (DA 6484-6503)
+		const bool commit = fields.segmentYes ? (fields.segmentLast && (!fields.groupYes || fields.groupLast)) : fields.groupLast;
+
+		const Env env = capture(true);
+		submitFlow(flow, env, false, [env, message, put, commit](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				rfh::Message sent = message;
+				const rfh::Result res = s.put(env.queue, sent, put);
+				record(s, r, "Put", res, put.syncpoint);
+				if (res.cc != MQCC_FAILED)
+				{
+					r.message.mqmd = sent.mqmd;				// the descriptor MQ returned
+					r.hasMessage = true;
+					if (commit)
+					{
+						const rfh::Result c = s.commit();
+						addStep(r, "commit", c, true);
+						if (!c.ok() && s.isConnected())
+						{
+							// commitUOW disconnects after a failure (DA 12586); MQDISC would commit what MQCMIT did not,
+							// so the unit of work is backed out first
+							addStep(r, "rollback", s.rollback(), true);
+							addStep(r, "Disc", s.disconnect());
+						}
+					}
+					if (s.isConnected())
+					{
+						r.hasQueueInfo = true;
+						s.queueInfo(env.queue, r.queue);		// getCurrentDepth
+					}
+				}
+			}
+			return r;
+		}, [this, flow, queue, fields, length, put](const JobResult & r)
+		{
+			logResolvedName(r);
+			QStringList lines;
+			bool settled = false;
+			for (const JobStep & step : r.steps)
+			{
+				lines += describeStep(step, false);
+				if ((step.operation == "Put") && r.hasMessage)
+				{
+					rfh::MqmdFields after = fields;
+					rfh::mqmd_fields::applyAfterPut(r.message.mqmd, length, after);
+					doc.setMqmd(after);
+					lines << QStringLiteral("Message sent to %1 length=%2").arg(queue).arg(length);
+				}
+				settled = settled || (step.result.ok() && ((step.operation == "commit") || (step.operation == "rollback")));
+			}
+			if (r.hasMessage && put.syncpoint && !settled && r.connected)
+			{
+				pendingUnit = true;					// the group or segment is not complete: nothing is published yet
+			}
+			if (r.hasMessage || r.queueOpen)
+			{
+				rememberQueue(queue);
+			}
+			if (r.hasMessage)
+			{
+				emit titleChanged(queue);
+			}
+			addStatus(lines);
 			finishFlow(flow);
 		});
 	}

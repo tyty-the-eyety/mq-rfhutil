@@ -99,6 +99,8 @@ namespace rfh_test
         MQBYTE24 msgId = {0};        // MQMD.MsgId as sent
         MQBYTE24 correlId = {0};     // MQMD.CorrelId as sent
         MQBYTE24 groupId = {0};      // MQMD.GroupId as sent (a version 2 descriptor)
+        MQLONG mdCcsid = 0;          // MQMD.CodedCharSetId as sent (the target of MQGMO_CONVERT)
+        MQLONG mdEncoding = 0;       // MQMD.Encoding as sent
     };
 
     // One MQCONNX as the fake saw it (Task 16). The structures are copied byte for byte at the time of the call,
@@ -524,6 +526,14 @@ namespace rfh_test
             }
             if (putRc == MQRC_NONE)
             {
+                // MQPMO_NEW_MSG_ID: MQ returns the new id in the caller's descriptor ("FAKEID" and the put number)
+                if ((md != nullptr) && (pmo != nullptr) && ((static_cast<const MQPMO *>(pmo)->Options & MQPMO_NEW_MSG_ID) != 0))
+                {
+                    MQMD * back = static_cast<MQMD *>(md);
+                    memset(back->MsgId, 0, sizeof(back->MsgId));
+                    memcpy(back->MsgId, "FAKEID", 6);
+                    back->MsgId[6] = static_cast<MQBYTE>(fake.putCalls);
+                }
                 FakeMessage m;
                 if (md != nullptr)
                 {
@@ -596,6 +606,8 @@ namespace rfh_test
                     const MQMD2 * sent = static_cast<const MQMD2 *>(md);   // MQMD is the version 1 layout: GroupId needs MQMD2
                     memcpy(record.msgId, sent->MsgId, sizeof(record.msgId));
                     memcpy(record.correlId, sent->CorrelId, sizeof(record.correlId));
+                    record.mdCcsid = sent->CodedCharSetId;
+                    record.mdEncoding = sent->Encoding;
                     if (sent->Version >= MQMD_VERSION_2)
                     {
                         memcpy(record.groupId, sent->GroupId, sizeof(record.groupId));
