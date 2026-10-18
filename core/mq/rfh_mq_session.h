@@ -85,6 +85,22 @@ namespace rfh
 		MQBYTE24 correlId = { 0 };
 		size_t initialBufferSize = 64 * 1024;	// grown to the message length on truncation
 
+		// Group, segment and open options (Windows: DataArea::setMQoptions, getMessage, openQ). The gates
+		// below use the queue manager's platform and command level, which connect() learns (queueManagerInfo).
+		// Where a gate refuses an option, get still runs without it and says so in Result::warnings.
+		bool matchGroupId = false;	// MQMO_MATCH_GROUP_ID with groupId below; the caller decides whether an all-zero id means "any"
+		MQBYTE24 groupId = { 0 };
+		bool logicalOrder = false;	// MQGMO_LOGICAL_ORDER; not on z/OS below command level 600
+		bool completeMsg = false;	// MQGMO_COMPLETE_MSG; not on z/OS below command level 600
+		bool allAvailable = false;	// MQGMO_ALL_MSGS_AVAILABLE | MQGMO_ALL_SEGMENTS_AVAILABLE; on z/OS only ALL_MSGS_AVAILABLE
+									// from command level 600, and neither below it
+
+		// These three belong to the queue handle, not to the single get: a get that changes one of
+		// them closes the open handle (and so resets a browse position) and opens a new one.
+		std::string selector;		// message selector, given to MQOPEN in a version 4 MQOD; needs a queue manager at command level 700
+		std::string alternateUser;	// MQOO_ALTERNATE_USER_AUTHORITY; at most 12 characters are used, as in Windows, and a warning says so
+		bool inputShared = false;	// MQOO_INPUT_SHARED instead of MQOO_INPUT_AS_Q_DEF
+
 		// Optional: set to true from another thread to stop a waiting get. The wait is
 		// split into slices of at most one second, so it stops within about a second.
 		const std::atomic<bool> * cancel = nullptr;
@@ -114,6 +130,16 @@ namespace rfh
 		std::string alternateUser;		// MQOD alternate user id for both opens (the MQMD tab's); at most 12 characters are used, as in Windows
 	};
 
+	// What connect() learns by inquiring on the queue manager object (Windows: DataArea::connect2QM). A value
+	// the inquiry could not give stays 0, which is never a real platform, level or maximum length, and
+	// connect() reports the failed inquiry in its warnings.
+	struct QueueManagerInfo
+	{
+		MQLONG platform = 0;			// MQPL_*
+		MQLONG commandLevel = 0;		// MQCMDL_LEVEL_*
+		MQLONG maxMsgLength = 0;		// the queue manager's maximum message length
+	};
+
 	class MqSession
 	{
 	public:
@@ -131,6 +157,11 @@ namespace rfh
 		Result connect(const ConnectOptions & options);
 		Result disconnect();
 		bool isConnected() const { return hConn != MQHC_UNUSABLE_HCONN; }
+
+		// Platform, command level and maximum message length of the queue manager of the current
+		// connection; 0 for a fact that is not known: before connect(), after a disconnect or a lost
+		// connection, and when MQ refused the inquiry (connect() then warns).
+		const QueueManagerInfo & queueManagerInfo() const { return qmInfo; }
 
 		// Puts message to queue: message.headers followed by message.body.
 		// message.mqmd.Format must name the first header; put warns when
@@ -208,11 +239,21 @@ namespace rfh
 		Result closeQueue(CloseOption option = CloseOption::None);
 
 	private:
+		// What an open takes besides the queue and the open options (the alternate user id already cut to 12 characters).
+		struct OpenExtras
+		{
+			std::string selector;
+			std::string alternateUser;
+		};
+
 		// resolvedName, when given, makes the open use an MQOD version 3 and receives the trimmed ResolvedQName.
-		Result openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & hObj, std::string * resolvedName = nullptr);
+		// extras, when given, adds a selector (MQOD version 4) and the alternate user authority.
+		Result openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & hObj, std::string * resolvedName = nullptr, const OpenExtras * extras = nullptr);
+		Result inquireQueueManager();
 		Result inquireInteger(MQHOBJ obj, MQLONG selector, MQLONG & value);
 		void closeInquiryHandle(MQHOBJ & obj, Result & result);
-		Result ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options);
+		bool isOpenAs(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras) const;
+		Result ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras = OpenExtras());
 		Result getOnce(MQHOBJ obj, Message & message, const GetOptions & options, MQLONG getOptions, MQLONG waitMs);
 		void dropIfBroken(MQLONG rc);
 		Result browseTo(const std::string & queue, Message & message, const GetOptions & options, long position);
@@ -232,6 +273,9 @@ namespace rfh
 		std::string openName;
 		std::string openRemoteQm;
 		MQLONG openOptions = 0;
+		std::string openSelector;		// the selector the open queue handle was opened with
+		std::string openAlternateUser;	// the alternate user id it was opened with, cut to 12 characters
+		QueueManagerInfo qmInfo;
 		long browseCursor = 0;	// 1-based position of the message under the browse cursor; 0 none, -1 unknown
 	};
 }

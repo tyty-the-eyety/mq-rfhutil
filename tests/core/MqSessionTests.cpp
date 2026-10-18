@@ -956,6 +956,269 @@ TEST_F(MqBindingsTest, BrowsePositionUnknownAfterDestructiveGet)
     EXPECT_NE(std::string::npos, r.text.find(" - browse position unknown after a destructive get; browse first")) << r.text;
 }
 
+// ---------------------------------------------------------------------------------------------------
+// Task 13: Get options and the queue manager's facts, against the real queue manager
+// ---------------------------------------------------------------------------------------------------
+
+namespace
+{
+    // A queue that exists only for one test: defined here, deleted on every exit.
+    class TempQueue
+    {
+    public:
+        TempQueue(const std::string & queueName, const std::string & attributes) : name(queueName)
+        {
+            created = runMqsc("DEFINE QLOCAL(" + name + ") " + attributes + " REPLACE");
+        }
+
+        ~TempQueue()
+        {
+            if (created)
+            {
+                runMqsc("DELETE QLOCAL(" + name + ") PURGE");
+            }
+        }
+
+        bool created;
+        std::string name;
+    };
+
+    // A message of a group (MsgFlags and sequence as the caller gives them; no logical-order put).
+    Message groupMessage(const std::string & text, const unsigned char (&groupId)[24], MQLONG seq, bool last)
+    {
+        Message m = textMessage(text);
+        memcpy(m.mqmd.GroupId, groupId, sizeof(m.mqmd.GroupId));
+        m.mqmd.MsgSeqNumber = seq;
+        m.mqmd.MsgFlags = MQMF_MSG_IN_GROUP | (last ? MQMF_LAST_MSG_IN_GROUP : 0);
+        return m;
+    }
+
+    // An RFH2 whose usr folder holds one property.
+    std::vector<unsigned char> rfh2WithProperty(const std::string & name, const std::string & value)
+    {
+        std::string folder = "<usr><" + name + ">" + value + "</" + name + "></usr>";
+        while (folder.size() % 4 != 0)
+        {
+            folder += ' ';
+        }
+        std::string nameValues(4, '\0');
+        nameValues[0] = (char)folder.size();    // folder length, little endian
+        nameValues += folder;
+        return mq_layout::rfh2(mq_layout::Order::Little, 546, 1208, "MQSTR", nameValues).data;
+    }
+}
+
+TEST_F(MqBindingsTest, ConnectLearnsThePlatformLevelAndMaximumOfTheRealQueueManager)
+{
+    const QueueManagerInfo & info = session.queueManagerInfo();
+    EXPECT_EQ(MQPL_UNIX, info.platform);
+    EXPECT_GE(info.commandLevel, 900);
+    EXPECT_EQ(4194304, info.maxMsgLength) << "the default MAXMSGL; change this if TEST_QM was altered";
+}
+
+TEST_F(MqBindingsTest, GetByGroupIdTakesTheMatchingGroupFirst)
+{
+    const unsigned char groupA[24] = { 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A', 'A' };
+    const unsigned char groupB[24] = { 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B', 'B' };
+    Message a = groupMessage("in group A", groupA, 1, true);
+    Message b = groupMessage("in group B", groupB, 1, true);
+    ASSERT_TRUE(session.put(kQueue, a, PutOptions()).ok());
+    ASSERT_TRUE(session.put(kQueue, b, PutOptions()).ok());
+
+    GetOptions options;
+    options.matchGroupId = true;
+    memcpy(options.groupId, groupB, 24);
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("in group B", bodyText(in));
+    EXPECT_EQ(0, memcmp(groupB, in.mqmd.GroupId, 24));
+
+    // group B is gone; asking for it again finds nothing while A is still there
+    r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << r.text;
+
+    memcpy(options.groupId, groupA, 24);
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("in group A", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, AllAvailableWaitsForTheWholeGroupAndLogicalOrderDeliversItInOrder)
+{
+    const unsigned char group[24] = { 'G', 'R', 'P', '1', 'G', 'R', 'P', '1', 'G', 'R', 'P', '1', 'G', 'R', 'P', '1', 'G', 'R', 'P', '1', 'G', 'R', 'P', '1' };
+    Message first = groupMessage("one", group, 1, false);
+    ASSERT_TRUE(session.put(kQueue, first, PutOptions()).ok());
+
+    GetOptions options;
+    options.logicalOrder = true;
+    options.allAvailable = true;
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << "the group is not complete: " << r.text;
+
+    // without the option the first message is there
+    GetOptions plain;
+    plain.mode = GetMode::BrowseFirst;
+    ASSERT_TRUE(session.get(kQueue, in, plain).ok());
+    EXPECT_EQ("one", bodyText(in));
+    ASSERT_TRUE(session.closeQueue().ok());
+
+    Message second = groupMessage("two", group, 2, true);
+    ASSERT_TRUE(session.put(kQueue, second, PutOptions()).ok());
+
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("one", bodyText(in));
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("two", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, CompleteMsgReassemblesTheSegmentsOfALogicalMessage)
+{
+    const unsigned char group[24] = { 'S', 'E', 'G', '1', 'S', 'E', 'G', '1', 'S', 'E', 'G', '1', 'S', 'E', 'G', '1', 'S', 'E', 'G', '1', 'S', 'E', 'G', '1' };
+    Message first = textMessage("hello ");
+    memcpy(first.mqmd.GroupId, group, 24);
+    first.mqmd.MsgFlags = MQMF_SEGMENT;
+    first.mqmd.Offset = 0;
+    first.mqmd.OriginalLength = 11;
+    Message second = textMessage("world");
+    memcpy(second.mqmd.GroupId, group, 24);
+    second.mqmd.MsgFlags = MQMF_LAST_SEGMENT;
+    second.mqmd.Offset = 6;
+    second.mqmd.OriginalLength = 11;
+    ASSERT_TRUE(session.put(kQueue, first, PutOptions()).ok());
+    ASSERT_TRUE(session.put(kQueue, second, PutOptions()).ok());
+
+    GetOptions options;
+    options.completeMsg = true;
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("hello world", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, ASmallBufferStillGetsAGroupMessageInLogicalOrder)
+{
+    // the buffer grows by re-reading the message by its MsgId; that must work with logical order on
+    const unsigned char group[24] = { 'B', 'I', 'G', '1', 'B', 'I', 'G', '1', 'B', 'I', 'G', '1', 'B', 'I', 'G', '1', 'B', 'I', 'G', '1', 'B', 'I', 'G', '1' };
+    Message big = groupMessage(std::string(5000, 'x'), group, 1, true);
+    ASSERT_TRUE(session.put(kQueue, big, PutOptions()).ok());
+
+    GetOptions options;
+    options.logicalOrder = true;
+    options.initialBufferSize = 100;
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ(5000u, in.body.size());
+}
+
+TEST_F(MqBindingsTest, ASelectorGetsOnlyTheMatchingMessage)
+{
+    for (const char * colour : { "red", "blue", "green" })
+    {
+        Message m = textMessage(colour);
+        memcpy(m.mqmd.Format, MQFMT_RF_HEADER_2, MQ_FORMAT_LENGTH);
+        m.headers = rfh2WithProperty("color", colour);
+        ASSERT_TRUE(session.put(kQueue, m, PutOptions()).ok());
+    }
+
+    GetOptions options;
+    options.selector = "color = 'blue'";
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("blue", bodyText(in));
+
+    r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << "no other blue message: " << r.text;
+
+    // another selector reopens the queue and still finds the rest
+    options.selector = "color = 'green'";
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("green", bodyText(in));
+
+    options.selector.clear();
+    r = session.get(kQueue, in, options);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("red", bodyText(in));
+}
+
+TEST_F(MqBindingsTest, ASelectorWithBadSyntaxIsRefusedByTheQueueManager)
+{
+    GetOptions options;
+    options.selector = "color =";
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_EQ(MQRC_SELECTOR_SYNTAX_ERROR, r.rc) << r.text;
+    EXPECT_TRUE(session.isConnected());
+
+    MQLONG depth = 0;
+    EXPECT_TRUE(session.depth(kQueue, depth).ok()) << "the session still works";
+}
+
+TEST_F(MqBindingsTest, AnAlternateUserWithoutAuthorityIsRefused)
+{
+    GetOptions options;
+    options.alternateUser = "nosuchusr";
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQCC_FAILED, r.cc);
+    EXPECT_EQ(MQRC_NOT_AUTHORIZED, r.rc) << r.text;
+    EXPECT_TRUE(session.isConnected());
+
+    // and a get without it opens normally afterwards
+    options.alternateUser.clear();
+    r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << r.text;
+}
+
+TEST_F(MqBindingsTest, AnAlternateUserWithAuthorityOpensTheQueue)
+{
+    const char * user = getenv("USER");
+    if (user == nullptr || user[0] == 0)
+    {
+        GTEST_SKIP() << "USER is not set";
+    }
+
+    GetOptions options;
+    options.alternateUser = user;
+    Message in;
+    Result r = session.get(kQueue, in, options);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, r.rc) << "the open worked and the queue is empty: " << r.text;
+}
+
+TEST_F(MqBindingsTest, InputSharedLetsASecondSessionOpenAQueueWhoseDefaultIsExclusive)
+{
+    TempQueue shared("RFHUTIL.TEST.EXCLSHR", "DEFSOPT(EXCL) SHARE");
+    ASSERT_TRUE(shared.created);
+
+    ConnectOptions connectOptions;
+    connectOptions.mode = Mode::Bindings;
+    connectOptions.qmName = bindingsQm();
+    MqSession other;
+    ASSERT_TRUE(other.connect(connectOptions).ok());
+
+    Message in;
+    GetOptions asDefined;
+    ASSERT_EQ(MQRC_NO_MSG_AVAILABLE, session.get(shared.name, in, asDefined).rc);
+    Result blocked = other.get(shared.name, in, asDefined);
+    EXPECT_EQ(MQRC_OBJECT_IN_USE, blocked.rc) << "MQOO_INPUT_AS_Q_DEF takes the queue's exclusive default: " << blocked.text;
+
+    GetOptions shareable;
+    shareable.inputShared = true;
+    ASSERT_EQ(MQRC_NO_MSG_AVAILABLE, session.get(shared.name, in, shareable).rc) << "the change reopens the queue";
+    Result allowed = other.get(shared.name, in, shareable);
+    EXPECT_EQ(MQRC_NO_MSG_AVAILABLE, allowed.rc) << "both sessions have it open now: " << allowed.text;
+
+    ASSERT_TRUE(other.disconnect().ok());
+    ASSERT_TRUE(session.closeQueue().ok());
+}
+
 TEST(MqClient, PutThenGetOverClientChannel)
 {
     if (env("MQ_CHANNEL", "").empty())

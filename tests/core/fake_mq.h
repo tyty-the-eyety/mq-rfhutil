@@ -47,7 +47,10 @@ namespace rfh_test
         bool dynamic = false;        // created by an open of the model queue; MQCO_DELETE_PURGE removes it
     };
 
-    // What the fake saw, one record per call (Task 12). Tests read them to check the open
+    // What the fake saw, one record per call (Task 12). Since Task 13, connect() opens the queue manager
+    // object to inquire on it. Those calls are counted and logged apart (qmgrOpenCalls, qmgrOpenLog,
+    // qmgrInqCalls, qmgrCloseCalls) so the counters and logs below keep describing queue calls only;
+    // the handle stays in liveHandles, so a leak is still seen. Tests read them to check the open
     // options, the object descriptor fields, the request bytes and the close options.
     struct OpenRecord
     {
@@ -58,6 +61,20 @@ namespace rfh_test
         MQLONG objectType = 0;
         MQLONG options = 0;
         MQHOBJ handle = 0;
+        MQLONG odVersion = 0;        // MQOD.Version as sent
+        std::string selector;        // MQOD.SelectionString as sent (version 4 and above); empty when none
+        MQLONG resObjectStringBufSize = 0;   // MQOD.ResObjectString.VSBufSize as sent (version 4 and above)
+    };
+
+    // One MQGET as the fake saw it (Task 13): the options and the identifiers the caller sent.
+    struct GetRecord
+    {
+        MQLONG gmoVersion = 0;
+        MQLONG options = 0;
+        MQLONG matchOptions = 0;
+        MQBYTE24 msgId = {0};        // MQMD.MsgId as sent
+        MQBYTE24 correlId = {0};     // MQMD.CorrelId as sent
+        MQBYTE24 groupId = {0};      // MQMD.GroupId as sent (a version 2 descriptor)
     };
 
     struct CloseRecord
@@ -82,6 +99,7 @@ namespace rfh_test
         MQLONG putRc = MQRC_NONE;
         MQLONG platform = MQPL_UNIX;
         MQLONG commandLevel = 940;
+        MQLONG qmgrMaxMsgLength = 4194304;   // answered for MQIA_MAX_MSG_LENGTH on the queue manager object (Task 13)
         std::map<MQLONG, MQLONG> inqRcBySelector;   // an inquiry that names one of these selectors fails with the given reason
         int unlimitedWaitMs = 1000;   // how long a get with MQWI_UNLIMITED waits in the fake
         MQLONG getRc = MQRC_NONE;     // every get fails with this reason, before it looks at the queue
@@ -104,6 +122,9 @@ namespace rfh_test
         int getCalls = 0;
         int commitCalls = 0;
         int inqCalls = 0;
+        int qmgrOpenCalls = 0;       // opens of the queue manager object (connect()'s inquiry)
+        int qmgrInqCalls = 0;
+        int qmgrCloseCalls = 0;
         MQLONG lastPmoOptions = 0;
         MQLONG lastGmoOptions = 0;
         MQLONG lastGmoWaitInterval = 0;
@@ -111,7 +132,9 @@ namespace rfh_test
         MQLONG lastOpenOptions = 0;
         int lastWaitedMs = 0;
         std::string lastOpenedName;
-        std::vector<OpenRecord> openLog;
+        std::vector<OpenRecord> openLog;       // opens of queues
+        std::vector<OpenRecord> qmgrOpenLog;   // opens of the queue manager object
+        std::vector<GetRecord> getLog;
         std::vector<CloseRecord> closeLog;
         std::vector<PutRecord> putLog;
         std::vector<std::string> deletedQueues;      // dynamic queues removed by a close with MQCO_DELETE_PURGE
@@ -180,7 +203,8 @@ namespace rfh_test
         inline void fakeOpen(MQHCONN, PMQVOID objDesc, MQLONG options, PMQHOBJ hObj, PMQLONG cc, PMQLONG rc)
         {
             FakeMq & fake = fakeMq();
-            fake.openCalls++;
+            const bool qmgrObject = (objDesc != nullptr) && (static_cast<const MQOD *>(objDesc)->ObjectType == MQOT_Q_MGR);
+            (qmgrObject ? fake.qmgrOpenCalls : fake.openCalls)++;
             MQLONG openRc = fake.openRc;
             if (objDesc != nullptr)
             {
@@ -191,8 +215,11 @@ namespace rfh_test
                     openRc = byName->second;
                 }
             }
-            fake.lastOpenOptions = options;
-            *hObj = fake.openCalls;
+            if (!qmgrObject)
+            {
+                fake.lastOpenOptions = options;
+            }
+            *hObj = fake.openCalls + fake.qmgrOpenCalls;
 
             MQOD * od = static_cast<MQOD *>(objDesc);
             OpenRecord record;
@@ -200,12 +227,25 @@ namespace rfh_test
             record.handle = *hObj;
             if (od != nullptr)
             {
-                fake.lastOpenedName = trimmed(od->ObjectName, sizeof(od->ObjectName));
-                record.name = fake.lastOpenedName;
+                const std::string opened = trimmed(od->ObjectName, sizeof(od->ObjectName));
+                if (!qmgrObject)
+                {
+                    fake.lastOpenedName = opened;
+                }
+                record.name = opened;
                 record.objectType = od->ObjectType;
                 record.dynamicName = trimmed(od->DynamicQName, sizeof(od->DynamicQName));
                 record.alternateUser = trimmed(od->AlternateUserId, sizeof(od->AlternateUserId));
-                record.openedAs = fake.lastOpenedName;
+                record.openedAs = opened;
+                record.odVersion = od->Version;
+                if (od->Version >= MQOD_VERSION_4)
+                {
+                    if ((od->SelectionString.VSPtr != nullptr) && (od->SelectionString.VSLength > 0))
+                    {
+                        record.selector.assign(static_cast<const char *>(od->SelectionString.VSPtr), (size_t)od->SelectionString.VSLength);
+                    }
+                    record.resObjectStringBufSize = od->ResObjectString.VSBufSize;
+                }
                 if ((openRc == MQRC_NONE) && (od->ObjectType == MQOT_Q) &&
                     (fake.lastOpenedName == "SYSTEM.DEFAULT.MODEL.QUEUE") && !record.dynamicName.empty())
                 {
@@ -219,10 +259,10 @@ namespace rfh_test
                     fake.lastOpenedName = generated;
                     record.openedAs = generated;
                 }
-                fake.handleNames[*hObj] = fake.lastOpenedName;
+                fake.handleNames[*hObj] = qmgrObject ? std::string() : fake.lastOpenedName;
                 fake.handleIsQmgr[*hObj] = (od->ObjectType == MQOT_Q_MGR);
             }
-            fake.openLog.push_back(record);
+            (qmgrObject ? fake.qmgrOpenLog : fake.openLog).push_back(record);
             if ((od != nullptr) && (od->Version >= MQOD_VERSION_3) && (openRc == MQRC_NONE))
             {
                 // an open with a version 3 descriptor reports the name the object resolved to
@@ -242,7 +282,8 @@ namespace rfh_test
         inline void fakeClose(MQHCONN, PMQHOBJ hObj, MQLONG options, PMQLONG cc, PMQLONG rc)
         {
             FakeMq & fake = fakeMq();
-            fake.closeCalls++;
+            const bool qmgrObject = fake.handleIsQmgr.count(*hObj) && fake.handleIsQmgr[*hObj];
+            (qmgrObject ? fake.qmgrCloseCalls : fake.closeCalls)++;
             CloseRecord record;
             record.options = options;
             std::map<MQHOBJ, std::string>::iterator named = fake.handleNames.find(*hObj);
@@ -250,7 +291,10 @@ namespace rfh_test
             {
                 record.queue = named->second;
             }
-            fake.closeLog.push_back(record);
+            if (!qmgrObject)
+            {
+                fake.closeLog.push_back(record);
+            }
             if (fake.closeRc == MQRC_NONE)
             {
                 FakeQueue * closing = fake.find(record.queue);
@@ -322,6 +366,22 @@ namespace rfh_test
                 fake.lastGmoOptions = gmo->Options;
                 fake.lastGmoWaitInterval = gmo->WaitInterval;
                 fake.lastGmoMatchOptions = gmo->MatchOptions;
+
+                GetRecord record;
+                record.gmoVersion = gmo->Version;
+                record.options = gmo->Options;
+                record.matchOptions = gmo->MatchOptions;
+                if (md != nullptr)
+                {
+                    const MQMD2 * sent = static_cast<const MQMD2 *>(md);   // MQMD is the version 1 layout: GroupId needs MQMD2
+                    memcpy(record.msgId, sent->MsgId, sizeof(record.msgId));
+                    memcpy(record.correlId, sent->CorrelId, sizeof(record.correlId));
+                    if (sent->Version >= MQMD_VERSION_2)
+                    {
+                        memcpy(record.groupId, sent->GroupId, sizeof(record.groupId));
+                    }
+                }
+                fake.getLog.push_back(record);
             }
 
             if (fake.getRc != MQRC_NONE)
@@ -432,7 +492,8 @@ namespace rfh_test
         inline void fakeInq(MQHCONN, MQHOBJ hObj, MQLONG selectorCount, PMQLONG selectors, MQLONG intCount, PMQLONG intAttrs, MQLONG charLength, PMQCHAR charAttrs, PMQLONG cc, PMQLONG rc)
         {
             FakeMq & fake = fakeMq();
-            fake.inqCalls++;
+            const bool qmgrObject = fake.handleIsQmgr.count(hObj) && fake.handleIsQmgr[hObj];
+            (qmgrObject ? fake.qmgrInqCalls : fake.inqCalls)++;
             for (MQLONG i = 0; i < selectorCount; i++)
             {
                 std::map<MQLONG, MQLONG>::const_iterator failure = fake.inqRcBySelector.find(selectors[i]);
@@ -474,7 +535,8 @@ namespace rfh_test
                 MQLONG value = 0;
                 if (qmgr)
                 {
-                    value = (s == MQIA_PLATFORM) ? fake.platform : (s == MQIA_COMMAND_LEVEL) ? fake.commandLevel : 0;
+                    value = (s == MQIA_PLATFORM) ? fake.platform : (s == MQIA_COMMAND_LEVEL) ? fake.commandLevel :
+                            (s == MQIA_MAX_MSG_LENGTH) ? fake.qmgrMaxMsgLength : 0;
                 }
                 else if (s == MQIA_CURRENT_Q_DEPTH)
                 {

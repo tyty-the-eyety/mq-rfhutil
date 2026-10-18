@@ -58,6 +58,24 @@ namespace rfh
 			return MQCO_NONE;
 		}
 
+		// The alternate user id as Windows gives it to MQOPEN (openQ 11978-11990, OpenTempQ, openAdminQ): at most 12 characters.
+		std::string alternateUserOf(const std::string & user)
+		{
+			return user.substr(0, MQ_USER_ID_LENGTH);
+		}
+
+		// MQOPEN as OpenTempQ and openAdminQ issue it: the alternate user id is cut to 12 characters.
+		void setAlternateUser(MQOD & od, MQLONG & openOptions, const std::string & user)
+		{
+			if (user.empty())
+			{
+				return;
+			}
+			openOptions |= MQOO_ALTERNATE_USER_AUTHORITY;
+			memset(od.AlternateUserId, 0, MQ_USER_ID_LENGTH);
+			memcpy(od.AlternateUserId, user.data(), alternateUserOf(user).size());
+		}
+
 		Result notConnected()
 		{
 			return Result::failure("Not connected to a queue manager");
@@ -112,6 +130,7 @@ namespace rfh
 
 		hConn = MQHC_UNUSABLE_HCONN;
 		clearHandleState();
+		qmInfo = QueueManagerInfo();
 	}
 
 	// Forgets the open queue handle and browse state; the handle itself is closed by
@@ -122,6 +141,8 @@ namespace rfh
 		openName.clear();
 		openRemoteQm.clear();
 		openOptions = 0;
+		openSelector.clear();
+		openAlternateUser.clear();
 		browseCursor = 0;
 	}
 
@@ -132,8 +153,9 @@ namespace rfh
 			return Result::failure("Already connected; disconnect first");
 		}
 
-		// a stale queue handle from an earlier connection must never be reused
+		// a stale queue handle from an earlier connection must never be reused, nor its queue manager's facts
 		clearHandleState();
+		qmInfo = QueueManagerInfo();
 
 		if (apiInjected && ((api.connx == nullptr) || (api.disc == nullptr) || (api.open == nullptr) ||
 		                    (api.close == nullptr) || (api.put == nullptr) || (api.get == nullptr) || (api.inq == nullptr)))
@@ -227,6 +249,71 @@ namespace rfh
 
 		Result result = Result::fromMq("MQCONNX", cc, rc);
 		result.warnings.insert(result.warnings.end(), loaded.warnings.begin(), loaded.warnings.end());
+
+		if (cc != MQCC_FAILED)
+		{
+			Result learned = inquireQueueManager();
+			if (!learned.ok())
+			{
+				return learned;		// the connection was lost during the inquiry; the session is not connected
+			}
+			result.warnings.insert(result.warnings.end(), learned.warnings.begin(), learned.warnings.end());
+		}
+
+		return result;
+	}
+
+	// connect2QM 11242-11395: open the queue manager object and inquire its maximum message length,
+	// platform and command level, in that order. Windows ignores a failure of any of these calls and
+	// keeps 0; a failure here is a warning, except a lost connection, which fails the connect.
+	Result MqSession::inquireQueueManager()
+	{
+		qmInfo = QueueManagerInfo();
+		Result result;
+
+		MQOD od = { MQOD_DEFAULT };
+		od.ObjectType = MQOT_Q_MGR;
+		MQHOBJ qmgr = MQHO_UNUSABLE_HOBJ;
+		MQLONG cc = MQCC_OK;
+		MQLONG rc = MQRC_NONE;
+		api.open(hConn, &od, MQOO_INQUIRE | MQOO_FAIL_IF_QUIESCING, &qmgr, &cc, &rc);
+		dropIfBroken(rc);
+		if (cc == MQCC_FAILED)
+		{
+			Result failed = Result::fromMq("MQOPEN", cc, rc);
+			if (!isConnected())
+			{
+				return failed;
+			}
+			result.warnings.push_back("The platform, command level and maximum message length of the queue manager are unknown: " + failed.text);
+			return result;
+		}
+
+		struct Step
+		{
+			MQLONG selector;
+			MQLONG * value;
+			const char * what;
+		};
+		const Step steps[] = { { MQIA_MAX_MSG_LENGTH, &qmInfo.maxMsgLength, "maximum message length" },
+		                       { MQIA_PLATFORM, &qmInfo.platform, "platform" },
+		                       { MQIA_COMMAND_LEVEL, &qmInfo.commandLevel, "command level" } };
+		for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++)
+		{
+			Result inquired = inquireInteger(qmgr, steps[i].selector, *steps[i].value);
+			if (!inquired.ok())
+			{
+				*steps[i].value = 0;
+				if (!isConnected())
+				{
+					qmInfo = QueueManagerInfo();
+					return inquired;
+				}
+				result.warnings.push_back(std::string("The ") + steps[i].what + " of the queue manager is unknown: " + inquired.text);
+			}
+		}
+
+		closeInquiryHandle(qmgr, result);
 		return result;
 	}
 
@@ -268,16 +355,34 @@ namespace rfh
 		// MQDISC closes every handle of the connection, so none of them is valid now
 		hConn = MQHC_UNUSABLE_HCONN;
 		clearHandleState();
+		qmInfo = QueueManagerInfo();
 		return r;
 	}
 
-	Result MqSession::openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & obj, std::string * resolvedName)
+	Result MqSession::openQueue(const std::string & queue, const std::string & remoteQm, MQLONG options, MQHOBJ & obj, std::string * resolvedName, const OpenExtras * extras)
 	{
 		MQOD od = { MQOD_DEFAULT };
 		if (resolvedName != nullptr)
 		{
 			od.Version = MQOD_VERSION_3;
 			resolvedName->clear();
+		}
+
+		// openQ 12079-12105: a selector needs a version 4 descriptor. Version 7 answers 2520 when the
+		// resolved object string has no buffer, although the call does not need it.
+		char resolvedObject[MQ_TOPIC_STR_LENGTH];
+		if ((extras != nullptr) && !extras->selector.empty())
+		{
+			od.Version = MQOD_VERSION_4;
+			od.SelectionString.VSPtr = const_cast<char *>(extras->selector.c_str());
+			od.SelectionString.VSLength = (MQLONG)extras->selector.size();
+			od.SelectionString.VSBufSize = 0;
+			od.ResObjectString.VSPtr = resolvedObject;
+			od.ResObjectString.VSBufSize = (MQLONG)sizeof(resolvedObject);
+		}
+		if (extras != nullptr)
+		{
+			setAlternateUser(od, options, extras->alternateUser);
 		}
 
 		if (!copyField(od.ObjectName, sizeof(od.ObjectName), queue))
@@ -343,9 +448,18 @@ namespace rfh
 		}
 	}
 
-	Result MqSession::ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options)
+	// True when the open queue handle is the one an open of these arguments would give. Windows compares the
+	// queue, the remote queue manager, the selector and (only with set-user or set-all context) the user id
+	// (openQ 11853-11875); here every argument of the open counts, so a changed alternate user reopens too.
+	bool MqSession::isOpenAs(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras) const
 	{
-		if ((hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue) && (openRemoteQm == remoteQm) && (openOptions == options))
+		return (hObj != MQHO_UNUSABLE_HOBJ) && (openName == queue) && (openRemoteQm == remoteQm) && (openOptions == options) &&
+		       (openSelector == extras.selector) && (openAlternateUser == extras.alternateUser);
+	}
+
+	Result MqSession::ensureOpen(const std::string & queue, const std::string & remoteQm, MQLONG options, const OpenExtras & extras)
+	{
+		if (isOpenAs(queue, remoteQm, options, extras))
 		{
 			return Result::success();
 		}
@@ -356,12 +470,14 @@ namespace rfh
 			return closed;
 		}
 
-		Result opened = openQueue(queue, remoteQm, options, hObj);
+		Result opened = openQueue(queue, remoteQm, options, hObj, nullptr, &extras);
 		if (opened.ok())
 		{
 			openName = queue;
 			openRemoteQm = remoteQm;
 			openOptions = options;
+			openSelector = extras.selector;
+			openAlternateUser = extras.alternateUser;
 		}
 
 		return opened;
@@ -393,6 +509,8 @@ namespace rfh
 		openName.clear();
 		openRemoteQm.clear();
 		openOptions = 0;
+		openSelector.clear();
+		openAlternateUser.clear();
 
 		return Result::fromMq("MQCLOSE", cc, rc);
 	}
@@ -514,6 +632,11 @@ namespace rfh
 			{
 				gmo.MatchOptions |= MQMO_MATCH_CORREL_ID;
 				memcpy(md.CorrelId, options.correlId, sizeof(md.CorrelId));
+			}
+			if (options.matchGroupId)
+			{
+				gmo.MatchOptions |= MQMO_MATCH_GROUP_ID;
+				memcpy(md.GroupId, options.groupId, sizeof(md.GroupId));
 			}
 			if (retryByMsgId)
 			{
@@ -657,6 +780,77 @@ namespace rfh
 			return Result::failure("Invalid wait interval");
 		}
 
+		// The selector, alternate user and shared input belong to the queue handle. All checks come
+		// before any queue is opened or closed, so a refused option cannot disturb a browse.
+		if (!options.selector.empty())
+		{
+			if (options.selector.size() >= MQ_SELECTOR_LENGTH)
+			{
+				// Windows cuts the selector at MQ_SELECTOR_LENGTH - 1 characters (openQ 12087-12095), which selects something else
+				return Result::failure("The selector is longer than " + std::to_string(MQ_SELECTOR_LENGTH - 1) + " characters");
+			}
+			if ((qmInfo.commandLevel > 0) && (qmInfo.commandLevel < MQCMDL_LEVEL_700))
+			{
+				return Result::failure("Message selectors need a queue manager at command level 700 (MQ V7) or above; this queue manager is at command level " +
+				                       std::to_string(qmInfo.commandLevel));
+			}
+		}
+
+		std::vector<std::string> notes;
+		OpenExtras extras;
+		extras.selector = options.selector;
+		extras.alternateUser = alternateUserOf(options.alternateUser);
+		if (extras.alternateUser.size() < options.alternateUser.size())
+		{
+			notes.push_back("The alternate user id was cut to " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
+		}
+		const MQLONG openFlags = (options.inputShared ? MQOO_INPUT_SHARED : MQOO_INPUT_AS_Q_DEF) | MQOO_BROWSE;
+
+		// setMQoptions 17819-17855: complete message and logical order need a queue manager that is not
+		// z/OS or is at command level 600; all available sets both options except on z/OS, where
+		// level 600 allows only the first. Windows drops a refused option silently; a warning says so.
+		MQLONG groupFlags = 0;
+		const bool zos = (qmInfo.platform == MQPL_MVS);
+		const bool groupsOk = !zos || (qmInfo.commandLevel >= MQCMDL_LEVEL_600);
+		const std::string zosText = " was not used: this z/OS queue manager is below command level 600 or its level is unknown";
+		if (options.completeMsg)
+		{
+			if (groupsOk)
+			{
+				groupFlags |= MQGMO_COMPLETE_MSG;
+			}
+			else
+			{
+				notes.push_back("The complete message option" + zosText);
+			}
+		}
+		if (options.logicalOrder)
+		{
+			if (groupsOk)
+			{
+				groupFlags |= MQGMO_LOGICAL_ORDER;
+			}
+			else
+			{
+				notes.push_back("The logical order option" + zosText);
+			}
+		}
+		if (options.allAvailable)
+		{
+			if (!zos)
+			{
+				groupFlags |= MQGMO_ALL_MSGS_AVAILABLE | MQGMO_ALL_SEGMENTS_AVAILABLE;
+			}
+			else if (qmInfo.commandLevel >= MQCMDL_LEVEL_600)
+			{
+				groupFlags |= MQGMO_ALL_MSGS_AVAILABLE;
+			}
+			else
+			{
+				notes.push_back("The all available option" + zosText);
+			}
+		}
+
 		if (options.mode == GetMode::BrowsePrevious)
 		{
 			if ((browseCursor < 0) && (openName == queue))
@@ -666,7 +860,9 @@ namespace rfh
 				return r;
 			}
 
-			if ((browseCursor <= 1) || (openName != queue))
+			// the browse position belongs to the handle that is open, so another queue or another way of
+			// opening it has no position to step back from
+			if ((browseCursor <= 1) || !isOpenAs(queue, std::string(), openFlags, extras))
 			{
 				Result r = Result::fromMq("MQGET", MQCC_FAILED, MQRC_NO_MSG_AVAILABLE);
 				r.text += " - already at the first message";
@@ -676,7 +872,7 @@ namespace rfh
 			return browseTo(queue, message, options, browseCursor - 1);
 		}
 
-		Result opened = ensureOpen(queue, std::string(), MQOO_INPUT_AS_Q_DEF | MQOO_BROWSE);
+		Result opened = ensureOpen(queue, std::string(), openFlags, extras);
 		if (!opened.ok())
 		{
 			return opened;
@@ -689,8 +885,10 @@ namespace rfh
 		case GetMode::BrowseNext: getOptions = MQGMO_BROWSE_NEXT; break;
 		case GetMode::Destructive: case GetMode::BrowsePrevious: break;
 		}
+		getOptions |= groupFlags;
 
 		Result r = getOnce(hObj, message, options, getOptions, options.waitMs);
+		r.warnings.insert(r.warnings.end(), notes.begin(), notes.end());
 
 		if (r.ok() && isConnected())
 		{
@@ -823,18 +1021,6 @@ namespace rfh
 				length--;
 			}
 			return std::string(field, length);
-		}
-
-		// MQOPEN as OpenTempQ and openAdminQ issue it: the alternate user id is cut to 12 characters.
-		void setAlternateUser(MQOD & od, MQLONG & openOptions, const std::string & user)
-		{
-			if (user.empty())
-			{
-				return;
-			}
-			openOptions |= MQOO_ALTERNATE_USER_AUTHORITY;
-			memset(od.AlternateUserId, 0, MQ_USER_ID_LENGTH);
-			memcpy(od.AlternateUserId, user.data(), std::min(user.size(), (size_t)MQ_USER_ID_LENGTH));
 		}
 
 		const char * typeLabel(MQLONG queueType)
@@ -977,62 +1163,20 @@ namespace rfh
 		Result result;
 		std::vector<std::string> warnings;
 
-		// platform and command level (connect2QM keeps them; this session does not)
-		MQLONG platform = 0;
-		MQLONG level = 0;
-		bool levelKnown = false;
+		// platform and command level, learned by connect() (connect2QM); 0 is an inquiry that failed there
+		const bool levelKnown = (qmInfo.platform != 0) && (qmInfo.commandLevel != 0);
+		if (!levelKnown)
 		{
-			MQOD od = { MQOD_DEFAULT };
-			od.ObjectType = MQOT_Q_MGR;
-			MQHOBJ qmgr = MQHO_UNUSABLE_HOBJ;
-			MQLONG cc = MQCC_OK;
-			MQLONG rc = MQRC_NONE;
-			api.open(hConn, &od, MQOO_INQUIRE | MQOO_FAIL_IF_QUIESCING, &qmgr, &cc, &rc);
-			dropIfBroken(rc);
-			if (cc == MQCC_FAILED)
-			{
-				return Result::fromMq("MQOPEN", cc, rc);
-			}
-
-			MQLONG selectors[2] = { MQIA_PLATFORM, MQIA_COMMAND_LEVEL };
-			MQLONG answers[2] = { 0, 0 };
-			api.inq(hConn, qmgr, 2, selectors, 2, answers, 0, nullptr, &cc, &rc);
-			dropIfBroken(rc);
-			if (cc == MQCC_FAILED)
-			{
-				if (!isConnected())
-				{
-					return Result::fromMq("MQINQ", cc, rc);
-				}
-				addListWarning(warnings, "The platform and command level of the queue manager are unknown (" + Result::fromMq("MQINQ", cc, rc).text +
-				                         "); the request is built for a queue manager at command level 600 or above");
-			}
-			else
-			{
-				platform = answers[0];
-				level = answers[1];
-				levelKnown = true;
-			}
-
-			Result closed;
-			closeInquiryHandle(qmgr, closed);
-			for (const std::string & w : closed.warnings)
-			{
-				addListWarning(warnings, w);
-			}
-		}
-
-		if (!isConnected())
-		{
-			return Result::failure("The connection was lost");
+			addListWarning(warnings, "The platform and command level of the queue manager are unknown (see the warnings of the connect); "
+			                         "the request is built for a queue manager at command level 600 or above");
 		}
 
 		// z/OS before V6 has no PCF (DataArea::loadNames)
-		if (levelKnown && (platform == MQPL_MVS) && (level < MQCMDL_LEVEL_600))
+		if (levelKnown && (qmInfo.platform == MQPL_MVS) && (qmInfo.commandLevel < MQCMDL_LEVEL_600))
 		{
 			return Result::failure("MQ on 390 does not support PCF prior to V6");
 		}
-		const bool extended = !levelKnown || (level >= MQCMDL_LEVEL_600);
+		const bool extended = !levelKnown || (qmInfo.commandLevel >= MQCMDL_LEVEL_600);
 
 		// a temporary dynamic queue receives the replies (OpenTempQ)
 		MQHOBJ replyQ = MQHO_UNUSABLE_HOBJ;

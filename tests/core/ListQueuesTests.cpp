@@ -332,7 +332,7 @@ TEST_F(ListQueues, TheRequestDescriptorIsANonPersistentRequestWithTheReplyQueue)
     EXPECT_EQ(10 * 1000, md.Expiry) << "Windows writes 10 * 1000 tenths of a second under a comment that says 10 seconds; pinned";
     EXPECT_NE(0, fake.putLog[0].pmoOptions & MQPMO_NO_SYNCPOINT);
 
-    ASSERT_GE(fake.openLog.size(), 3u);
+    ASSERT_EQ(2u, fake.openLog.size()) << "the reply queue and the admin queue; connect opened the queue manager object";
     std::string replyName;
     for (const rfh_test::OpenRecord & open : fake.openLog)
     {
@@ -621,8 +621,10 @@ TEST_F(ListQueues, AZosQueueManagerBelowV6HasNoPcf)
     EXPECT_EQ(0, fake.dynamicQueueCount) << "no reply queue is created";
     expectNoLeaks();
 
-    // at V6 it is allowed
+    // at V6 it is allowed; the level is learned when the session connects
+    ASSERT_TRUE(session.disconnect().ok());
     fake.commandLevel = 600;
+    connect();
     script[kLocal].messages = {queueReply("Q1", kLocal, 1)};
     EXPECT_TRUE(list(names).ok());
 }
@@ -662,6 +664,19 @@ TEST_F(ListQueues, TheAlternateUserIsPassedToBothOpensAndCutToTwelveCharacters)
         EXPECT_EQ("ABCDEFGHIJKL", open.alternateUser) << open.name;
     }
     EXPECT_EQ(2, seen);
+}
+
+TEST_F(ListQueues, TheQueueManagerFactsComeFromTheConnectNotAnotherInquiry)
+{
+    script[kLocal].messages = {queueReply("Q1", kLocal, 1)};
+    connect();
+    ASSERT_EQ(1, fake.qmgrOpenCalls) << "connect opens the queue manager object once";
+    ASSERT_EQ(3, fake.qmgrInqCalls);
+
+    std::vector<std::string> names;
+    ASSERT_TRUE(list(names).ok());
+    EXPECT_EQ(1, fake.qmgrOpenCalls) << "listQueues does not open the queue manager object again";
+    EXPECT_EQ(3, fake.qmgrInqCalls) << "and does not inquire on it";
 }
 
 TEST_F(ListQueues, TheSessionsOwnQueueIsNotDisturbed)
