@@ -21,7 +21,7 @@ Linux Qt6 port of IBM RFHUtil. This file is for agents working in this fork; lea
 - `git commit -s`, Conventional Commit subjects, and end each message with the two trailer lines you were given
   (`Co-Authored-By: ...` and `Claude-Session: ...`). **Never push.** Do not install anything (dnf, pip, brew, npm) without asking.
 - Build and test: `cmake --preset linux-debug && cmake --build --preset linux-debug && ctest --preset linux-debug`
-  (expect 661 tests, 8 skipped). `ctest -L memcheck` runs the parsers under the guard allocator.
+  (expect 978 tests, 8 skipped). `ctest -L memcheck` (6 tests) runs the parsers under the guard allocator.
 - Windows-only files (MFC, `DataArea.cpp`, `.vcxproj`) cannot be compiled here. Say what is unverified.
 
 ## Policies (details and reasons: CODEMAP section 7)

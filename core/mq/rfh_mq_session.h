@@ -135,8 +135,9 @@ namespace rfh
 		bool cluster = false;			// add the cluster filter, so cluster queues are listed too
 
 		// Added by the port; the defaults are Windows' constants.
-		MQLONG replyWaitMs = 3000;		// how long each reply is waited for (getReplyMsg: 3 * 1000)
+		MQLONG replyWaitMs = 3000;		// how long each reply is waited for (getReplyMsg: 3 * 1000); the request expires after ten times this
 		size_t maxNames = 100000;		// stop collecting at this many names and say so in a warning
+		size_t maxReplies = 10000;		// reply messages read for one request; more stop the whole listing with a warning
 		std::string alternateUser;		// MQOD alternate user id for both opens (the MQMD tab's); at most 12 characters are used, as in Windows
 	};
 
@@ -216,16 +217,22 @@ namespace rfh
 
 		// Lists queue names over PCF, as the Main tab's Load Names does (see rfh_pcf_queues.h for the
 		// messages and DataArea::loadNames, openAdminQ, OpenTempQ and getListOfNames for the flow).
-		// names is cleared, then receives the names without duplicates, local queues first, then remote,
-		// then alias, each in the order the command server answered. Model queues, queue types
-		// that were not asked for and the temporary reply queue itself are left out. Names that
+		// names is cleared, then receives the names without duplicates (by name alone: Windows keeps an
+		// entry per type letter and name, so a name that is both a local and an alias queue is two entries
+		// there and one here), local queues first, then remote, then alias, each in the order the command
+		// server answered. Left out: model queues, the temporary reply queue itself and queues whose
+		// reported type is not positive (Windows records only QType > 0). Queue types that were not
+		// asked for are not filtered; the command server is asked for one type at a time. Names that
 		// start with SYSTEM. are included: hiding them is the caller's choice.
 		//
 		// Flow: inquire the platform and command level of the queue manager (unknown levels are
 		// reported in a warning and treated as modern), open a dynamic reply queue from
 		// SYSTEM.DEFAULT.MODEL.QUEUE (RFHUTIL.REPLY.QUEUE*), open SYSTEM.ADMIN.COMMAND.QUEUE for output,
-		// then for each requested type put one non-persistent request (expiry 10000 tenths, no syncpoint)
-		// and read replies, each waited for replyWaitMs, until one is not marked "not last". The
+		// then for each requested type put one non-persistent request (no syncpoint; Expiry is ten times
+		// replyWaitMs in tenths of a second, at least 10 s and at most 1 h, see pcf::requestExpiryTenths, so
+		// an unanswered request does not linger on the command queue) and read replies, each waited for
+		// replyWaitMs, until one is marked last. A reply that is not valid PCF is reported and reading goes on
+		// (bounded by maxReplies), so the rest of that request's replies are not taken for the next one's. The
 		// reply queue is closed with MQCO_DELETE_PURGE and the admin queue closed in every case unless
 		// the connection was lost, which takes the handles with it. Windows opens a connection per type; this
 		// uses the session's connection and one pair of queues for all types.
@@ -238,8 +245,9 @@ namespace rfh
 		// and is refused with the Windows text.
 		//
 		// Bounds: one reply is read into 64 KiB (Windows 32 KiB plus a header); a longer reply is
-		// read as far as it goes and a warning says so. At most options.maxNames names are kept. At most 50
-		// warnings are kept.
+		// read as far as it goes and a warning says so. At most options.maxNames names are kept. At most
+		// options.maxReplies reply messages are read for a request; more stop the whole listing with a
+		// warning (the unread replies would be taken for the next request's). At most 50 warnings are kept.
 		Result listQueues(const QueueListOptions & options, std::vector<std::string> & names);
 
 		// Removes every message from queue with destructive gets; count receives how many.
@@ -282,7 +290,7 @@ namespace rfh
 		// listQueues: one request and its replies; false when the connection was lost.
 		Result collectQueueNames(MQHOBJ adminQ, MQHOBJ replyQ, const std::string & replyName, MQLONG queueType, bool extended,
 		                         const QueueListOptions & options, std::vector<std::string> & names, std::set<std::string> & seen,
-		                         std::vector<std::string> & warnings, bool & limitReached);
+		                         std::vector<std::string> & warnings, bool & limitReached, bool & replyCapReached);
 
 		MqApi api;
 		bool apiInjected = false;

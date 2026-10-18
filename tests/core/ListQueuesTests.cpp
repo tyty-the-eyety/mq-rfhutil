@@ -329,7 +329,7 @@ TEST_F(ListQueues, TheRequestDescriptorIsANonPersistentRequestWithTheReplyQueue)
     EXPECT_EQ(0, memcmp(md.Format, MQFMT_ADMIN, MQ_FORMAT_LENGTH));
     EXPECT_EQ(MQMT_REQUEST, md.MsgType);
     EXPECT_EQ(MQPER_NOT_PERSISTENT, md.Persistence);
-    EXPECT_EQ(10 * 1000, md.Expiry) << "Windows writes 10 * 1000 tenths of a second under a comment that says 10 seconds; pinned";
+    EXPECT_EQ(100, md.Expiry) << "ten times the 50 ms wait is below the 10 second floor, in tenths of a second";
     EXPECT_NE(0, fake.putLog[0].pmoOptions & MQPMO_NO_SYNCPOINT);
 
     ASSERT_EQ(2u, fake.openLog.size()) << "the reply queue and the admin queue; connect opened the queue manager object";
@@ -344,6 +344,39 @@ TEST_F(ListQueues, TheRequestDescriptorIsANonPersistentRequestWithTheReplyQueue)
     ASSERT_FALSE(replyName.empty());
     EXPECT_EQ(replyName, std::string(md.ReplyToQ, replyName.size()));
     EXPECT_EQ(' ', md.ReplyToQ[replyName.size()]) << "blank padded";
+}
+
+TEST_F(ListQueues, TheRequestExpiryIsTenTimesTheReplyWaitInTenthsOfASecond)
+{
+    struct Case
+    {
+        MQLONG waitMs;
+        MQLONG expiry;
+    };
+    // wait x 10, in tenths of a second (wait / 100 x 10): 3000 ms is 30 tenths, so 300 tenths = 30 s;
+    // at least 100 (10 s) so that a very short wait does not make a live server's answer impossible;
+    // at most 36000 (1 hour); a wait that never ends (negative) gets the cap, never MQEI_UNLIMITED
+    const Case cases[] = { { 3000, 300 }, { 60000, 6000 }, { 0, 100 }, { 50, 100 }, { 2000000, 36000 },
+                           { MQWI_UNLIMITED, 36000 }, { 2147483647, 36000 } };
+    for (const Case & c : cases)
+    {
+        fake.reset();
+        fake.onPut[kAdminQueue] = [this](const rfh_test::FakeMessage & request) { serve(request); };
+        MqSession local(fakeApi());
+        ConnectOptions connectOptions;
+        connectOptions.mode = Mode::Bindings;
+        ASSERT_TRUE(local.connect(connectOptions).ok());
+
+        options.replyWaitMs = c.waitMs;
+        std::vector<std::string> names;
+        ASSERT_TRUE(local.listQueues(options, names).ok()) << c.waitMs;
+        ASSERT_EQ(3u, fake.putLog.size());
+        for (const auto & put : fake.putLog)
+        {
+            EXPECT_EQ(c.expiry, put.message.md.Expiry) << "wait " << c.waitMs << " ms";
+            EXPECT_NE(MQEI_UNLIMITED, put.message.md.Expiry);
+        }
+    }
 }
 
 TEST_F(ListQueues, OnlyTheRequestedTypesAreAskedFor)
@@ -395,7 +428,7 @@ TEST_F(ListQueues, ModelQueuesTheReplyQueueAndDuplicatesAreLeftOut)
     std::vector<std::string> names;
     Result r = list(names);
     ASSERT_TRUE(r.ok()) << r.text;
-    EXPECT_EQ((std::vector<std::string>{"APP.IN"}), names) << "Windows' table keeps one entry per name; the reply queue and models are skipped";
+    EXPECT_EQ((std::vector<std::string>{"APP.IN"}), names) << "the port keeps one entry per name (Windows: per type letter and name); the reply queue and models are skipped";
 }
 
 TEST_F(ListQueues, ClusterAndUnrecognisedQueueTypesAreListed)
@@ -1014,6 +1047,111 @@ TEST_F(ListQueues, MoreNamesThanTheLimitStopTheListingAndSayWhy)
     expectNoLeaks();
 }
 
+TEST_F(ListQueues, ADamagedReplyDoesNotLeaveTheRestOfTheRequestForTheNextOne)
+{
+    // Without reading on, L2 would be taken as the answer to the remote request, and R1 left behind.
+    script[kLocal].messages = {queueReply("L1", kLocal, 0), Bytes(20, 0), queueReply("L2", kLocal, 1)};
+    script[kRemote].messages = {queueReply("R1", kRemote, 1)};
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"L1", "L2", "R1"}), names);
+    EXPECT_TRUE(anyWarningContains(r, "shorter"));
+    EXPECT_TRUE(anyWarningContains(r, "may be incomplete"));
+    EXPECT_EQ(5, fake.getCalls) << "L1, junk, L2, R1 and the alias request's own none-found reply";
+    expectNoLeaks();
+}
+
+TEST_F(ListQueues, AHeaderLengthThatIsNotValidIsDamageToo)
+{
+    Bytes bad = queueReply("BAD", kLocal, 0);
+    bad[4] = 8;                                                     // StrucLength 8: below the 36 byte header
+    script[kLocal].messages = {queueReply("L1", kLocal, 0), bad, queueReply("L2", kLocal, 1)};
+    script[kRemote].messages = {queueReply("R1", kRemote, 1)};
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"L1", "L2", "R1"}), names);
+}
+
+TEST_F(ListQueues, ADamagedReplyThenSilenceIsAWarningNotAFailure)
+{
+    script[kLocal].messages = {queueReply("L1", kLocal, 0), Bytes(20, 0)};      // the real last message was the damaged one
+    script[kRemote].messages = {queueReply("R1", kRemote, 1)};
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"L1", "R1"}), names);
+    EXPECT_TRUE(anyWarningContains(r, "may be incomplete"));
+    expectNoLeaks();
+}
+
+TEST_F(ListQueues, ReplyMessagesPerRequestAreCappedAndTheListingStops)
+{
+    options.maxReplies = 5;
+    for (int i = 0; i < 20; i++)
+    {
+        script[kLocal].messages.push_back(queueReply("Q" + std::to_string(i), kLocal, 0));
+    }
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"Q0", "Q1", "Q2", "Q3", "Q4"}), names);
+    EXPECT_TRUE(anyWarningContains(r, "more than 5 reply messages"));
+    EXPECT_EQ(5, fake.getCalls);
+    EXPECT_EQ(1, fake.putCalls) << "leftover replies would be taken for the next request's: stop";
+    expectNoLeaks();
+}
+
+TEST_F(ListQueues, AnEndlessRunOfDamagedRepliesIsCappedToo)
+{
+    options.maxReplies = 4;
+    script[kLocal].messages.assign(50, Bytes(20, 0));
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_TRUE(names.empty());
+    EXPECT_TRUE(anyWarningContains(r, "more than 4 reply messages"));
+    EXPECT_EQ(4, fake.getCalls);
+    EXPECT_EQ(1, fake.putCalls);
+}
+
+TEST_F(ListQueues, AListingThatEndsExactlyAtTheReplyCapIsNotTruncated)
+{
+    options.maxReplies = 3;
+    script[kLocal].messages = {queueReply("Q1", kLocal, 0), queueReply("Q2", kLocal, 0), queueReply("Q3", kLocal, 1)};
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"Q1", "Q2", "Q3"}), names);
+    EXPECT_FALSE(anyWarningContains(r, "more than"));
+    EXPECT_EQ(3, fake.putCalls) << "the other types are still asked";
+}
+
+TEST_F(ListQueues, AQueueWithoutAPositiveTypeIsNotListed)
+{
+    // Windows requires QType > 0 before it records a queue (DataArea.cpp:21958)
+    script[kLocal].messages = {queueReply("ZERO.TYPE", 0, 0), queueReply("NEGATIVE.TYPE", -1, 0), queueReply("GOOD.Q", kLocal, 1)};
+    connect();
+
+    std::vector<std::string> names;
+    Result r = list(names);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"GOOD.Q"}), names);
+}
+
 TEST_F(ListQueues, ThousandsOfBadRepliesGiveABoundedNumberOfWarnings)
 {
     for (int i = 0; i < 200; i++)
@@ -1155,4 +1293,66 @@ TEST(PcfQueueReply, AnUndefinedEncodingIsTakenAsTheHosts)
 {
     pcf::QueueReply r = parse(queueReply("NATIVE", kLocal, 1), MQENC_INTEGER_UNDEFINED);
     EXPECT_TRUE(r.hasQueue);
+}
+
+TEST(PcfQueueReply, ANameLengthBetweenTheSpaceAndTheParameterLengthIsRejected)
+{
+    // The name is the last bytes of a message whose size is a multiple of 16, so a read of one byte too
+    // many leaves the buffer (a guard allocator faults). StringLength 9 is within StrucLength 28 but not
+    // within the 8 bytes after the 20 fixed ones: a check against the whole parameter would accept it.
+    Wire w;
+    header(w, MQCFT_XR_ITEM, 1, 0, 0, 2);
+    integer(w, 20, kLocal);
+    stringParameter(w, 2016, "ABCDEFGH", 819, 28, 9);
+    ASSERT_EQ(0u, w.data.size() % 16);
+    pcf::QueueReply r = parse(w.data);
+    EXPECT_FALSE(r.hasQueue);
+    EXPECT_TRUE(r.name.empty());
+    ASSERT_EQ(1u, r.warnings.size());
+    EXPECT_NE(std::string::npos, r.warnings[0].find("does not fit"));
+
+    // and the longest name that does fit is read
+    Wire fits;
+    header(fits, MQCFT_XR_ITEM, 1, 0, 0, 2);
+    integer(fits, 20, kLocal);
+    stringParameter(fits, 2016, "ABCDEFGH", 819, 28, 8);
+    pcf::QueueReply ok = parse(fits.data);
+    EXPECT_TRUE(ok.hasQueue);
+    EXPECT_EQ("ABCDEFGH", ok.name);
+}
+
+TEST(PcfQueueReply, TheParametersStartWhereTheHeaderSaysItsLengthIs)
+{
+    // a later header version with 4 more bytes: StrucLength 40
+    Wire w;
+    w.i32(MQCFT_XR_ITEM).i32(40).i32(4).i32(13).i32(1).i32(1).i32(0).i32(0).i32(2).i32(0xABCDEF);
+    stringParameter(w, 2016, blankPadded("LATER.VERSION"));
+    integer(w, 20, kAlias);
+    pcf::QueueReply r = parse(w.data);
+    EXPECT_TRUE(r.headerValid);
+    EXPECT_TRUE(r.hasQueue);
+    EXPECT_EQ("LATER.VERSION", r.name);
+    EXPECT_EQ(kAlias, r.queueType);
+    EXPECT_TRUE(r.last);
+
+    // a failed reply is searched for its parameter from the same place
+    Wire failed;
+    failed.i32(MQCFT_XR_ITEM).i32(40).i32(4).i32(13).i32(1).i32(1).i32(MQCC_FAILED).i32(3007).i32(1).i32(0x1234);
+    integer(failed, MQIACF_PARAMETER_ID, 2016);
+    EXPECT_EQ(2016, parse(failed.data).parameterId);
+}
+
+TEST(PcfQueueReply, AHeaderLengthBelow36OrPastTheMessageIsInvalid)
+{
+    for (long structLength : {0l, 8l, 32l, 35l, -36l, 121l, 1000l})
+    {
+        Wire w;
+        w.i32(MQCFT_XR_ITEM).i32(structLength).i32(3).i32(13).i32(1).i32(1).i32(0).i32(0).i32(2);
+        stringParameter(w, 2016, blankPadded("X"));
+        integer(w, 20, kLocal);                                     // 36 + 68 + 16 = 120 bytes
+        ASSERT_EQ(120u, w.data.size());
+        pcf::QueueReply r = parse(w.data);
+        EXPECT_FALSE(r.headerValid) << structLength;
+        EXPECT_FALSE(r.warnings.empty()) << structLength;
+    }
 }

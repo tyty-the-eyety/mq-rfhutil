@@ -24,6 +24,8 @@
 //
 // Differences from Windows, on purpose (Windows reads the reply with no bounds checks):
 // - Every length is checked against the bytes received. A reply shorter than the 36 byte header, a
+//   header whose own StrucLength is below 36 or past the bytes received (the parameters start at that
+//   StrucLength, so a later, longer header version is still read), a
 //   parameter that is shorter than its own fixed part or runs past the end, and a parameter length
 //   of 0 (Windows would step over it forever) stop the walk with a warning; a name whose length
 //   points past its parameter, is empty or is longer than 48 characters (Windows overruns its
@@ -48,6 +50,14 @@ namespace rfh
 		const size_t kHeaderLength = 36;			// MQCFH_STRUC_LENGTH
 		const size_t kMaxQueueNameLength = 48;		// MQ_Q_NAME_LENGTH
 
+		// MQMD Expiry of the Inquire Queue request, in tenths of a second, for a reply wait of
+		// replyWaitMs: ten times the wait, at least 100 (10 seconds) and at most 36000 (1 hour). A request
+		// that is never answered (command server stopped, reply queue deleted) is removed from
+		// SYSTEM.ADMIN.COMMAND.QUEUE by the queue manager after that time instead of staying to be
+		// run by a server that starts later. A wait of zero gets the minimum, a wait that never ends
+		// (negative) the maximum. Never MQEI_UNLIMITED. (Windows: 10 * 1000 tenths, 1000 seconds.)
+		MQLONG requestExpiryTenths(MQLONG replyWaitMs);
+
 		// The Inquire Queue request for queues of queueType (MQQT_LOCAL, MQQT_REMOTE, MQQT_ALIAS).
 		// extended selects MQCFT_COMMAND_XR and header version 3.
 		std::vector<unsigned char> buildInquireQueueRequest(MQLONG queueType, bool clusterInfo, bool extended);
@@ -55,7 +65,7 @@ namespace rfh
 		// What one reply message says.
 		struct QueueReply
 		{
-			bool headerValid = false;	// false when the message is too short or its header length is wrong; nothing else is set
+			bool headerValid = false;	// false when the message is too short or its StrucLength is below 36 or past the message; nothing else is set
 			MQLONG type = 0;			// MQCFH Type
 			MQLONG compCode = 0;		// MQCFH CompCode
 			MQLONG reason = 0;			// MQCFH Reason

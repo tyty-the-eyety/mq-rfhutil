@@ -1067,7 +1067,7 @@ namespace rfh
 	// One request and its replies (DataArea::PutAdminMsg, getReplyMsg and getListOfNames).
 	Result MqSession::collectQueueNames(MQHOBJ adminQ, MQHOBJ replyQ, const std::string & replyName, MQLONG queueType, bool extended,
 	                                    const QueueListOptions & options, std::vector<std::string> & names, std::set<std::string> & seen,
-	                                    std::vector<std::string> & warnings, bool & limitReached)
+	                                    std::vector<std::string> & warnings, bool & limitReached, bool & replyCapReached)
 	{
 		const std::vector<unsigned char> request = pcf::buildInquireQueueRequest(queueType, options.cluster, extended);
 
@@ -1077,7 +1077,9 @@ namespace rfh
 		memset(putMd.ReplyToQ, ' ', sizeof(putMd.ReplyToQ));
 		memcpy(putMd.ReplyToQ, replyName.data(), std::min(replyName.size(), sizeof(putMd.ReplyToQ)));
 		putMd.Persistence = MQPER_NOT_PERSISTENT;
-		putMd.Expiry = 10 * 1000;		// Windows' value: tenths of a second, so 100 seconds, under a comment that says 10
+		// Tenths of a second, ten times the reply wait: a request nobody waits for any more must not stay on
+		// the command queue for a server that starts later (Windows: 10 * 1000, which is 1000 seconds)
+		putMd.Expiry = pcf::requestExpiryTenths(options.replyWaitMs);
 
 		MQPMO pmo = { MQPMO_DEFAULT };
 		pmo.Options = MQPMO_NO_SYNCPOINT;
@@ -1098,9 +1100,19 @@ namespace rfh
 		std::vector<unsigned char> buffer(kReplyBufferBytes);
 		Result outcome;
 		size_t received = 0;
+		bool damaged = false;		// a reply could not be read as PCF: its sender's later replies are still to come
 
 		for (;;)
 		{
+			if (received >= options.maxReplies)
+			{
+				// replies left on the queue would be read as the answers to the next request
+				addListWarning(warnings, std::string("the command server sent more than ") + std::to_string(options.maxReplies) +
+				                         " reply messages for the " + typeLabel(queueType) + "; the list is incomplete and the other types were not asked");
+				replyCapReached = true;
+				return outcome;
+			}
+
 			MQMD2 md = { MQMD2_DEFAULT };
 			MQGMO gmo = { MQGMO_DEFAULT };
 			gmo.Options = MQGMO_FAIL_IF_QUIESCING | MQGMO_WAIT | MQGMO_NO_SYNCPOINT | MQGMO_CONVERT | MQGMO_ACCEPT_TRUNCATED_MSG;
@@ -1112,6 +1124,10 @@ namespace rfh
 
 			if (cc == MQCC_FAILED)
 			{
+				if (damaged && (rc == MQRC_NO_MSG_AVAILABLE))
+				{
+					return outcome;		// the damaged reply was probably the last one; it was reported when it came
+				}
 				outcome = Result::fromMq("MQGET", cc, rc);
 				if (rc == MQRC_NO_MSG_AVAILABLE)
 				{
@@ -1143,8 +1159,10 @@ namespace rfh
 
 			if (!reply.headerValid)
 			{
+				// keep reading, bounded by maxReplies: whether this was the last reply is not known
 				addListWarning(warnings, std::string("the list of ") + typeLabel(queueType) + " may be incomplete");
-				return outcome;
+				damaged = true;
+				continue;
 			}
 
 			if (reply.compCode == MQCC_FAILED)
@@ -1162,7 +1180,7 @@ namespace rfh
 					}
 				}
 			}
-			else if (reply.hasQueue && (reply.queueType != MQQT_MODEL) && (reply.name != replyName) && (seen.count(reply.name) == 0))
+			else if (reply.hasQueue && (reply.queueType > 0) && (reply.queueType != MQQT_MODEL) && (reply.name != replyName) && (seen.count(reply.name) == 0))
 			{
 				seen.insert(reply.name);
 				names.push_back(reply.name);
@@ -1267,8 +1285,9 @@ namespace rfh
 
 			std::set<std::string> seen;
 			bool limitReached = false;
+			bool replyCapReached = false;
 			bool firstStep = true;
-			for (size_t i = 0; (i < sizeof(steps) / sizeof(steps[0])) && isConnected() && !limitReached; i++)
+			for (size_t i = 0; (i < sizeof(steps) / sizeof(steps[0])) && isConnected() && !limitReached && !replyCapReached; i++)
 			{
 				if (!steps[i].wanted)
 				{
@@ -1280,7 +1299,7 @@ namespace rfh
 					break;
 				}
 
-				Result step = collectQueueNames(adminQ, replyQ, replyName, steps[i].type, extended, options, names, seen, warnings, limitReached);
+				Result step = collectQueueNames(adminQ, replyQ, replyName, steps[i].type, extended, options, names, seen, warnings, limitReached, replyCapReached);
 				if (!step.ok())
 				{
 					if (firstStep)

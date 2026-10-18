@@ -18,7 +18,7 @@ says where things are.
   sources. Phase 1 covers the Main, Data and MQMD tabs. Both connection modes (local bindings and
   client) are chosen at run time in one binary.
 - **What exists.** The core (platform layer, MQ loader and session, MQMD field conversion, header chain,
-  message files, the eight Data tab views) with 661 ctest tests. **There is no GUI yet**: the Qt
+  message files, the eight Data tab views) with 978 ctest tests. **There is no GUI yet**: the Qt
   application (`qt/` in the spec) is Plan 3 and has not been started.
 - **Branch.** `features/linux-qt-port` (the spec says `feat/...`; it was renamed so upstream CI,
   which runs on `master` and `features/**`, would run). Not pushed.
@@ -88,8 +88,18 @@ listing its differences from Windows.
   credentials sent only with a password), `put`, `get` (destructive, `BrowseFirst/Next/Previous`, wait, convert, cancel flag),
   `depth`, `purge`, `closeQueue`, `disconnect`. One thread at a time. `MqSession(const MqApi &)` injects a fake MQI.
   `put` joins `message.headers` + `message.body`; `get` splits them using `walkHeaders`.
+- `MqSession::listQueues(QueueListOptions, names)`: queue names over PCF (Inquire Queue to `SYSTEM.ADMIN.COMMAND.QUEUE`, replies on a
+  temporary dynamic queue). Request Expiry is ten times `replyWaitMs`; a damaged reply is skipped and reading goes on, bounded by `maxReplies`.
+- `rfh_pcf_queues.{h,cpp}` (`pcf::buildInquireQueueRequest`, `pcf::parseQueueReply`, `pcf::requestExpiryTenths`): pure bytes of the
+  Inquire Queue request and of one reply; every length is checked against the bytes received. Port of `buildPCFRequestQueues` / `processQueuesReply`.
+- `rfh_status_text.{h,cpp}` (`statusText(Result, StatusContext)`): the Windows status line wording for a failed MQ call, byte for byte
+  from `DataArea::setErrorMsg`.
+- `rfh_queue_managers.{h,cpp}` (`mq::listLocalQueueManagers`, `mq::defaultMqDataPath`): queue managers defined on this machine, read from
+  `mqs.ini`. Windows has no counterpart.
 
 **core/message** (`rfh_message.h`, `rfh_mqmd_fields.h`, `rfh_header_chain.h`). Depends on MQ headers and `rfhconst.h`.
+- `rfh_id_display.{h,cpp}` (`id_display::toText`, `applyEdit`, `maxLength`, `isHexDigit`, `reset`): the MQMD tab's Message Id, Correl Id and
+  Group Id display and edit rules (hex, character, mixed), from `MQMDPAGE`.
 - `Message {MQMD2 mqmd; vector headers; vector body}`: owns the message bytes. Headers are raw bytes (header tabs are not ported).
 - `MqmdFields` + `mqmd_fields::{toMqmd, fromMqmd, applyMdExtension, clear, msgTypeText}`: the MQMD tab's text/radio/checkbox
   state to and from an `MQMD2`. Port of `MQMDPAGE::buildMQMD` / `processMQMD`.
@@ -155,11 +165,11 @@ edited by hand, and this was not reproduced. If a script drifts from `HEAD`, the
   default `/opt/mqm`; headers only, the library is loaded at run time).
 - **Executables** (`tests/CMakeLists.txt`): `rfhutil_unit_tests` (IBM's suites + platform + shared-source tests), `rfhutil_core_tests`
   (everything else, no queue manager), `rfhutil_loader_tests` and `rfhutil_mq_tests` (label `mq`), `rfhutil_mq_fake_tests` (fake MQI).
-- **Expected result:** 661 tests, 100% pass, 8 skipped (6 `GuardMalloc` tests and
+- **Expected result:** 978 tests, 100% pass, 8 skipped (6 `GuardMalloc` tests and
   `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under memcheck;
   `MqClient.PutThenGetOverClientChannel`).
-- **Labels.** `ctest -L mq` (36 tests: loader and session tests against a real queue manager, plus the client test).
-  `ctest -L memcheck` (5 tests: `memcheck.GuardMalloc`, `.DataFormatter`, `.Parsers`, `.Format`, `.FormatFuzz`).
+- **Labels.** `ctest -L mq` (60 tests: loader and session tests against a real queue manager, plus the client test).
+  `ctest -L memcheck` (6 tests: `memcheck.GuardMalloc`, `.DataFormatter`, `.ListQueues`, `.Parsers`, `.Format`, `.FormatFuzz`).
 - **Queue manager.** `MqSessionTests.cpp` uses `MQ_BINDINGS_QMGR` (default `TEST_QM`; the spec's `RFHUTIL_TEST_QM` is not what
   the code reads). Its fixture creates `RFHUTIL.TEST.Q`, `.EMPTY`, `.EXCL` with `runmqsc` and deletes them; the user must be in the
   `mqm` group. **Rule:** tests may create and delete only `RFHUTIL.TEST.*` queues, and must leave none behind
@@ -263,6 +273,13 @@ Use `tools/index/q sym NAME` for the current range.
 | Big-endian or EBCDIC MQMD normalising | `translateMQMD`, `getIntEncode`, `getFloatEncode` in `RFHUtil/mqsubs.cpp`; `Mqsubs_*` tests |
 | Display/encoding constants (`NUMERIC_PC`, `CHAR_EBCDIC`, `DATA_COBOL`, `FLOAT_390`) | `RFHUtil/rfhconst.h` |
 | Connect, put, get, browse, purge | `MqSession` in `core/mq/rfh_mq_session.cpp` (`getOnce`, `browseTo`); tests `MqBindingsTest.*`, `MqSessionFakeTest.*` |
+| List queue names (Load Names) | `MqSession::listQueues` and `collectQueueNames` in `core/mq/rfh_mq_session.cpp`; bytes in `core/mq/rfh_pcf_queues.cpp`; tests `ListQueues.*`, `PcfQueueReply.*` in `tests/core/ListQueuesTests.cpp` (also `memcheck.ListQueues`) |
+| Status line text for an MQ failure (`2033 No messages in queue`) | `statusText` in `core/mq/rfh_status_text.cpp`; tests `tests/core/StatusTextTests.cpp` |
+| Message Id / Correl Id / Group Id display and editing | `core/message/rfh_id_display.cpp`; tests `tests/core/IdDisplayTests.cpp` |
+| Which queue managers exist on this machine? | `mq::listLocalQueueManagers` in `core/mq/rfh_queue_managers.cpp` (reads `mqs.ini`); tests `tests/core/QueueManagersTests.cpp` (`QueueManagers.*`) |
+| Get options (group, logical order, complete message, selector, alternate user), queue manager level | `MqSession::get`, `connect` in `core/mq/rfh_mq_session.cpp`; tests `tests/core/GetOptionsTests.cpp` |
+| The fake MQI used by core and Qt tests | `tests/core/fake_mq.h` (`rfh_test::fakeApi()`, `fakeMq()`; used by `MqSessionFakeTests.cpp`, `ListQueuesTests.cpp`, `GetOptionsTests.cpp`) |
+| Why does `MqLoaderTests` report a missing entry point? | `tests/core/stub_mqm_no_cmit.cpp`: a stub library without `MQCMIT`, built as `rfh_stub_mqm_no_cmit` |
 | How is the MQ library found and loaded? | `MqLoader::load`, `detail::libraryCandidates`, `detail::loadFrom` in `core/mq/rfh_mq_loader.cpp` |
 | MQ failure text (`RC=2033 ...`) | `Result::fromMq`, `reasonName` in `core/mq/rfh_result.cpp`; `RFHUtil/mqerror.cpp` |
 | How do I render a view? | `format::render` (`core/format/rfh_format.cpp`) -> `DataFormatter::getXxxData` (`RFHUtil/DataFormatter.cpp`) |
@@ -297,7 +314,7 @@ Use `tools/index/q sym NAME` for the current range.
 
 - **Done.** Plan 1 (portable core, complete at `7febad7`; client mode verified 2026-10-16 against an MQ 10.0.1.0 container), Plan 2A (message files,
   MQMD fields, headers; `0e065a2`), Plan 2B (Data tab views, guard allocator, memory-safety fixes; Tasks 1-8 and 10, HEAD `f415713`).
-  661 tests pass, 8 skipped; `ctest -L memcheck` passes 5 of 5.
+  978 tests pass, 8 skipped; `ctest -L memcheck` passes 6 of 6.
 - **Gated on the owner's Windows build of Plan 1** (RFHUtil, rfhutilc, UnitTests): Plan 2A Task 6 and Plan 2B Task 9 (section 7.5). Windows
   CI (Plan 1 Task 6) is also the owner's. Unverified on Windows: everything under `core/` and all edited shared sources;
   behaviours still assumed: unmappable surrogate pair gives two default characters, code page 1258 flush, the used-default flag, `mbclen`.

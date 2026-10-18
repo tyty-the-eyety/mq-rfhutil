@@ -7,6 +7,7 @@
 
 #include <string.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,18 @@ namespace rfh
 			{
 				reply.warnings.push_back(text);
 			}
+		}
+
+		MQLONG requestExpiryTenths(MQLONG replyWaitMs)
+		{
+			const long long minimum = 100;		// 10 seconds
+			const long long maximum = 36000;	// 1 hour
+			if (replyWaitMs < 0)
+			{
+				return (MQLONG)maximum;
+			}
+			const long long tenths = (long long)replyWaitMs / 10;	// ms / 100 = tenths of a second, times ten
+			return (MQLONG)std::min(maximum, std::max(minimum, tenths));
 		}
 
 		std::vector<unsigned char> buildInquireQueueRequest(MQLONG queueType, bool clusterInfo, bool extended)
@@ -122,11 +135,15 @@ namespace rfh
 			const MQLONG integerEncoding = encoding & MQENC_INTEGER_MASK;
 			in.swap = (integerEncoding != MQENC_INTEGER_UNDEFINED) && (integerEncoding != (MQENC_NATIVE & MQENC_INTEGER_MASK));
 
-			if (in.at(4) != (MQLONG)kHeaderLength)
+			// The header says where its parameters start: a later header version may be longer than 36 bytes.
+			const MQLONG declared = in.at(4);
+			if ((declared < (MQLONG)kHeaderLength) || ((size_t)declared > length))
 			{
-				addWarning(reply, "PCF header length " + std::to_string(in.at(4)) + " is not " + std::to_string(kHeaderLength));
+				addWarning(reply, "PCF header length " + std::to_string(declared) + " is not between " + std::to_string(kHeaderLength) +
+				                  " and the " + std::to_string(length) + " bytes received");
 				return reply;
 			}
+			const size_t parametersStart = (size_t)declared;
 
 			reply.headerValid = true;
 			reply.type = in.at(0);
@@ -145,7 +162,7 @@ namespace rfh
 			bool haveName = false;
 			bool haveType = false;
 			bool nameDropped = false;
-			size_t offset = kHeaderLength;
+			size_t offset = parametersStart;
 
 			for (MQLONG index = 0; (index < parameterCount) && !(haveName && haveType) && !failed; index++)
 			{
@@ -232,7 +249,7 @@ namespace rfh
 			if (failed)
 			{
 				// the first integer parameters of an error reply say which parameter was wrong
-				size_t at = kHeaderLength;
+				size_t at = parametersStart;
 				for (MQLONG index = 0; index < parameterCount; index++)
 				{
 					if (length - at < kMinimumParameter)
