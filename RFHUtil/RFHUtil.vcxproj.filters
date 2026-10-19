@@ -58,6 +58,9 @@
     <ClInclude Include="DataArea.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="DataFormatter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="DisplayQ.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -208,6 +211,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DataArea.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DataFormatter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="DisplayQ.cpp">

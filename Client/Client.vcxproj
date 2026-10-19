@@ -318,6 +318,7 @@
     <ClInclude Include="..\RFHUtil\ConnUser.h" />
     <ClInclude Include="..\RFHUtil\Copybook.h" />
     <ClInclude Include="..\RFHUtil\DataArea.h" />
+    <ClInclude Include="..\RFHUtil\DataFormatter.h" />
     <ClInclude Include="..\RFHUtil\DisplayQ.h" />
     <ClInclude Include="..\RFHUtil\DispQ.h" />
     <ClInclude Include="..\RFHUtil\Dlq.h" />
@@ -376,6 +377,7 @@
     <ClCompile Include="..\RFHUtil\ConnUser.cpp" />
     <ClCompile Include="..\RFHUtil\Copybook.cpp" />
     <ClCompile Include="..\RFHUtil\DataArea.cpp" />
+    <ClCompile Include="..\RFHUtil\DataFormatter.cpp" />
     <ClCompile Include="..\RFHUtil\DisplayQ.cpp" />
     <ClCompile Include="..\RFHUtil\DispQ.cpp" />
     <ClCompile Include="..\RFHUtil\Dlq.cpp" />

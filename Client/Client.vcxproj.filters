@@ -56,6 +56,9 @@
     <ClInclude Include="..\RFHUtil\DataArea.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\RFHUtil\DataFormatter.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\RFHUtil\DisplayQ.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -211,6 +214,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\RFHUtil\DataArea.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\RFHUtil\DataFormatter.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\RFHUtil\DisplayQ.cpp">

@@ -379,6 +379,8 @@ typedef struct SUBPARMS
 	BOOL setCorrelId;
 } SUBPARMS;
 
+class DataFormatter;
+
 class DataArea : public CObject
 {
 public:
@@ -547,7 +549,6 @@ public:
 	unsigned char * m_data_xml;
 	unsigned char * m_data_json;
 	unsigned char * m_data_fix;
-	wchar_t * m_data_ascii_UCS;
 	MQBYTE24 m_save_message_id;
 
 // Implementation
@@ -568,7 +569,6 @@ public:
 	void loadQMComboBox(CComboBox * cb);
 	void selectUsrFolder();
 	void SearchForMQ71();
-	void getNameValueData(const unsigned char * input, int inputLen, unsigned char * output, int maxLength, int ccsid, const int charFormat);
 	int getQueueNames(const char * qmName);
 	int processLocalQMgrs();
 	const char * getNextQMname(const char * name);
@@ -608,7 +608,6 @@ public:
 	MQLONG OpenTempQ(LPCTSTR QMname, LPCTSTR qName, MQLONG openOpts, char *realQname, MQLONG *ret);
 	void WriteDataFile();
 	void ReadDataFile();
-	int MQEBC2UCS(wchar_t *out, const unsigned char *in, int len, int ccsidIn);
 	void dumpTraceData(const char *label, const unsigned char *data, unsigned int length);
 	void DeleteContents();
 	void setRFHV1();
@@ -633,9 +632,7 @@ public:
 	int startMsgDisplay(const char * QMname, const char * Queue, MQMD2 * mqmd, MQLONG *msgLen);
 	int getNextMsgDisplay(MQMD2 * mqmd, MQLONG *msgLen);
 	void setMsgId(char * msgId);
-	int checkForUnicodeMarker(unsigned char * data);
 	void getHdrCcsid(const char * format, int *ccsid, int *encoding);
-	unsigned char * getTranslatedData(int * length, const int charFormat, const int ccsid);
 	int getParsedOfs();
 	int getXMLofs();
 	void resetParsedFind();
@@ -747,20 +744,7 @@ private:
 	int acount;
 	int mcount;
 	int lcount;
-	int MQCcsidLen;
-	int MQUcsCcsid;
-	int MQCcsidOut;
-	int MQCcsidIn;
 	int m_save_browse_count;
-	int saveEdi;
-	int saveBOM;
-	int saveParsedFormat;
-	int saveXMLFormat;
-	int saveBothFormat;
-	int saveCharCrlf;
-	int saveCharFormat;
-	int saveJsonFormat;
-	int	saveFixFormat;
 	int findParsedOfs;
 	int findXMLofs;
 	int findJsonOfs;
@@ -779,10 +763,7 @@ private:
 	MQLONG maxMsgLenQ;				// maximum message length for this Queue
 	MQLONG maxUOW;					// maximum uncommitted messages in a single UOW
 	char * m_msg_id_table;
-	char invalidCharTable[256];
 	char * defaultMQbuffer;			// default buffer to avoid extra mallocs
-	unsigned char * MQCcsidPtr;
-	wchar_t * MQUcsPtr;
 	NAMESTRUCT *subNamesRoot;
 	NAMESTRUCT *topicNamesRoot;
 	NAMESTRUCT *queueNamesRoot;
@@ -794,9 +775,7 @@ private:
 	char MQ71Path[512];
 	bool segmentActive;
 	bool groupActive;
-	BOOL invalidCharTableNotBuilt;
 	BOOL firstError;
-	BOOL saveIndentOn;
 	BOOL m_save_set_all_setting;
 	BOOL m_save_set_user_setting;
 	TCHAR szPrinterName[104];
@@ -814,6 +793,7 @@ private:
 	MQHOBJ		subQ;					// object handle used for MQGET
 	MQHOBJ		hSub;					// object handle for subscription
 	CCopybook *m_copybook;
+	DataFormatter * m_formatter;		// the Data tab views of the current message
 	CString transmissionQueue;
 	CString qmTempName;
 
@@ -854,17 +834,15 @@ private:
 	int assignMQMDEncoding(int encoding, const int tempVer, const int headerValue);
 	int getDefaultEncoding(int encoding);
 	int getDefaultCcsid(int ccsid);
-	int MQEBC2ASC(unsigned char * out, const unsigned char * in, int len, int ccsidIn, int ccsidOut);
 	int readFileChunk(FILE * input, int *remaining, const int offset, unsigned char * buffer, bool firstTime);
 	int nameToType(char * namePtr);
-	int xlateEbcdicChar(int fromCcsid, int toCcsid, const char * input, char * output);
 
 // implementation
 	void findMQInstallDirectory(unsigned char * dirName, unsigned long dirNameLen);
+	DataFormatter * formatter();
+	void dropFormatter();
+	void showFormatterError();
 	int setMQoptions(int options);
-	int findcrlf(const unsigned char *datain, const int maxchar, const int charSet);
-	void getCharDataUcs(const int charFormat, const int crlf, const int edi);
-	BOOL isLeadChar(unsigned char ch, const int charFormat);
 	void appendError(const char * errtxt);
 	int stripMQhdrs(unsigned char *msgData, int msgLen, char *format, int *ccsid, int *encoding);
 	int checkForMQhdrs(unsigned char * msgData, int msgLen, char * format, int * ccsid, int * encoding);
