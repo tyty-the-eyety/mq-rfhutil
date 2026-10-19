@@ -226,11 +226,11 @@ edited by hand, and this was not reproduced. If a script drifts from `HEAD`, the
   (everything else, no queue manager), `rfhutil_golden_tests` (with `rfh_make_goldens`), `rfhutil_loader_tests` and `rfhutil_mq_tests`
   (label `mq`), `rfhutil_mq_fake_tests` (fake MQI; also the connect string, connect security, get options and queue listing tests); the Qt
   Test executables are in `qt/tests` (section 3).
-- **Expected result:** 1172 tests, 100% pass. Skips count as passed. With no queue manager `TEST_QM` running, 71 are skipped: 63
-  `MqBindingsTest.*`, `MqClient.PutThenGetOverClientChannel`, 6 `GuardMalloc` tests and
+- **Expected result:** 1174 tests, 100% pass. Skips count as passed. With no queue manager `TEST_QM` running, 72 are skipped: 63
+  `MqBindingsTest.*`, `MqClient.*`, 6 `GuardMalloc` tests and
   `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad` (the last seven need the allocator preloaded and run under memcheck). With the
-  queue manager up, only 8 are skipped (the same seven, and the client test unless `MQ_CHANNEL` is set). The Qt tests do not need a queue manager.
-- **Labels.** `ctest -L mq` (73 tests: 7 loader and 2 session tests, which run without a queue manager, 63 `MqBindingsTest.*` and the client test,
+  queue manager up, only 9 are skipped (the same seven, and the two client tests unless `MQ_CHANNEL` or `MQ_TLS_CHANNEL` is set). The Qt tests do not need a queue manager.
+- **Labels.** `ctest -L mq` (75 tests: 7 loader and 2 session tests, which run without a queue manager, 63 `MqBindingsTest.*` and the two client tests,
   which skip without one). `ctest -L qt` (11 tests, one per Qt Test executable). `ctest -L memcheck` (9 tests: `memcheck.GuardMalloc`,
   `.DataFormatter`, `.ListQueues`, `.ConnectString`, `.ConnectSecurity`, `.Parsers`, `.Format`, `.Locate`, `.FormatFuzz`).
 - **Queue manager.** `MqSessionTests.cpp` uses `MQ_BINDINGS_QMGR` (default `TEST_QM`; the spec's `RFHUTIL_TEST_QM` is not what

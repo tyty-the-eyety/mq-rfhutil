@@ -279,7 +279,8 @@ failures.
 
 MQ integration tests use `MQ_BINDINGS_QMGR` (default `TEST_QM`) and create and
 delete `RFHUTIL.TEST.*` queues; client tests run when `MQ_CHANNEL` is set (see
-`tests/docker/compose.yaml`). Without an installed GoogleTest, add
+`tests/docker/compose.yaml`); the TLS client test runs when `MQ_TLS_CHANNEL` and
+`MQ_TLS_KEYREPO` (client key database, no extension) are set, with the same `MQ_*` variables. Without an installed GoogleTest, add
 `-DRFHUTIL_FETCH_GTEST=ON`.
 
 ### Performance testing tools

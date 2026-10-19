@@ -1658,6 +1658,42 @@ TEST(MqClient, PutThenGetOverClientChannel)
     EXPECT_EQ("over the channel", bodyText(in));
 }
 
+TEST(MqClient, PutThenGetOverATlsChannel)
+{
+    if (env("MQ_TLS_CHANNEL", "").empty())
+    {
+        GTEST_SKIP() << "set MQ_TLS_CHANNEL, MQ_TLS_KEYREPO (key repository path without extension), MQ_TLS_CIPHER and the MQ_* variables of "
+                        "PutThenGetOverClientChannel to test a TLS channel";
+    }
+
+    ConnectOptions options;
+    options.mode = Mode::Client;
+    options.qmName = env("MQ_QMGR", "QM1");
+    options.channel = env("MQ_TLS_CHANNEL", "");
+    options.connName = env("MQ_HOST", "localhost") + "(" + env("MQ_PORT", "1414") + ")";
+    options.userId = env("MQ_USER", "app");
+    options.password = env("MQ_PASSWORD", "passw0rd");
+    options.sslEnabled = true;
+    options.cipherSpec = env("MQ_TLS_CIPHER", "ANY_TLS13");
+    options.keyRepository = env("MQ_TLS_KEYREPO", "");
+
+    MqSession session;
+    Result c = session.connect(options);
+    ASSERT_TRUE(c.ok()) << c.text;
+
+    const std::string queue = env("MQ_CLIENT_QUEUE", "DEV.QUEUE.1");
+    Message out = textMessage("over tls");
+    ASSERT_TRUE(session.put(queue, out, PutOptions()).ok());
+
+    GetOptions get;
+    get.matchMsgId = true;
+    memcpy(get.msgId, out.mqmd.MsgId, sizeof(get.msgId));
+    Message in;
+    Result r = session.get(queue, in, get);
+    ASSERT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ("over tls", bodyText(in));
+}
+
 TEST_F(MqBindingsTest, PropertiesModesAreAcceptedByARealQueueManager)
 {
     // The real queue manager is at command level 900 or so, so the property options are sent. None of the
