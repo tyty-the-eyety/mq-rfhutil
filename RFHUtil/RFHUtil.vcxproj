@@ -218,6 +218,7 @@
     <ClInclude Include="..\core\platform\rfh_codepage.h" />
     <ClInclude Include="..\core\platform\rfh_trace.h" />
     <ClInclude Include="..\core\message\rfh_mqmd_fields.h" />
+    <ClInclude Include="..\core\message\rfh_id_display.h" />
     <ClInclude Include="rfhconst.h" />
     <ClInclude Include="ConnSettings.h" />
     <ClInclude Include="ConnUser.h" />
@@ -275,6 +276,7 @@
     <ClCompile Include="..\core\platform\rfh_codepage.cpp" />
     <ClCompile Include="..\core\platform\rfh_trace.cpp" />
     <ClCompile Include="..\core\message\rfh_mqmd_fields.cpp" />
+    <ClCompile Include="..\core\message\rfh_id_display.cpp" />
     <ClCompile Include="ConnSettings.cpp" />
     <ClCompile Include="ConnUser.cpp" />
     <ClCompile Include="Copybook.cpp" />

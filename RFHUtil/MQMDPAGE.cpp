@@ -24,6 +24,8 @@ Jim MacNair - Initial Contribution
 #include "comsubs.h"
 #include "uisubs.h"
 #include "mqsubs.h"
+#include "rfh_id_display.h"
+#include "rfh_platform.h"
 #include "windows.h"
 #include "cics.h"
 #include "ThemeManager.h"
@@ -935,49 +937,6 @@ void MQMDPAGE::OnMqmdUnix()
 	UpdateData(FALSE);
 }
 
-void MQMDPAGE::setMsgType(int msgType)
-
-{
-	switch(msgType)
-	{
-	case 1:
-		{
-			m_mqmd_msgtype = "1 Request";
-			break;
-		}
-	case 2:
-		{
-			m_mqmd_msgtype = "2 Reply";
-			break;
-		}
-	case 4:
-		{
-			m_mqmd_msgtype = "4 Report";
-			break;
-		}
-	case 8:
-		{
-			m_mqmd_msgtype = "8 Datagram";
-			break;
-		}
-	case 112:
-		{
-			m_mqmd_msgtype = "112 FR_MQE";
-			break;
-		}
-	case 113:
-		{
-			m_mqmd_msgtype = "113 MQE";
-			break;
-		}
-	default:
-		{
-			m_mqmd_msgtype = "";
-			break;
-		}
-	}
-}
-
 void MQMDPAGE::OnSelchangeApplType() 
 
 {
@@ -1031,41 +990,6 @@ void MQMDPAGE::OnSetfocusApplType()
 		((CComboBox *)GetDlgItem(IDC_APPL_TYPE))->AddString(getApplTypeDisplay(MQAT_SIB));
 		((CComboBox *)GetDlgItem(IDC_APPL_TYPE))->AddString(getApplTypeDisplay(MQAT_SYSTEM_EXTENSION));
 	}
-}
-
-int MQMDPAGE::getPutApplType(const char *applType)
-
-{
-	int		type=0;
-
-	type = atoi(applType);
-
-	return type;
-}
-
-void MQMDPAGE::setPutApplType(int putType)
-
-{
-	const char *	ptr;
-	char			tempType[16];
-
-	ptr = getApplTypeDisplay(putType);
-
-	if (strlen(ptr) == 0)
-	{
-		// check for user type
-		if (putType > 0)
-		{
-			sprintf(tempType, "%d", putType);
-			ptr = tempType;
-		}
-		else
-		{
-			ptr = "-1 Other/Unknown";
-		}
-	}
-
-	m_mqmd_appl_type.Format("%s", ptr);
 }
 
 void MQMDPAGE::CopyMsgIdToCorrelId()
@@ -1253,138 +1177,6 @@ int MQMDPAGE::processMQMD(const unsigned char * data, int size)
 
 //////////////////////////////////////////////////////////////
 //
-// Routine to process a the report options in an MQMD
-//
-//////////////////////////////////////////////////////////////
-
-void MQMDPAGE::processReportOptions(int report)
-
-{
-	m_report_except = REPORT_NONE;
-	if ((report & MQRO_EXCEPTION) > 0)
-	{
-		if ((report & MQRO_EXCEPTION_WITH_FULL_DATA) == MQRO_EXCEPTION_WITH_FULL_DATA)
-		{
-			m_report_except = REPORT_FULL;
-		}
-		else
-		{
-			if ((report & MQRO_EXCEPTION_WITH_DATA) == MQRO_EXCEPTION_WITH_DATA)
-			{
-				m_report_except = REPORT_DATA;
-			}
-			else
-			{
-				m_report_except = REPORT_YES;
-			}
-		}
-	}
-
-	m_report_expire = REPORT_NONE;
-	if ((report & MQRO_EXPIRATION) > 0)
-	{
-		if ((report & MQRO_EXPIRATION_WITH_FULL_DATA) == MQRO_EXPIRATION_WITH_FULL_DATA)
-		{
-			m_report_expire = REPORT_FULL;
-		}
-		else
-		{
-			if ((report & MQRO_EXPIRATION_WITH_DATA) == MQRO_EXPIRATION_WITH_DATA)
-			{
-				m_report_expire = REPORT_DATA;
-			}
-			else
-			{
-				m_report_expire = REPORT_YES;
-			}
-		}
-	}
-
-	m_report_coa = REPORT_NONE;
-	if ((report & MQRO_COA) > 0)
-	{
-		if ((report & MQRO_COA_WITH_FULL_DATA) == MQRO_COA_WITH_FULL_DATA)
-		{
-			m_report_coa = REPORT_FULL;
-		}
-		else
-		{
-			if ((report & MQRO_COA_WITH_DATA) == MQRO_COA_WITH_DATA)
-			{
-				m_report_coa = REPORT_DATA;
-			}
-			else
-			{
-				m_report_coa = REPORT_YES;
-			}
-		}
-	}
-
-	m_report_cod = REPORT_NONE;
-	if ((report & MQRO_COD) > 0)
-	{
-		if ((report & MQRO_COD_WITH_FULL_DATA) == MQRO_COD_WITH_FULL_DATA)
-		{
-			m_report_cod = REPORT_FULL;
-		}
-		else
-		{
-			if ((report & MQRO_COD_WITH_DATA) == MQRO_COD_WITH_DATA)
-			{
-				m_report_cod = REPORT_DATA;
-			}
-			else
-			{
-				m_report_cod = REPORT_YES;
-			}
-		}
-	}
-
-	m_report_pan = FALSE;
-	if ((report & MQRO_PAN) > 0)
-	{
-		m_report_pan = TRUE;
-	}
-
-	m_report_nan = FALSE;
-	if ((report & MQRO_NAN) > 0)
-	{
-		m_report_nan = TRUE;
-	}
-
-	m_report_activity = FALSE;
-	if ((report & MQRO_ACTIVITY) > 0)
-	{
-		m_report_activity = TRUE;
-	}
-
-	m_report_discard = FALSE;
-	if ((report & MQRO_DISCARD_MSG) > 0)
-	{
-		m_report_discard = TRUE;
-	}
-
-	m_report_expire_discard = FALSE;
-	if ((report & MQRO_PASS_DISCARD_AND_EXPIRY) > 0)
-	{
-		m_report_expire_discard = TRUE;
-	}
-
-	m_report_pass_msgid = FALSE;
-	if ((report & MQRO_PASS_MSG_ID) > 0)
-	{
-		m_report_pass_msgid = TRUE;
-	}
-
-	m_report_pass_correlid = FALSE;
-	if ((report & MQRO_PASS_CORREL_ID) > 0)
-	{
-		m_report_pass_correlid = TRUE;
-	}
-}
-
-//////////////////////////////////////////////////////////////
-//
 // Routine to process a the message flags in an MQMD
 //
 //////////////////////////////////////////////////////////////
@@ -1402,25 +1194,7 @@ void MQMDPAGE::processFlags(int flags)
 void MQMDPAGE::processMessageMQMD(MQMD2 * mqmd)
 
 {
-	int		msgSize=0;			// length of complete message, including RFH
-	int		curOfs=0;
-	int		flags;
-	int		tempCcsid;
-	MQLONG	encoding;
-	MQLONG	report;
-	MQBYTE32 tempToken;
-	char	tempDate[32];		// Area to format the date into
-	char	tempUser[16];		// Area to copy the user id into
-	char	tempAppData[48];	// Work area to copy the application identity and origin
-	char	tempAcctToken[72];	// Accounting token in hex
-	char	tempQName[64] = { 0 };		// Work area for Queue and Queue Manager names
-	char	traceInfo[512];		// work variable to build trace message
-
-	if (pDoc->traceEnabled)
-	{
-		// trace entry to processMessage
-		pDoc->logTraceEntry("Entering MQMDPAGE::processMessageMQMD()");
-	}
+	rfh::MqmdFields	fields;
 
 	// get the form data into the instance variables
 	UpdateData(TRUE);
@@ -1428,133 +1202,19 @@ void MQMDPAGE::processMessageMQMD(MQMD2 * mqmd)
 	// clear any previous data
 	clearMQMD();
 
-	// extract MQMD message identifier fields
-	memcpy(m_message_id, mqmd->MsgId, MQ_MSG_ID_LENGTH);
-	memcpy(m_correlid, mqmd->CorrelId, MQ_CORREL_ID_LENGTH);
-
-	// set the ids
-	SetId(&m_message_id, ID_TYPE_MSG);
-	SetId(&m_correlid, ID_TYPE_CORREL);
-	SetId(&m_group_id, ID_TYPE_GROUP);
+	// the tab's fields, shared with the Linux version
+	fields = getFields();
+	rfh::mqmd_fields::fromGetMqmd(*mqmd, fields);
+	setFields(fields);
 
 	// initialize the id fields to overtype
 	m_MsgIdEdit.SetOvertype(TRUE);
 	m_CorrelIdEdit.SetOvertype(TRUE);
 	m_GroupIdEdit.SetOvertype(TRUE);
 
-	// get the feedback if any
-	m_mqmd_feedback.Format("%d", mqmd->Feedback);
-
-	// get the message priority
-	m_mqmd_priority.Format("%d", mqmd->Priority);
-
-	// get the user id (12 characters) as a string
-	memset(tempUser, 0, sizeof(tempUser));
-	memcpy(tempUser, mqmd->UserIdentifier, MQ_USER_ID_LENGTH);
-	Rtrim(tempUser);
-	m_mqmd_userid = tempUser;
-
-	// get the backout count
-	m_mqmd_backout_count.Format("%d", mqmd->BackoutCount);
-
-	// check what the encoding is for the message
-	encoding = mqmd->Encoding;
-	m_mqmd_encoding = getIntEncode(encoding);
-
-	// get the decimal encoding value
-	m_mqmd_pd_encoding = getPDEncode(encoding);
-
-	// get the code page of the message
-	tempCcsid = mqmd->CodedCharSetId;
-	m_mqmd_ccsid.Format("%d", tempCcsid);
-
-	// get the other message characteristics
-	m_mqmd_persist = mqmd->Persistence;
-
-	// get the application origin and ID information
-	memset(tempAppData, 0, sizeof(tempAppData));
-	memcpy(tempAppData, mqmd->ApplOriginData, MQ_APPL_ORIGIN_DATA_LENGTH);
-	Rtrim(tempAppData);
-	m_mqmd_appl_origin = tempAppData;
-	memcpy(tempAppData, mqmd->ApplIdentityData, MQ_APPL_IDENTITY_DATA_LENGTH);
-	Rtrim(tempAppData);
-	m_mqmd_appl_id = tempAppData;
-
-	// get the message expiry from the MQMD
-	m_mqmd_expiry.Format("%d", mqmd->Expiry);
-
-	// get the message type
-	setMsgType(mqmd->MsgType);
-
-	// check for report options
-	report = mqmd->Report;
-	processReportOptions(report);
-
-	// format the date
-	formatDateTime(tempDate, mqmd->PutDate, mqmd->PutTime);
-	m_mqmd_date_time = tempDate;
-
-	// get the accounting token field in hex
-	memset(tempAcctToken, 0, sizeof(tempAcctToken));
-	memset(tempToken, 0, sizeof(tempToken));
-	memcpy(tempToken, mqmd->AccountingToken, MQ_ACCOUNTING_TOKEN_LENGTH);
-	AsciiToHex(tempToken, 32, (unsigned char *) tempAcctToken);
-	m_mqmd_account_token = tempAcctToken;
-
-	// get the put application type (set m_mqmd_appl_type)
-	setPutApplType(mqmd->PutApplType);
-
-	// capture the put application name
-	memset(tempAppData, 0, sizeof(tempAppData));
-	memcpy(tempAppData, mqmd->PutApplName, MQ_PUT_APPL_NAME_LENGTH);
-	m_mqmd_appl_name = tempAppData;
-
-	// capture the MQMD format field
-	memset(tempAppData, 0, sizeof(tempAppData));
-	memcpy(tempAppData, mqmd->Format, MQ_FORMAT_LENGTH);
-	m_mqmd_format = tempAppData;
-	m_mqmd_format_cb.SetWindowText((LPCTSTR)m_mqmd_format);
-
-	// capture the reply to queue and queue manager names
-	memset(tempQName, 0, sizeof(tempQName));
-	memcpy(tempQName, mqmd->ReplyToQMgr, MQ_Q_MGR_NAME_LENGTH);
-	m_reply_qm = tempQName;
-	memset(tempQName, 0, sizeof(tempQName));
-	memcpy(tempQName, mqmd->ReplyToQ, MQ_Q_NAME_LENGTH);
-	m_reply_queue = tempQName;
-
-	// check for MQMD version
-	if (mqmd->Version >= MQMD_VERSION_2)
-	{
-		// capture the additional fields in a V2 MQMD
-		memcpy(m_group_id, mqmd->GroupId, MQ_GROUP_ID_LENGTH);
-
-		// get the group sequence number
-		m_mqmd_seq_no.Format("%d", mqmd->MsgSeqNumber);
-
-		// get the message flags and process them
-		flags = mqmd->MsgFlags;
-		processFlags(flags);
-
-		// get the offset
-		m_mqmd_offset.Format("%d", mqmd->Offset);
-
-		// get the original length field
-		m_mqmd_orig_len.Format("%d", mqmd->OriginalLength);
-	}
-
 	// update the form data from the instance variables
 	// this prevents any old values from turning up
 	UpdateData(FALSE);
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting processMessageMQMD - encoding=%d ccsid=%d persistence=%d msgType=%d, putApplType=%d", mqmd->Encoding, mqmd->CodedCharSetId, mqmd->Persistence, mqmd->MsgType, mqmd->PutApplType);
-
-		// trace exit from processMessageMQMD
-		pDoc->logTraceEntry(traceInfo);
-	}
 }
 
 void MQMDPAGE::clearMQMD()
@@ -1659,96 +1319,28 @@ void MQMDPAGE::clearMQMD()
 void MQMDPAGE::SetId(MQBYTE24 * id, int idType)
 
 {
-	int				i;
-	unsigned char	tempStr[2 * MQ_CORREL_ID_LENGTH + 12] = { 0 };
-	char			traceInfo[512];		// work variable to build trace message
+	CString		text;
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		memset(tempStr, 0, sizeof(tempStr));
-		AsciiToHex((unsigned char *)id, MQ_CORREL_ID_LENGTH, tempStr);
-		sprintf(traceInfo, "Entering MQMDPAGE::SetId() m_id_disp_ascii=%d idType=%d id=%s", m_id_disp_ascii, idType, tempStr);
-
-		// trace entry to SetId
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	switch (m_id_disp_ascii)
-	{
-	case ID_DISPLAY_ASCII:
-		// return value in ASCII
-		// get the value into a temporary area
-		memcpy(tempStr, id, MQ_CORREL_ID_LENGTH);
-
-		// terminate the string
-		tempStr[MQ_CORREL_ID_LENGTH] = 0;
-
-		// replace any values less than a blank with blanks
-		for (i=0; i<MQ_CORREL_ID_LENGTH; i++)
-		{
-			if (tempStr[i] < ' ')
-			{
-				tempStr[i] = ' ';
-			}
-		}
-
-		break;
-
-	case ID_DISPLAY_EBCDIC:
-		// get a copy of the correlId and translate value to ASCII
-		EbcdicToAscii((unsigned char *)id, MQ_CORREL_ID_LENGTH, tempStr);
-
-		// terminate the string
-		tempStr[MQ_CORREL_ID_LENGTH] = 0;
-
-		// replace any values less than a blank with blanks
-		for (i=0; i<MQ_CORREL_ID_LENGTH; i++)
-		{
-			if (tempStr[i] < ' ')
-			{
-				tempStr[i] = ' ';
-			}
-		}
-
-		break;
-
-	case ID_DISPLAY_HEX:
-		// return value in hex
-		AsciiToHex((unsigned char *)id, MQ_CORREL_ID_LENGTH, tempStr);
-
-		// terminate the string
-		tempStr[2 * MQ_CORREL_ID_LENGTH] = 0;
-
-		break;
-	}
+	// the id as the box shows it in the current display mode
+	text = rfh::id_display::toText(*id, (rfh::id_display::Mode)m_id_disp_ascii).c_str();
 
 	switch (idType)
 	{
 	case ID_TYPE_MSG:
 		{
-			m_msg_id = tempStr;
+			m_msg_id = text;
 			break;
 		}
 	case ID_TYPE_CORREL:
 		{
-			m_mqmd_correl_id = tempStr;
+			m_mqmd_correl_id = text;
 			break;
 		}
 	case ID_TYPE_GROUP:
 		{
-			m_mqmd_group_id = tempStr;
+			m_mqmd_group_id = text;
 			break;
 		}
-	}
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE:SetId() tempStr=%s", tempStr);
-
-		// trace exit from SetId
-		pDoc->logTraceEntry(traceInfo);
 	}
 }
 
@@ -1763,95 +1355,10 @@ void MQMDPAGE::SetId(MQBYTE24 * id, int idType)
 void MQMDPAGE::setGroupId()
 
 {
-	int				i=0;
-	int				maxLen=m_mqmd_group_id.GetLength();
-	LPCTSTR			dataptr;
-	LPCTSTR			prevptr;
-	unsigned char	asciiStr[MQ_GROUP_ID_LENGTH + 1];
-	char			traceInfo[512];		// work variable to build trace message
+	std::string	error;
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::setGroupId() m_mqmd_group_id=%s OrigGroupid=%s", (LPCTSTR)m_mqmd_group_id, (LPCTSTR)OrigGroupid);
-
-		// trace entry to setGroupId
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	dataptr = m_mqmd_group_id.GetBuffer(0);
-	prevptr = OrigGroupid.GetBuffer(0);
-
-	switch(prev_disp_type)
-	{
-	case ID_DISPLAY_ASCII:
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_GROUP_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_group_id[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary group id value
-					m_group_id[i] = dataptr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_EBCDIC:
-		// get the updated value as ASCII characters
-		AsciiToEbcdic((unsigned char *)dataptr, MQ_GROUP_ID_LENGTH, asciiStr);
-
-		// make sure it is a valid string (note - it may have embedded characters)
-		asciiStr[MQ_GROUP_ID_LENGTH] = 0;
-
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_GROUP_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_group_id[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary group id value
-					m_group_id[i] = asciiStr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_HEX:
-		HexToAscii((unsigned char *)dataptr, maxLen / 2, m_group_id);
-	}
-
-	m_mqmd_group_id.ReleaseBuffer();
-	OrigGroupid.ReleaseBuffer();
-
-	if (pDoc->traceEnabled)
-	{
-		// trace exit from setGroupId
-		pDoc->logTraceEntry("Exiting MQMDPAGE:setGroupId()");
-	}
+	// the edited text of the box becomes the binary id; a rejected edit leaves it unchanged
+	rfh::id_display::applyEdit(rfh::id_display::Field::GroupId, m_group_id, (LPCTSTR)m_mqmd_group_id, (LPCTSTR)OrigGroupid, (rfh::id_display::Mode)prev_disp_type, error);
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -1867,537 +1374,28 @@ void MQMDPAGE::buildMQMD(MQMD2 *mqmd, BOOL m_setUserID, BOOL m_set_all)
 	rfh::mqmd_fields::toMqmd(getFields(), *mqmd);
 }
 
-int MQMDPAGE::buildReportOptions()
-
-{
-	int		report=0;
-	MQLONG	tempOpt;			// work variable for report options in big-endian encoding
-	char	tempTxt[16];		// work area for hex trace data
-	char	traceInfo[512];		// work variable to build trace message
-
-	if (pDoc->traceEnabled)
-	{
-		// trace entry to buildReportOptions
-		pDoc->logTraceEntry("Entering MQMDPAGE:buildReportOptions()");
-	}
-
-	if (m_report_except > 0)
-	{
-		switch (m_report_except)
-		{
-		case REPORT_YES:
-			{
-				report |= MQRO_EXCEPTION;
-				break;
-			}
-		case REPORT_DATA:
-			{
-				report |= MQRO_EXCEPTION_WITH_DATA;
-				break;
-			}
-		case REPORT_FULL:
-			{
-				report |= MQRO_EXCEPTION_WITH_FULL_DATA;
-				break;
-			}
-		}
-	}
-
-	if (m_report_expire)
-	{
-		switch (m_report_expire)
-		{
-		case REPORT_YES:
-			{
-				report |= MQRO_EXPIRATION;
-				break;
-			}
-		case REPORT_DATA:
-			{
-				report |= MQRO_EXPIRATION_WITH_DATA;
-				break;
-			}
-		case REPORT_FULL:
-			{
-				report |= MQRO_EXPIRATION_WITH_FULL_DATA;
-				break;
-			}
-		}
-	}
-
-	if (m_report_coa)
-	{
-		switch (m_report_coa)
-		{
-		case REPORT_YES:
-			{
-				report |= MQRO_COA;
-				break;
-			}
-		case REPORT_DATA:
-			{
-				report |= MQRO_COA_WITH_DATA;
-				break;
-			}
-		case REPORT_FULL:
-			{
-				report |= MQRO_COA_WITH_FULL_DATA;
-				break;
-			}
-		}
-	}
-
-	if (m_report_cod)
-	{
-		switch (m_report_cod)
-		{
-		case REPORT_YES:
-			{
-				report |= MQRO_COD;
-				break;
-			}
-		case REPORT_DATA:
-			{
-				report |= MQRO_COD_WITH_DATA;
-				break;
-			}
-		case REPORT_FULL:
-			{
-				report |= MQRO_COD_WITH_FULL_DATA;
-				break;
-			}
-		}
-	}
-
-	if (m_report_pan)
-	{
-		report |= MQRO_PAN;
-	}
-
-	if (m_report_nan)
-	{
-		report |= MQRO_NAN;
-	}
-
-	if (m_report_pass_correlid)
-	{
-		report |= MQRO_PASS_CORREL_ID;
-	}
-
-	if (m_report_pass_msgid)
-	{
-		report |= MQRO_PASS_MSG_ID;
-	}
-
-	if (m_report_activity)
-	{
-		report |= MQRO_ACTIVITY;
-	}
-
-	if (m_report_discard)
-	{
-		report |= MQRO_DISCARD_MSG;
-	}
-
-	if (m_report_expire_discard)
-	{
-		report |= MQRO_PASS_DISCARD_AND_EXPIRY;
-	}
-
-	if (pDoc->traceEnabled)
-	{
-		// turn the MQ GMO options into a hex string
-		memset(tempTxt, 0, sizeof(tempTxt));
-		tempOpt = reverseBytes4(report);
-		AsciiToHex((unsigned char *)(&tempOpt), 4, (unsigned char *)tempTxt);
-
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE::buildReportOptions() report=%s", tempTxt);
-
-		// trace exit from buildReportOptions
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	return report;
-}
-
-int MQMDPAGE::buildFlags()
-
-{
-	int		flags=MQMF_NONE;
-	char	traceInfo[512];		// work variable to build trace message
-
-	if (pDoc->traceEnabled)
-	{
-		// trace entry to buildFlags
-		pDoc->logTraceEntry("Entering MQMDPAGE:buildFlags()");
-	}
-
-	if (m_mqmd_group_yes)
-	{
-		flags |= MQMF_MSG_IN_GROUP;
-	}
-
-	if (m_mqmd_group_last)
-	{
-		flags |= MQMF_LAST_MSG_IN_GROUP;
-	}
-
-	if (m_mqmd_segment_yes)
-	{
-		flags |= MQMF_SEGMENT;
-	}
-
-	if (m_mqmd_segment_last)
-	{
-		flags |= MQMF_LAST_SEGMENT;
-	}
-
-	// check if segmentation is allowed
-	if (m_mqmd_segment_allowed)
-	{
-		flags |= MQMF_SEGMENTATION_ALLOWED;
-	}
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE::buildFlags() flags=%d", flags);
-
-		// trace exit from buildFlags
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	return flags;
-}
-
 void MQMDPAGE::setMessageMQMD(MQMD2 * mqmd, BOOL m_setUserID, BOOL m_set_all)
 
 {
-	MQLONG				flags;
-	MQLONG				report;
-	CString				tempFormat;		// message format for MQMD
-	int					tempEncode;
-	int					rc;
-	int					len;
-	int					msgType=0;
-	unsigned long		userIdSize=256;
-	char				*ptr;
-	time_t				ltime;			// number of seconds since 1/1/70
-	char				tempDate[12];
-	char				tempTime[12];
-	unsigned char		tempToken[48];
-	struct tm			*today;			// today's date as a structure
-	char				todaysDate[32];
-	char				userId[260];
-	char				traceInfo[512];	// work variable to build trace message
-	
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::setMessageMQMD() m_setUserID=%d m_set_all=%d m_mqmd_format=%s m_mqmd_ccsid=%s m_mqmd_priority=%s", m_setUserID, m_set_all, (LPCTSTR)m_mqmd_format, (LPCTSTR)m_mqmd_ccsid, (LPCTSTR)m_mqmd_priority);
+	rfh::PutContext	context;
 
-		// trace entry to setMessageMQMD
-		pDoc->logTraceEntry(traceInfo);
-	}
+	// Set Iden Context and Set All Context, and whether the OS user name could be looked up
+	context.setIdentity = (m_setUserID != FALSE);
+	context.setAll = (m_set_all != FALSE);
+	context.osUser = rfh_current_user();
 
-	// get the format
-	m_mqmd_format_cb.GetWindowText(tempFormat);
-
-	// pad the format on the right with blanks
-	while (tempFormat.GetLength() < MQ_FORMAT_LENGTH)
-	{
-		tempFormat += " ";
-	}
-
-	// set the message format in the MQMD
-	memcpy(mqmd->Format, (LPCTSTR)tempFormat, MQ_FORMAT_LENGTH);
-
-	// set the reply to queue manager and queue
-	memcpy(mqmd->ReplyToQMgr, (LPCTSTR)m_reply_qm, m_reply_qm.GetLength());
-	memcpy(mqmd->ReplyToQ, (LPCTSTR)m_reply_queue, m_reply_queue.GetLength());
-
-	// set the encoding, which should reflect the rfh if present
-	tempEncode = getEncodingValue(m_mqmd_encoding, m_mqmd_pd_encoding, m_mqmd_float_encoding);
-	mqmd->Encoding = tempEncode;
-
-	// set the character set, which should reflect the rfh if present
-	if (m_mqmd_ccsid.GetLength() > 0)
-	{
-		mqmd->CodedCharSetId = atoi((LPCTSTR)m_mqmd_ccsid);
-	}
-
-	// set the persistence to match the selection in the view
-	mqmd->Persistence = getPersistence();
-
-	if (m_mqmd_priority.GetLength() > 0)
-	{
-		// set the message priority
-		mqmd->Priority = atoi((LPCTSTR)m_mqmd_priority);
-	}
-
-	// check if there is a message expiry
-	if (m_mqmd_expiry.GetLength() > 0)
-	{
-		mqmd->Expiry = atoi((LPCTSTR)m_mqmd_expiry);
-	}
-
-	if (m_mqmd_feedback.GetLength() > 0)
-	{
-		// set the feedback field should be set
-		mqmd->Feedback = atoi((LPCTSTR)m_mqmd_feedback);
-	}
-
-	if (m_mqmd_orig_len.GetLength() > 0)
-	{
-		mqmd->OriginalLength = atoi((LPCTSTR)m_mqmd_orig_len);
-	}
-
-	if (m_mqmd_seq_no.GetLength() > 0)
-	{
-		mqmd->MsgSeqNumber = atoi((LPCTSTR)m_mqmd_seq_no);
-	}
-
-	// determine if we are supposed to set the message id
-	if (memcmp(m_message_id, MQMI_NONE, sizeof(m_message_id)) != 0)
-	{
-		memcpy(mqmd->MsgId, m_message_id, MQ_MSG_ID_LENGTH);
-	}
-
-	// determine if there is a correlation id
-	if (memcmp(m_correlid, MQCI_NONE, sizeof(m_correlid)) != 0)
-	{
-		memcpy(mqmd->CorrelId, m_correlid, MQ_CORREL_ID_LENGTH);
-	}
-
-	flags = buildFlags();
-
-	if (flags != 0)
-	{
-		mqmd->MsgFlags = flags;
-
-		if (m_mqmd_offset.GetLength() > 0)
-		{
-			// set the offset
-			mqmd->Offset = atoi((LPCTSTR)m_mqmd_offset);
-		}
-	}
-
-	// determine if there is a group id
-	if (memcmp(m_group_id, MQGI_NONE, sizeof(m_group_id)) != 0)
-	{
-		memcpy(mqmd->GroupId, m_group_id, MQ_GROUP_ID_LENGTH);
-
-		if (0 == flags)
-		{
-			mqmd->MsgFlags = MQMF_LAST_MSG_IN_GROUP;
-		}
-	}
-
-	if (m_mqmd_msgtype.GetLength() > 0)
-	{
-		// check if the message type is valid
-		msgType = atoi(m_mqmd_msgtype);
-		if ((MQMT_DATAGRAM == msgType) ||
-			(MQMT_REQUEST  == msgType) ||
-			(MQMT_REPLY    == msgType) ||
-			(MQMT_REPORT   == msgType) ||
-			(MQMT_MQE_FIELDS_FROM_MQE == msgType) ||
-			(MQMT_MQE_FIELDS == msgType) ||
-			((msgType  >= MQMT_APPL_FIRST) && (msgType <= MQMT_APPL_LAST)))
-		{
-			// set the message type
-			mqmd->MsgType = msgType;
-		}
-	}
-
-	// set any report options
-	report = buildReportOptions();
-
-	if (report != 0)
-	{
-		mqmd->Report = report;
-	}
-
-	// does this operation involve segmentation?
-	if (m_mqmd_segment_yes || m_mqmd_segment_last)
-	{
-		if (m_mqmd_offset.GetLength() > 0)
-		{
-			// set the message offset
-			mqmd->Offset = atoi((LPCTSTR)m_mqmd_offset);
-		}
-	}
-
-	// check if we need to set the user and appl id
-	if (m_setUserID || m_set_all)
-	{
-		if (m_mqmd_userid.GetLength() > 0)
-		{
-			setUserId(mqmd);
-		}
-		else
-		{
-			// Get the domain-qualified user id for IDPWOS authentication
-			// Use a larger buffer to accommodate DOMAIN\username format
-			char fullUserId[256];
-			DWORD fullUserIdSize = sizeof(fullUserId);
-			memset(fullUserId, 0, sizeof(fullUserId));
-			memset(userId, 0, sizeof(userId));
-			
-			// Try to get domain-qualified username first (for LDAP/IDPWOS)
-			rc = GetUserNameEx(NameSamCompatible, fullUserId, &fullUserIdSize);
-			if (rc != 0)
-			{
-				// Successfully got domain\username format
-				// Copy to userId buffer, truncating if necessary to MQ_USER_ID_LENGTH (12)
-				strncpy(userId, fullUserId, MQ_USER_ID_LENGTH);
-				userId[MQ_USER_ID_LENGTH] = 0;
-				setUserId(mqmd);
-			}
-			else
-			{
-				// Fallback to simple username if GetUserNameEx fails
-				// This handles cases where domain info is not available
-				DWORD simpleUserIdSize = sizeof(userId);
-				rc = GetUserName(userId, &simpleUserIdSize);
-				if (rc != 0)
-				{
-					userId[MQ_USER_ID_LENGTH] = 0;
-					setUserId(mqmd);
-				}
-			}
-		}
-
-		// get the accounting token
-		len = m_mqmd_account_token.GetLength();
-		if (len > 0)
-		{
-			// initialize the accounting token
-			memset(tempToken, 0, sizeof(tempToken));
-
-			// result is 1/2 the length of the hex representation (2 chars to 1 byte)
-			len >>= 1;
-
-			// make sure we don't overflow the target field
-			if (len > sizeof(tempToken))
-			{
-				// truncate to fit the maximum length
-				len = sizeof(tempToken);
-			}
-
-			// convert the data to binary
-			HexToAscii((unsigned char *)(LPCTSTR)m_mqmd_account_token, len, tempToken);
-
-			//move the data to the result field
-			memcpy(mqmd->AccountingToken, tempToken, MQ_ACCOUNTING_TOKEN_LENGTH);
-		}
-
-		if (m_set_all)
-		{
-			if (m_mqmd_appl_id.GetLength() > 0)
-			{
-				memset(tempToken, 0, sizeof(tempToken));
-				memcpy(tempToken, (LPCTSTR)m_mqmd_appl_id, m_mqmd_appl_id.GetLength());
-				memcpy(mqmd->ApplIdentityData, tempToken, MQ_APPL_IDENTITY_DATA_LENGTH);
-			}
-
-			if ((m_mqmd_appl_origin.GetLength() > 0) && (m_mqmd_appl_origin.GetLength() <= MQ_APPL_ORIGIN_DATA_LENGTH))
-			{
-				memset(tempToken, 0, sizeof(tempToken));
-				memcpy(tempToken, (LPCTSTR)m_mqmd_appl_origin, m_mqmd_appl_origin.GetLength());
-				memcpy(mqmd->ApplOriginData, tempToken, MQ_APPL_ORIGIN_DATA_LENGTH);
-			}
-
-			if ((m_mqmd_appl_name.GetLength() > 0) && (m_mqmd_appl_name.GetLength() <= MQ_APPL_NAME_LENGTH))
-			{
-				memset(tempToken, 0, sizeof(tempToken));
-				memcpy(tempToken, (LPCTSTR)m_mqmd_appl_name, m_mqmd_appl_name.GetLength());
-				memcpy(mqmd->PutApplName, tempToken, MQ_APPL_NAME_LENGTH);
-			}
-
-			mqmd->PutApplType = getPutApplType(m_mqmd_appl_type);
-
-			// need to set the date and time if set all context
-			memset(tempToken, 0, sizeof(tempToken));
-			len = m_mqmd_date_time.GetLength();
-			if (len > 0)
-			{
-				if (len > sizeof(tempToken) - 1)
-				{
-					len = sizeof(tempToken) - 1;
-				}
-
-				// get a copy of the date
-				memcpy(tempToken, (LPCTSTR)m_mqmd_date_time, len);
-			}
-			else
-			{
-				// get the current date and time from Windows
-				time(&ltime);
-				today = localtime(&ltime);
-				strftime(todaysDate, sizeof(todaysDate) - 1, "%Y-%m-%d-%H.%M.%S.00", today);
-			}
-
-			// move the date to the PutDate field - removing the dashes
-			ptr = tempDate;
-			memcpy(ptr, tempToken, 4);			// copy the year
-			memcpy(ptr + 4, tempToken + 5, 2);	// copy the month, skipping the slash
-			memcpy(ptr + 6, tempToken + 8, 2);	// copy the month, skipping the slash
-			memcpy(mqmd->PutDate, tempDate, sizeof(mqmd->PutDate));
-
-			// move the time to the PutTime field - removing the colons and period
-			ptr = tempTime;
-			memcpy(ptr, tempToken + 11, 2);		// copy the hours
-			memcpy(ptr + 2, tempToken + 14, 2);	// copy the minutes, skipping the colon
-			memcpy(ptr + 4, tempToken + 17, 2);	// copy the seconds, skipping the colon
-			memcpy(ptr + 6, tempToken + 20, 2);	// copy the hundredths, skipping the period
-			memcpy(mqmd->PutTime, tempTime, sizeof(mqmd->PutTime));
-		}
-	}
+	// the tab's fields, shared with the Linux version
+	rfh::mqmd_fields::toPutMqmd(getFields(), context, *mqmd);
 }
 
 void MQMDPAGE::updateMQMDafterPut(MQMD2 * mqmd, MQLONG msgLen)
 
 {
-	char				traceInfo[512];	// work variable to build trace message
-	
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::updateMQMDafterPut() mqmd->SequenceNumber=%d mqmd.offset=%d", mqmd->MsgSeqNumber, mqmd->Offset);
+	rfh::MqmdFields	fields = getFields();
 
-		// trace entry to updateMQMDafterPut
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	// get the sequence number and offset fields
-	m_mqmd_seq_no.Format("%d", mqmd->MsgSeqNumber);
-
-	// does this operation involve segmentation?
-	if (m_mqmd_segment_yes & !m_mqmd_segment_last)
-	{
-		// get the new message offset
-		m_mqmd_offset.Format("%d", mqmd->Offset + msgLen);
-	}
-	else
-	{
-		// Either no segmentation or segment is done, so set offset to zero
-		m_mqmd_offset = "0";
-	}
-
-	// capture the message id
-	memcpy(m_message_id, mqmd->MsgId, sizeof(m_message_id));
-
-	// check if we need to remember the group id for a manual segmentation or group
-	if (m_mqmd_group_yes || m_mqmd_group_last || m_mqmd_segment_yes || m_mqmd_segment_last)
-	{
-		memcpy(m_group_id, mqmd->GroupId, sizeof(m_group_id));
-	}
-	else
-	{
-		memset(m_group_id, 0, sizeof(m_group_id));
-	}
+	// Seq No, Offset, Msg Id and Group Id from the MQMD that MQPUT returned
+	rfh::mqmd_fields::applyAfterPut(*mqmd, msgLen, fields);
+	setFields(fields);
 }
 
 bool MQMDPAGE::setGroupActive(BOOL m_logical_order)
@@ -2520,44 +1518,6 @@ void MQMDPAGE::setEncoding(int encoding, int pdEncoding, int floatEncoding)
 		// trace exit from setEncoding
 		pDoc->logTraceEntry(traceInfo);
 	}
-}
-
-int MQMDPAGE::getPersistence()
-
-{
-	int		persist=MQPER_PERSISTENCE_AS_Q_DEF;
-	char	traceInfo[512];		// work variable to build trace message
-
-	// set the persistence to match the selection in the view
-	switch (m_mqmd_persist)
-	{
-	case MQPERSIST_NO:
-		{
-			persist = MQPER_NOT_PERSISTENT;
-			break;
-		}
-	case MQPERSIST_YES:
-		{
-			persist = MQPER_PERSISTENT;
-			break;
-		}
-	case MQPERSIST_AS_Q:
-		{
-			persist = MQPER_PERSISTENCE_AS_Q_DEF;
-			break;
-		}
-	}
-	
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE::getPersistence() persist=%d", persist);
-
-		// trace exit from getPersistence
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	return persist;
 }
 
 /////////////////////////////////////////////////////////////////////////
@@ -3047,98 +2007,10 @@ int MQMDPAGE::getFloatEncoding()
 void MQMDPAGE::setCorrelId(int dispType)
 
 {
-	int				i=0;
-	int				maxLen=m_mqmd_correl_id.GetLength();
-	LPCTSTR			dataptr;
-	LPCTSTR			prevptr;
-	unsigned char	asciiStr[MQ_CORREL_ID_LENGTH + 1];
-	char			traceInfo[512];		// work variable to build trace message
+	std::string	error;
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::setCorrelId() m_mqmd_correl_id=%s len=%d OrigCorrelid=%s len=%d", (LPCTSTR)m_mqmd_correl_id, m_mqmd_correl_id.GetLength(), (LPCTSTR)OrigCorrelid, OrigCorrelid.GetLength());
-
-		// trace entry to setCorrelId
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	dataptr = m_mqmd_correl_id.GetBuffer(MQ_CORREL_ID_LENGTH + 1);
-	prevptr = OrigCorrelid.GetBuffer(MQ_CORREL_ID_LENGTH + 1);
-
-	switch(dispType)
-	{
-	case ID_DISPLAY_ASCII:
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_CORREL_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_correlid[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary correlation id value
-					m_correlid[i] = dataptr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_EBCDIC:
-		// get the updated value as ASCII characters
-		AsciiToEbcdic((unsigned char *)dataptr, MQ_CORREL_ID_LENGTH, asciiStr);
-
-		// make sure it is a valid string (note - it may have embedded characters)
-		asciiStr[MQ_CORREL_ID_LENGTH] = 0;
-
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_CORREL_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_correlid[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary correlation id value
-					m_correlid[i] = asciiStr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_HEX:
-		HexToAscii((unsigned char *)dataptr, maxLen / 2, m_correlid);
-	}
-
-	m_mqmd_correl_id.ReleaseBuffer();
-	OrigCorrelid.ReleaseBuffer();
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE::setCorrelId() m_mqmd_correl_id=%s len=%d OrigCorrelid=%s len=%d", (LPCTSTR)m_mqmd_correl_id, m_mqmd_correl_id.GetLength(), (LPCTSTR)OrigCorrelid, OrigCorrelid.GetLength());
-
-		// trace exit from setCorrelId
-		pDoc->logTraceEntry(traceInfo);
-	}
+	// the edited text of the box becomes the binary id; a rejected edit leaves it unchanged
+	rfh::id_display::applyEdit(rfh::id_display::Field::CorrelId, m_correlid, (LPCTSTR)m_mqmd_correl_id, (LPCTSTR)OrigCorrelid, (rfh::id_display::Mode)dispType, error);
 }
 
 void MQMDPAGE::OnSetfocusCorrelId() 
@@ -3597,98 +2469,10 @@ void MQMDPAGE::OnKillfocusMsgId()
 void MQMDPAGE::setMsgId(int dispType)
 
 {
-	int				i=0;
-	int				maxLen=m_msg_id.GetLength();
-	LPCTSTR			dataptr;
-	LPCTSTR			prevptr;
-	unsigned char	asciiStr[MQ_MSG_ID_LENGTH + 1];
-	char			traceInfo[512];		// work variable to build trace message
+	std::string	error;
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::setMsgId() m_msg_id=%s len=%d", (LPCTSTR)m_msg_id, m_msg_id.GetLength());
-
-		// trace entry to setMsgId
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	dataptr = m_msg_id.GetBuffer(MQ_MSG_ID_LENGTH + 1);
-	prevptr = OrigMsgid.GetBuffer(MQ_MSG_ID_LENGTH + 1);
-
-	switch(dispType)
-	{
-	case ID_DISPLAY_ASCII:
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_MSG_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_message_id[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary message id value
-					m_message_id[i] = dataptr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_EBCDIC:
-		// get the updated value as ASCII characters
-		AsciiToEbcdic((unsigned char *)dataptr, MQ_MSG_ID_LENGTH, asciiStr);
-
-		// make sure it is a valid string (note - it may have embedded characters)
-		asciiStr[MQ_MSG_ID_LENGTH] = 0;
-
-		// check if any of the data has changed, on a
-		// character by character basis.
-		while (i < MQ_MSG_ID_LENGTH)
-		{
-			// check if we are beyond the end of the displayed value
-			if (i > maxLen)
-			{
-				m_message_id[i] = 0;
-			}
-			else
-			{
-				// check if this character has been changed
-				if (dataptr[i] != prevptr[i])
-				{
-					// changed, so update the character in the binary message id value
-					m_message_id[i] = asciiStr[i];
-				}
-			}
-
-			i++;
-		}
-
-		break;
-
-	case ID_DISPLAY_HEX:
-		HexToAscii((unsigned char *)dataptr, maxLen / 2, m_message_id);
-	}
-
-	m_msg_id.ReleaseBuffer();
-	OrigMsgid.ReleaseBuffer();
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting MQMDPAGE::setMsgId() m_msg_id=%s len=%d OrigMsgid=%s len=%d", (LPCTSTR)m_msg_id, m_msg_id.GetLength(), (LPCTSTR)OrigMsgid, OrigMsgid.GetLength());
-
-		// trace exit from setMsgId
-		pDoc->logTraceEntry(traceInfo);
-	}
+	// the edited text of the box becomes the binary id; a rejected edit leaves it unchanged
+	rfh::id_display::applyEdit(rfh::id_display::Field::MsgId, m_message_id, (LPCTSTR)m_msg_id, (LPCTSTR)OrigMsgid, (rfh::id_display::Mode)dispType, error);
 }
 
 void MQMDPAGE::setUserId(MQMD2 * mqmd)
