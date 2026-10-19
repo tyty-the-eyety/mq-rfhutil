@@ -26,6 +26,7 @@ Jim MacNair - Initial Contribution
 #include "DataArea.h"
 #include "IdEdit.h"	// Added by ClassView
 #include "MyComboBox.h"	// Added by ClassView
+#include "rfh_mqmd_fields.h"
 
 /////////////////////////////////////////////////////////////////////////////
 // MQMDPAGE dialog
@@ -68,6 +69,8 @@ public:
 	void updateMQMDafterPut(MQMD2 * mqmd, MQLONG msgLen);
 	void setMessageMQMD(MQMD2 * mqmd, BOOL m_setUserID, BOOL m_set_all);
 	void buildMQMD(MQMD2 * mqmd, BOOL m_setUserID, BOOL m_set_all);
+	rfh::MqmdFields getFields();						// the tab's values for the portable core
+	void setFields(const rfh::MqmdFields & fields);	// shows values from the portable core
 	void clearMQMD();
 	void processMessageMQMD(MQMD2 * mqmd);
 	int processMQMDE(MQMDE * mqmde, int size, int ccsid, int encoding);

@@ -1089,294 +1089,166 @@ LRESULT MQMDPAGE::OnSetPageFocus(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+//////////////////////////////////////////////////////////////
+//
+// getFields / setFields - the MQMD tab's values as the portable
+// core's rfh::MqmdFields, so that building and reading an MQMD
+// share one implementation (core/message/rfh_mqmd_fields.cpp)
+// with the Linux version.
+//
+//////////////////////////////////////////////////////////////
+
+rfh::MqmdFields MQMDPAGE::getFields()
+
+{
+	rfh::MqmdFields	f;
+
+	// the format combo box holds the current text
+	m_mqmd_format_cb.GetWindowText(m_mqmd_format);
+
+	f.format = (LPCTSTR)m_mqmd_format;
+	f.ccsid = (LPCTSTR)m_mqmd_ccsid;
+	f.msgType = (LPCTSTR)m_mqmd_msgtype;
+	f.expiry = (LPCTSTR)m_mqmd_expiry;
+	f.feedback = (LPCTSTR)m_mqmd_feedback;
+	f.priority = (LPCTSTR)m_mqmd_priority;
+	f.backoutCount = (LPCTSTR)m_mqmd_backout_count;
+	f.replyToQ = (LPCTSTR)m_reply_queue;
+	f.replyToQMgr = (LPCTSTR)m_reply_qm;
+	f.userId = (LPCTSTR)m_mqmd_userid;
+	f.accountingToken = (LPCTSTR)m_mqmd_account_token;
+	f.applIdentity = (LPCTSTR)m_mqmd_appl_id;
+	f.applOrigin = (LPCTSTR)m_mqmd_appl_origin;
+	f.putApplName = (LPCTSTR)m_mqmd_appl_name;
+	f.putApplType = (LPCTSTR)m_mqmd_appl_type;
+	f.dateTime = (LPCTSTR)m_mqmd_date_time;
+	f.seqNo = (LPCTSTR)m_mqmd_seq_no;
+	f.offset = (LPCTSTR)m_mqmd_offset;
+	f.originalLength = (LPCTSTR)m_mqmd_orig_len;
+
+	f.persistence = m_mqmd_persist;
+	f.encoding = m_mqmd_encoding;
+	f.pdEncoding = m_mqmd_pd_encoding;
+	f.floatEncoding = m_mqmd_float_encoding;
+	f.reportException = m_report_except;
+	f.reportExpiration = m_report_expire;
+	f.reportCoa = m_report_coa;
+	f.reportCod = m_report_cod;
+
+	f.reportPan = (m_report_pan != FALSE);
+	f.reportNan = (m_report_nan != FALSE);
+	f.reportActivity = (m_report_activity != FALSE);
+	f.reportDiscard = (m_report_discard != FALSE);
+	f.reportPassMsgId = (m_report_pass_msgid != FALSE);
+	f.reportPassCorrelId = (m_report_pass_correlid != FALSE);
+	f.reportPassDiscardAndExpiry = (m_report_expire_discard != FALSE);
+	f.groupYes = (m_mqmd_group_yes != FALSE);
+	f.groupLast = (m_mqmd_group_last != FALSE);
+	f.segmentYes = (m_mqmd_segment_yes != FALSE);
+	f.segmentLast = (m_mqmd_segment_last != FALSE);
+	f.segmentAllowed = (m_mqmd_segment_allowed != FALSE);
+
+	memcpy(f.msgId, m_message_id, sizeof(f.msgId));
+	memcpy(f.correlId, m_correlid, sizeof(f.correlId));
+	memcpy(f.groupId, m_group_id, sizeof(f.groupId));
+
+	return f;
+}
+
+void MQMDPAGE::setFields(const rfh::MqmdFields & f)
+
+{
+	m_mqmd_format = f.format.c_str();
+	m_mqmd_format_cb.SetWindowText((LPCTSTR)m_mqmd_format);
+	m_mqmd_ccsid = f.ccsid.c_str();
+	m_mqmd_msgtype = f.msgType.c_str();
+	m_mqmd_expiry = f.expiry.c_str();
+	m_mqmd_feedback = f.feedback.c_str();
+	m_mqmd_priority = f.priority.c_str();
+	m_mqmd_backout_count = f.backoutCount.c_str();
+	m_reply_queue = f.replyToQ.c_str();
+	m_reply_qm = f.replyToQMgr.c_str();
+	m_mqmd_userid = f.userId.c_str();
+	m_mqmd_account_token = f.accountingToken.c_str();
+	m_mqmd_appl_id = f.applIdentity.c_str();
+	m_mqmd_appl_origin = f.applOrigin.c_str();
+	m_mqmd_appl_name = f.putApplName.c_str();
+	m_mqmd_appl_type = f.putApplType.c_str();
+	m_mqmd_date_time = f.dateTime.c_str();
+	m_mqmd_seq_no = f.seqNo.c_str();
+	m_mqmd_offset = f.offset.c_str();
+	m_mqmd_orig_len = f.originalLength.c_str();
+
+	m_mqmd_persist = f.persistence;
+	m_mqmd_encoding = f.encoding;
+	m_mqmd_pd_encoding = f.pdEncoding;
+	m_mqmd_float_encoding = f.floatEncoding;
+	m_report_except = f.reportException;
+	m_report_expire = f.reportExpiration;
+	m_report_coa = f.reportCoa;
+	m_report_cod = f.reportCod;
+
+	m_report_pan = f.reportPan;
+	m_report_nan = f.reportNan;
+	m_report_activity = f.reportActivity;
+	m_report_discard = f.reportDiscard;
+	m_report_pass_msgid = f.reportPassMsgId;
+	m_report_pass_correlid = f.reportPassCorrelId;
+	m_report_expire_discard = f.reportPassDiscardAndExpiry;
+	m_mqmd_group_yes = f.groupYes;
+	m_mqmd_group_last = f.groupLast;
+	m_mqmd_segment_yes = f.segmentYes;
+	m_mqmd_segment_last = f.segmentLast;
+	m_mqmd_segment_allowed = f.segmentAllowed;
+
+	memcpy(m_message_id, f.msgId, sizeof(m_message_id));
+	memcpy(m_correlid, f.correlId, sizeof(m_correlid));
+	memcpy(m_group_id, f.groupId, sizeof(m_group_id));
+	SetId(&m_message_id, ID_TYPE_MSG);
+	SetId(&m_correlid, ID_TYPE_CORREL);
+	SetId(&m_group_id, ID_TYPE_GROUP);
+}
+
 int MQMDPAGE::processMQMD(const unsigned char * data, int size)
 
 {
-	int		mqmdLen=0;
-	int		i;
-	int		v1r;
-	int		v2r;
-	MQLONG	encoding;		/* Numeric encoding of message data */
-	MQMD	*mqmd;
-	char	tempDate[12];
-	char	tempTime[12];
-	char	tempFormat[12];
-	char	tempName[64];
-	char	tempAcctToken[128];	// Accounting token in hex
-	unsigned char	ebcdicID[4];
-	unsigned char	asciiID[4];
-	char	traceInfo[512];		// work variable to build trace message
+	MQMD2			mqmd;
+	rfh::MqmdFields	fields;
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE::processMQMD() data=%8.8X size=%d", (unsigned int)data, size);
-
-		// trace entry to processMQMD
-		pDoc->logTraceEntry(traceInfo);
-	}
-
+	// an MQMD needs at least sizeof(MQMD) bytes, even for version 1
 	if (size < sizeof(MQMD))
 	{
-		// total message is too short to have an MQMD
 		return 0;
 	}
 
-	// point to the file data
-	mqmd = (MQMD *)data;
-
-	// check for the MQMD eye catcher
-	memcpy(asciiID, MQMD_STRUC_ID, 4);
-	AsciiToEbcdic(asciiID, 4, ebcdicID);
-	if ((memcmp(mqmd->StrucId, asciiID, 4) != 0) && (memcmp(mqmd->StrucId, ebcdicID, 4) != 0))
+	// normalise a big-endian or EBCDIC MQMD; MsgId, CorrelId and GroupId are byte
+	// strings and are kept as they are
+	memcpy(&mqmd, data, sizeof(mqmd));
+	if (!translateMQMD(&mqmd) || ((MQMD_VERSION_1 != mqmd.Version) && (MQMD_VERSION_2 != mqmd.Version)))
 	{
-		// did not find the eyecatcher - return
-		return 0;
-	}
-
-	// get the version in reversed bytes, in case the MQMD is in big-endian format
-	v1r = reverseBytes4(MQMD_VERSION_1);
-	v2r = reverseBytes4(MQMD_VERSION_2);
-
-	// check for a valid version
-	if ((MQMD_VERSION_1 != mqmd->Version) && (MQMD_VERSION_2 != mqmd->Version) && (v1r != mqmd->Version) && (v2r != mqmd->Version))
-	{
-		// not a valid version
 		return 0;
 	}
 
 	if (pDoc->traceEnabled)
 	{
-		// write the data to the trace file
 		pDoc->dumpTraceData("mqmd data", data, sizeof(MQMD));
 	}
 
-	// check if the MQMD is in ebcdic
-	if (memcmp(mqmd->StrucId, ebcdicID, 4) == 0)
-	{
-		// convert the character fields to ASCII
-		EbcdicToAscii((unsigned char *)&mqmd->Format, sizeof(mqmd->Format), (unsigned char *)&mqmd->Format);
-		EbcdicToAscii((unsigned char *)&mqmd->ReplyToQ, sizeof(mqmd->ReplyToQ), (unsigned char *)&mqmd->ReplyToQ);
-		EbcdicToAscii((unsigned char *)&mqmd->ReplyToQMgr, sizeof(mqmd->ReplyToQMgr), (unsigned char *)&mqmd->ReplyToQMgr);
-		EbcdicToAscii((unsigned char *)&mqmd->UserIdentifier, sizeof(mqmd->UserIdentifier), (unsigned char *)&mqmd->UserIdentifier);
-		EbcdicToAscii((unsigned char *)&mqmd->ApplIdentityData, sizeof(mqmd->ApplIdentityData), (unsigned char *)&mqmd->ApplIdentityData);
-		EbcdicToAscii((unsigned char *)&mqmd->PutApplName, sizeof(mqmd->PutApplName), (unsigned char *)&mqmd->PutApplName);
-		EbcdicToAscii((unsigned char *)&mqmd->PutDate, sizeof(mqmd->PutDate), (unsigned char *)&mqmd->PutDate);
-		EbcdicToAscii((unsigned char *)&mqmd->PutTime, sizeof(mqmd->PutTime), (unsigned char *)&mqmd->PutTime);
-		EbcdicToAscii((unsigned char *)&mqmd->ApplOriginData, sizeof(mqmd->ApplOriginData), (unsigned char *)&mqmd->ApplOriginData);
-	}
+	// the tab's fields, shared with the Linux version
+	clearMQMD();
+	fields = getFields();
+	rfh::mqmd_fields::fromMqmd(mqmd, fields);
+	setFields(fields);
 
-	// check if the MQMD is in a different encoding sequence
-	if ((v1r == mqmd->Version) || (v2r == mqmd->Version))
-	{
-		// it appears the mqmd was captured on a big-endian system
-		// therefore, we will reverse the byte ordering in the mqmd
-		mqmd->Version = reverseBytes4(mqmd->Version); 
-		mqmd->Report = reverseBytes4(mqmd->Report);
-		mqmd->MsgType = reverseBytes4(mqmd->MsgType); 
-		mqmd->Expiry = reverseBytes4(mqmd->Expiry);
-		mqmd->Feedback = reverseBytes4(mqmd->Feedback); 
-		mqmd->Encoding = reverseBytes4(mqmd->Encoding);
-		mqmd->CodedCharSetId = reverseBytes4(mqmd->CodedCharSetId); 
-		mqmd->Priority = reverseBytes4(mqmd->Priority);
-		mqmd->Persistence = reverseBytes4(mqmd->Persistence);
-		mqmd->BackoutCount = reverseBytes4(mqmd->BackoutCount);
-		mqmd->PutApplType = reverseBytes4(mqmd->PutApplType);
+	// display state for the data that follows
+	pDoc->m_numeric_format = getIntEncode(mqmd.Encoding);
+	pDoc->fileIntFormat = pDoc->m_numeric_format;
+	pDoc->m_pd_numeric_format = m_mqmd_pd_encoding;
+	pDoc->m_char_format = getCcsidType(mqmd.CodedCharSetId);
 
-		// deal with the message id, correl id, accounting token
-		reverseBytes24(mqmd->MsgId, mqmd->MsgId);
-		reverseBytes24(mqmd->CorrelId, mqmd->CorrelId);
-		reverseBytes32(mqmd->AccountingToken, mqmd->AccountingToken);
-
-		// check if this is a version 1 or version 2 mqmd
-		if (mqmd->Version!= MQMD_VERSION_1)
-		{
-			// deal with the group id
-			reverseBytes24(mqmd->GroupId, mqmd->GroupId);
-			mqmd->MsgSeqNumber = reverseBytes4(mqmd->MsgSeqNumber);
-			mqmd->Offset = reverseBytes4(mqmd->Offset);
-			mqmd->MsgFlags = reverseBytes4(mqmd->MsgFlags);
-			mqmd->OriginalLength = reverseBytes4(mqmd->OriginalLength);
-		}
-	}
-
-	// check for an MQMD
-	if ((MQMD_VERSION_2 == mqmd->Version) || (MQMD_VERSION_1 == mqmd->Version))
-	{
-		// clear the current values
-		clearMQMD();
-
-		// set the size as the return value
-		mqmdLen = sizeof(MQMD1);
-
-		// capture the MQMD data
-		// process the report options
-		processReportOptions(mqmd->Report);
-
-		// capture the message type
-		setMsgType(mqmd->MsgType);
-
-		// capture the expiry
-		m_mqmd_expiry.Format("%d", mqmd->Expiry);
-
-		// get the feedback
-		m_mqmd_feedback.Format("%d", mqmd->Feedback);
-
-		// check what the encoding is for the message
-		encoding = mqmd->Encoding;
-		m_mqmd_encoding = getIntEncode(encoding);
-		if ((encoding & MQENC_INTEGER_REVERSED) > 0)
-		{
-			// normal PC little endian
-			pDoc->m_numeric_format = NUMERIC_PC;
-			pDoc->fileIntFormat = NUMERIC_PC;
-		}
-		else
-		{
-			pDoc->m_numeric_format = NUMERIC_HOST;
-			pDoc->fileIntFormat = NUMERIC_HOST;
-		}
-
-		// get the decimal encoding value
-		m_mqmd_pd_encoding = getPDEncode(encoding);
-		pDoc->m_pd_numeric_format = m_mqmd_pd_encoding;
-
-		// get the code page of the message
-		m_mqmd_ccsid.Format("%d", mqmd->CodedCharSetId);
-
-		// set the code page type (ASCII, ECBDIC, etc)
-		pDoc->m_char_format = getCcsidType(mqmd->CodedCharSetId);
-
-		// get the format field
-		memset(tempFormat, 0, sizeof(tempFormat));
-		memcpy(tempFormat, mqmd->Format, 8);
-		for (i=0; i<8; i++)
-		{
-			if (tempFormat[i] <= ' ')
-			{
-				tempFormat[i] = 0;
-			}
-		}
-
-		m_mqmd_format = tempFormat;
-
-		// capture the priority
-		m_mqmd_priority.Format("%d", mqmd->Priority);
-
-		// capture the message persistence
-		m_mqmd_persist = mqmd->Persistence;
-
-		// capture the message, correlation and group ids
-		memcpy(m_message_id, mqmd->MsgId, sizeof(m_message_id));
-		memcpy(m_correlid, mqmd->CorrelId, sizeof(m_correlid));
-		memcpy(m_group_id, mqmd->GroupId, sizeof(m_group_id));
-
-		// set the ids
-		SetId(&m_message_id, ID_TYPE_MSG);
-		SetId(&m_correlid, ID_TYPE_CORREL);
-		SetId(&m_group_id, ID_TYPE_GROUP);
-
-		// get the backout count
-		m_mqmd_backout_count.Format("%d", mqmd->BackoutCount);
-
-		// get the reply to queue name
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->ReplyToQ, sizeof(mqmd->ReplyToQ));
-		Rtrim(tempName);
-		m_reply_queue = tempName;
-
-		// get the reply to queue manager
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->ReplyToQMgr, sizeof(mqmd->ReplyToQMgr));
-		Rtrim(tempName);
-		m_reply_qm = tempName;
-
-		// get the user id
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->UserIdentifier, sizeof(mqmd->UserIdentifier));
-		Rtrim(tempName);
-		m_mqmd_userid = tempName;
-
-		// get the accounting token field in hex
-		memset(tempAcctToken, 0, sizeof(tempAcctToken));
-		AsciiToHex(mqmd->AccountingToken, 32, (unsigned char *) tempAcctToken);
-		m_mqmd_account_token = tempAcctToken;
-
-		// get the application identity data
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->ApplIdentityData, sizeof(mqmd->ApplIdentityData));
-		Rtrim(tempName);
-		m_mqmd_appl_id = tempName;
-
-		// get the application put type
-		m_mqmd_appl_type = getApplTypeDisplay(mqmd->PutApplType);
-
-		// get the name of the application that put the message
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->PutApplName, sizeof(mqmd->PutApplName));
-		Rtrim(tempName);
-		m_mqmd_appl_name = tempName;
-
-		// process the date
-		memcpy(tempDate, mqmd->PutDate, 4);				// year
-		tempDate[4] = '/';
-		memcpy(tempDate + 5, mqmd->PutDate + 4, 2);		// month
-		tempDate[7] = '/';
-		memcpy(tempDate + 8, mqmd->PutDate + 6, 2);		// day
-		tempDate[10] = 0;
-
-		// process the time
-		memcpy(tempTime, mqmd->PutTime, 2);				// hour
-		tempTime[2] = ':';
-		memcpy(tempTime + 3, mqmd->PutTime + 2, 2);		// minute
-		tempTime[5] = ':';
-		memcpy(tempTime + 6, mqmd->PutTime + 4, 2);		// second
-		tempTime[8] = '.';
-		memcpy(tempTime + 9, mqmd->PutTime + 6, 2);		// hundredths
-		tempTime[11] = 0;
-
-		// put the date and time together
-		m_mqmd_date_time = tempDate;
-		m_mqmd_date_time += " ";
-		m_mqmd_date_time += tempTime;
-
-		// get the name of the application that put the message
-		memset(tempName, 0, sizeof(tempName));
-		memcpy(tempName, mqmd->ApplOriginData, sizeof(mqmd->ApplOriginData));
-		Rtrim(tempName);
-		m_mqmd_appl_origin = tempName;
-
-		if (MQMD_VERSION_2 == mqmd->Version)
-		{
-			// change the length to the correct value
-			mqmdLen = sizeof(MQMD2);
-
-			// capture the message sequence number and offset
-			m_mqmd_seq_no.Format("%d", mqmd->MsgSeqNumber);
-			m_mqmd_offset.Format("%d", mqmd->Offset);
-
-			// process the message flags
-			processFlags(mqmd->MsgFlags);
-
-			// capture the original length
-			m_mqmd_orig_len.Format("%d", mqmd->OriginalLength);
-		}
-	}
-	
-	// update the form data from the instance variables
 	UpdateData(FALSE);
 
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Exiting processMQMD - mqmdLen=%d m_mqmd_encoding=%d m_mqmd_ccsid=%s m_mqmd_persist=%d m_mqmd_format=%s, putApplType=%s", 
-				mqmdLen, m_mqmd_encoding, (LPCTSTR)m_mqmd_ccsid, m_mqmd_persist, (LPCTSTR)m_mqmd_format, (LPCTSTR)m_mqmd_appl_type);
-
-		// trace exit from processMQMD
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	return mqmdLen;			
+	return (MQMD_VERSION_1 == mqmd.Version) ? sizeof(MQMD1) : sizeof(MQMD2);
 }
 
 //////////////////////////////////////////////////////////////
@@ -1991,214 +1863,8 @@ void MQMDPAGE::setGroupId()
 void MQMDPAGE::buildMQMD(MQMD2 *mqmd, BOOL m_setUserID, BOOL m_set_all)
 
 {
-	int		len;
-	int		msgType=0;
-	char	*ptr;
-	char	tempDate[32];
-	char	traceInfo[128];		// work variable to build trace message
-
-	if (pDoc->traceEnabled)
-	{
-		// create the trace line
-		sprintf(traceInfo, "Entering MQMDPAGE:buildMQMD() m_setUserID=%d m_set_all=%d", m_setUserID, m_set_all);
-
-		// trace entry to buildMQMD
-		pDoc->logTraceEntry(traceInfo);
-	}
-
-	mqmd->Report =	buildReportOptions();
-
-	// check if the message type is valid
-	if (m_mqmd_msgtype.GetLength() > 0)
-	{
-		// get the message type as an integer
-		msgType = atoi((LPCTSTR)m_mqmd_msgtype);
-
-		if ((MQMT_DATAGRAM == msgType) ||
-			(MQMT_REQUEST  == msgType) ||
-			(MQMT_REPLY    == msgType) ||
-			(MQMT_REPORT   == msgType) ||
-			(MQMT_MQE_FIELDS_FROM_MQE == msgType) ||
-			(MQMT_MQE_FIELDS == msgType) ||
-			((msgType  >= MQMT_APPL_FIRST) && (msgType <= MQMT_APPL_LAST)))
-		{
-			// set the message type
-			mqmd->MsgType =	msgType;
-		}
-	}
-
-	// check if there is a message expiry
-	if (m_mqmd_expiry.GetLength() > 0)
-	{
-		mqmd->Expiry =	atoi((LPCTSTR)m_mqmd_expiry);
-	}
-
-	// check if the feedback field should be set
-	if (m_mqmd_feedback.GetLength() > 0)
-	{
-		mqmd->Feedback = atoi((LPCTSTR)m_mqmd_feedback);
-	}
-
-	// set the encoding
-	mqmd->Encoding = getEncodingValue(m_mqmd_encoding, m_mqmd_pd_encoding, m_mqmd_float_encoding);
-
-	// set the character set
-	if (m_mqmd_ccsid.GetLength() > 0)
-	{
-		mqmd->CodedCharSetId = atoi((LPCTSTR)m_mqmd_ccsid);
-	}
-
-	// set the message format in the MQMD
-	m_mqmd_format_cb.GetWindowText(m_mqmd_format);
-	if (m_mqmd_format.GetLength() > 0)
-	{
-		memcpy(mqmd->Format, (LPCTSTR)m_mqmd_format, m_mqmd_format.GetLength());
-	}
-
-	mqmd->MsgFlags = buildFlags();
-
-	if (m_mqmd_priority.GetLength() > 0)
-	{
-		// set the priority
-		mqmd->Priority = atoi((LPCTSTR)m_mqmd_priority);
-	}
-
-	// set the persistence
-	mqmd->Persistence = getPersistence();
-
-	// set the message id, correl id and group id
-	memcpy(mqmd->MsgId, m_message_id, sizeof(mqmd->MsgId));
-	memcpy(mqmd->CorrelId, m_correlid, sizeof(mqmd->CorrelId));
-	memcpy(mqmd->GroupId, m_group_id, sizeof(mqmd->GroupId));
-
-	// set the backout count
-	if (m_mqmd_backout_count.GetLength() > 0)
-	{
-		mqmd->BackoutCount = atoi((LPCTSTR)m_mqmd_backout_count);
-	}
-
-   // set the reply to queue name
-   memset(mqmd->ReplyToQ, ' ', sizeof(mqmd->ReplyToQ));
-   if (m_reply_queue.GetLength() > 0)
-   {
-	   memcpy(mqmd->ReplyToQ, (LPCTSTR)m_reply_queue, m_reply_queue.GetLength());
-   }
-
-   memset(mqmd->ReplyToQMgr, ' ', sizeof(mqmd->ReplyToQMgr));
-   // set the reply to queue name
-   if (m_reply_qm.GetLength() > 0)
-   {
-	   memcpy(mqmd->ReplyToQMgr, (LPCTSTR)m_reply_qm, m_reply_qm.GetLength());
-   }
-
-	// check if there is a user id
-	len = m_mqmd_userid.GetLength();
-	memset(mqmd->UserIdentifier, ' ', sizeof(mqmd->UserIdentifier));
-	if (len > 0)
-	{
-		if (len > sizeof(mqmd->UserIdentifier))
-		{
-			len = sizeof(mqmd->UserIdentifier);
-		}
-
-		memcpy(mqmd->UserIdentifier, (LPCTSTR)m_mqmd_userid, len);
-	}
-
-	// get the data and time
-	len = m_mqmd_date_time.GetLength();
-	if (len > 0)
-	{
-		if (len > sizeof(tempDate) - 1)
-		{
-			len = sizeof(tempDate) - 1;
-		}
-
-		// get a copy of the date
-		memset(tempDate, 0, sizeof(tempDate));
-		memcpy(tempDate, (LPCTSTR)m_mqmd_date_time, len);
-
-		// move the date to the PutDate field - removing the dashes
-		ptr = mqmd->PutDate;
-		memcpy(ptr, tempDate, 4);			// copy the year
-		memcpy(ptr + 4, tempDate + 5, 2);	// copy the month, skipping the slash
-		memcpy(ptr + 6, tempDate + 8, 2);	// copy the month, skipping the slash
-
-		// move the time to the PutTime field - removing the colons
-		ptr = mqmd->PutTime;
-		memcpy(ptr, tempDate + 11, 2);		// copy the hours
-		memcpy(ptr + 2, tempDate + 14, 2);	// copy the minutes, skipping the colon
-		memcpy(ptr + 4, tempDate + 17, 2);	// copy the seconds, skipping the colon
-		memcpy(ptr + 6, tempDate + 20, 2);	// copy the hundredths, skipping the period
-	}
-
-	// get the accounting token
-	len = m_mqmd_account_token.GetLength();
-	if (len > 0)
-	{
-		// result is 1/2 the length of the hex representation (2 chars to 1 byte)
-		len >>= 1;
-
-		// make sure we don't overflow the target field
-		if (len > sizeof(mqmd->AccountingToken))
-		{
-			// truncate to fit the maximum length
-			len = sizeof(mqmd->AccountingToken);
-		}
-
-		// move the data to the result field
-		HexToAscii((unsigned char *)(LPCTSTR)m_mqmd_account_token, len, mqmd->AccountingToken);
-	}
-
-	// set the application identity and origin, if they are present
-	memset(mqmd->ApplIdentityData, ' ', sizeof(mqmd->ApplIdentityData));
-	if ((m_mqmd_appl_id.GetLength() > 0) && (m_mqmd_appl_id.GetLength() < MQ_APPL_IDENTITY_DATA_LENGTH))
-	{
-		memcpy(mqmd->ApplIdentityData, (LPCTSTR)m_mqmd_appl_id, m_mqmd_appl_id.GetLength());
-	}
-
-	memset(mqmd->ApplOriginData, ' ', sizeof(mqmd->ApplOriginData));
-	if ((m_mqmd_appl_origin.GetLength() > 0) && (m_mqmd_appl_origin.GetLength() < MQ_APPL_ORIGIN_DATA_LENGTH))
-	{
-		memcpy(mqmd->ApplOriginData, (LPCTSTR)m_mqmd_appl_origin, m_mqmd_appl_origin.GetLength());
-	}
-
-	memset(mqmd->PutApplName, ' ', sizeof(mqmd->PutApplName));
-	if ((m_mqmd_appl_name.GetLength() > 0) && (m_mqmd_appl_name.GetLength() < MQ_APPL_NAME_LENGTH))
-	{
-		memcpy(mqmd->PutApplName, (LPCTSTR)m_mqmd_appl_name, m_mqmd_appl_name.GetLength());
-	}
-
-	if (m_mqmd_appl_type.GetLength() > 0)
-	{
-		mqmd->PutApplType = atoi((LPCTSTR)m_mqmd_appl_type);
-	}
-
-	if (m_mqmd_seq_no.GetLength() > 0)
-	{
-		// set the sequence number
-		mqmd->MsgSeqNumber = atoi((LPCTSTR)m_mqmd_seq_no);
-	}
-
-	if (m_mqmd_offset.GetLength() > 0)
-	{
-		// set the offset field
-		mqmd->Offset = atoi((LPCTSTR)m_mqmd_offset);
-	}
-
-	if (m_mqmd_orig_len.GetLength() > 0)
-	{
-		// set the original length
-		mqmd->OriginalLength = atoi((LPCTSTR)m_mqmd_orig_len);
-	}
-
-	if (pDoc->traceEnabled)
-	{
-		// trace exit from buildMQMD
-		pDoc->logTraceEntry("Exiting MQMDPAGE:buildMQMD()");
-
-		// write the data to the trace file
-		pDoc->dumpTraceData("mqmd", (unsigned char *)mqmd, sizeof(MQMD));
-	}
+	// the tab's fields, shared with the Linux version
+	rfh::mqmd_fields::toMqmd(getFields(), *mqmd);
 }
 
 int MQMDPAGE::buildReportOptions()
