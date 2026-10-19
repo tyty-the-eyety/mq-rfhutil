@@ -23,3 +23,7 @@ rfhqt_add_test(rfhqt_maintab_tests MainTabTests.cpp)
 rfhqt_add_test(rfhqt_mqmdtab_tests MqmdTabTests.cpp)
 rfhqt_add_test(rfhqt_datatab_tests DataTabTests.cpp)
 rfhqt_add_test(rfhqt_finddialogs_tests FindDialogsTests.cpp)
+
+# GUI smoke tests against a real queue manager (TEST_QM). They skip, with a message, when none is reachable.
+rfhqt_add_test(rfhqt_guismoke_tests GuiSmokeTests.cpp)
+set_tests_properties(qt.rfhqt_guismoke_tests PROPERTIES LABELS "qt;mq" TIMEOUT 240 RUN_SERIAL TRUE)
