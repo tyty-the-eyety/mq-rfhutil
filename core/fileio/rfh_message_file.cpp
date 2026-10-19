@@ -201,7 +201,7 @@ namespace rfh
 				if (lead.found)
 				{
 					char format[MQ_FORMAT_LENGTH + 1] = { 0 };
-					memcpy(format, lead.format.data(), std::min(lead.format.size(), (size_t)MQ_FORMAT_LENGTH));
+					memcpy(format, lead.format.data(), (std::min)(lead.format.size(), (size_t)MQ_FORMAT_LENGTH));
 					Rtrim(format);
 					// Windows stores the format blank-padded; trimmed here, which is
 					// display-only because the same bytes are written back

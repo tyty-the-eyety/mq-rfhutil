@@ -69,7 +69,7 @@ namespace rfh
 				return (MQLONG)maximum;
 			}
 			const long long tenths = (long long)replyWaitMs / 10;	// ms / 100 = tenths of a second, times ten
-			return (MQLONG)std::min(maximum, std::max(minimum, tenths));
+			return (MQLONG)(std::min)(maximum, (std::max)(minimum, tenths));
 		}
 
 		std::vector<unsigned char> buildInquireQueueRequest(MQLONG queueType, bool clusterInfo, bool extended)

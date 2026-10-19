@@ -853,7 +853,7 @@ namespace rfh
 				memcpy(md.MsgId, retryMsgId, sizeof(md.MsgId));
 			}
 
-			MQLONG slice = unlimited ? kWaitSliceMs : std::min(remaining, kWaitSliceMs);
+			MQLONG slice = unlimited ? kWaitSliceMs : (std::min)(remaining, kWaitSliceMs);
 			if ((slice > 0) && (reread == Reread::No))
 			{
 				gmo.Options |= MQGMO_WAIT;
@@ -876,7 +876,7 @@ namespace rfh
 				// The message stays on the queue and a browse cursor does not move, so
 				// repeat the same get matched on the MsgId MQ just reported. dataLength is
 				// the unconverted length; converted text can be longer, so leave room.
-				size_t wanted = std::min((size_t)dataLength, kMaxBufferBytes);
+				size_t wanted = (std::min)((size_t)dataLength, kMaxBufferBytes);
 				if (options.convert)
 				{
 					wanted = grownBuffer(wanted, 4);
@@ -1264,7 +1264,7 @@ namespace rfh
 		memcpy(putMd.Format, MQFMT_ADMIN, MQ_FORMAT_LENGTH);
 		putMd.MsgType = MQMT_REQUEST;
 		memset(putMd.ReplyToQ, ' ', sizeof(putMd.ReplyToQ));
-		memcpy(putMd.ReplyToQ, replyName.data(), std::min(replyName.size(), sizeof(putMd.ReplyToQ)));
+		memcpy(putMd.ReplyToQ, replyName.data(), (std::min)(replyName.size(), sizeof(putMd.ReplyToQ)));
 		putMd.Persistence = MQPER_NOT_PERSISTENT;
 		// Tenths of a second, ten times the reply wait: a request nobody waits for any more must not stay on
 		// the command queue for a server that starts later (Windows: 10 * 1000, which is 1000 seconds)
