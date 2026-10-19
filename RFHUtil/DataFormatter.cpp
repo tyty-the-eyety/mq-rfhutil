@@ -261,7 +261,7 @@ void DataFormatter::getHexData()
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getHexData() with strlen(m_data_hex)=%d m_data_hex=%8.8X buffer=%d hexStr-m_data_hex=%d count=%d i=%d", strlen((const char *)m_data_hex), (unsigned int)(uintptr_t)m_data_hex, buffer, hexStr-m_data_hex, count, i);
+		sprintf(traceInfo, "Exiting DataFormatter::getHexData() with strlen(m_data_hex)=%d m_data_hex=%8.8X buffer=%d hexStr-m_data_hex=%d count=%d i=%d", (int)strlen((const char *)m_data_hex), (unsigned int)(uintptr_t)m_data_hex, buffer, (int)(hexStr-m_data_hex), count, i);
 
 		// trace exit from getHexData
 		logTraceEntry(traceInfo);
@@ -992,7 +992,7 @@ void DataFormatter::getCharacterData(const int charFormat, const int crlf, const
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getCharacterData() with strlen(m_data_ascii)=%d m_data_ascii=%8.8X buffer=%d location=%d i=%d winXlate=%d MQXlate=%d defXlate=%d asciiCcsid=%d", strlen((const char *)m_data_ascii), (unsigned int)(uintptr_t)m_data_ascii, buffer, location, i, winXlate, MQXlate, defXlate, asciiCcsid);
+		sprintf(traceInfo, "Exiting DataFormatter::getCharacterData() with strlen(m_data_ascii)=%d m_data_ascii=%8.8X buffer=%d location=%d i=%d winXlate=%d MQXlate=%d defXlate=%d asciiCcsid=%d", (int)strlen((const char *)m_data_ascii), (unsigned int)(uintptr_t)m_data_ascii, buffer, location, i, winXlate, MQXlate, defXlate, asciiCcsid);
 
 		// trace exit from getCharacterData
 		logTraceEntry(traceInfo);
@@ -1228,7 +1228,7 @@ void DataFormatter::getBothData(const int charFormat, const int BOM)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getBothData() with strlen(m_data_both)=%d m_data_both=%8.8X winXlate=%d MQXlate=%d defXlate=%d", strlen((const char *)m_data_both), (unsigned int)(uintptr_t)m_data_both, winXlate, MQXlate, defXlate);
+		sprintf(traceInfo, "Exiting DataFormatter::getBothData() with strlen(m_data_both)=%d m_data_both=%8.8X winXlate=%d MQXlate=%d defXlate=%d", (int)strlen((const char *)m_data_both), (unsigned int)(uintptr_t)m_data_both, winXlate, MQXlate, defXlate);
 
 		// trace exit from getBothData
 		logTraceEntry(traceInfo);
@@ -1237,7 +1237,7 @@ void DataFormatter::getBothData(const int charFormat, const int BOM)
 		if (verboseTrace)
 		{
 			// dump out the formatted data
-			dumpTraceData("Both Data", m_data_both, strlen((char *)m_data_both));
+			dumpTraceData("Both Data", m_data_both, (unsigned int)strlen((char *)m_data_both));
 		}
 	}
 }
@@ -1370,7 +1370,7 @@ unsigned char * DataFormatter::getTranslatedData(int * length, const int charFor
 			// check if the conversion worked
 			if (charCount > 0)
 			{
-				(*length) = strlen((char *)newData);
+				(*length) = (int)strlen((char *)newData);
 				winXlate += charCount;
 			}
 		}
@@ -1398,7 +1398,7 @@ unsigned char * DataFormatter::getTranslatedData(int * length, const int charFor
 			// check if the conversion worked
 			if (charCount > 0)
 			{
-				(*length) = strlen((char *)newData);
+				(*length) = (int)strlen((char *)newData);
 				winXlate += charCount;
 			}
 
@@ -1864,7 +1864,7 @@ void DataFormatter::getXmlData(const int charFormat)
 			if (traceEnabled)
 			{
 				// create the trace line
-				sprintf(traceInfo, "Exiting DataFormatter::getXmlData() already exists m_data_xml=%8.8X strlen(m_data_xml)=%d", (unsigned int)(uintptr_t)m_data_xml, strlen((char *)m_data_xml));
+				sprintf(traceInfo, "Exiting DataFormatter::getXmlData() already exists m_data_xml=%8.8X strlen(m_data_xml)=%d", (unsigned int)(uintptr_t)m_data_xml, (int)strlen((char *)m_data_xml));
 
 				// trace exit from getXmlData
 				logTraceEntry(traceInfo);
@@ -2146,7 +2146,7 @@ void DataFormatter::getXmlData(const int charFormat)
 						{
 							// Result would have been negative - flag as error
 							strcpy((char *) m_data_xml + i, "***** RFHUtil format error parsing XML - too few levels*****");
-							i += strlen((char *) m_data_xml + i);
+							i += (int)strlen((char *) m_data_xml + i);
 						}
 					}
 
@@ -2311,7 +2311,7 @@ void DataFormatter::getXmlData(const int charFormat)
 							{
 								// append an error message
 								strcpy((char *) m_data_xml + i, "\r\n***** RFHUtil format error parsing XML - no trailing end bracket*****");
-								i += strlen((char *) m_data_xml + i);
+								i += (int)strlen((char *) m_data_xml + i);
 							}
 						}
 
@@ -2334,7 +2334,7 @@ void DataFormatter::getXmlData(const int charFormat)
 			{
 				// Didn't find an end bracket, put the rest of the line on a separate line
 				strcpy((char *) m_data_xml + i, "\r\n***** RFHUtil format error - missing end bracket\r\n");
-				i += strlen((char *) m_data_xml + i);
+				i += (int)strlen((char *) m_data_xml + i);
 			}
 		}
 
@@ -2344,7 +2344,7 @@ void DataFormatter::getXmlData(const int charFormat)
 	if (currentLevel != 0)
 	{
 		strcpy((char *) m_data_xml + i, "\r\n***** RFHUtil format error - Unmatched beginning and ending tags found");
-		i += strlen((char *) m_data_xml + i);
+		i += (int)strlen((char *) m_data_xml + i);
 	}
 
 	// terminate the string
@@ -2362,7 +2362,7 @@ void DataFormatter::getXmlData(const int charFormat)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getXmlData() len=%d strlen(m_data_xml)=%d i=%d buffer=%d remaining=%d", len, strlen((const char *)m_data_xml), i, buffer, remaining);
+		sprintf(traceInfo, "Exiting DataFormatter::getXmlData() len=%d strlen(m_data_xml)=%d i=%d buffer=%d remaining=%d", len, (int)strlen((const char *)m_data_xml), i, buffer, remaining);
 
 		// trace exit from getXmlData
 		logTraceEntry(traceInfo);
@@ -2398,7 +2398,7 @@ void DataFormatter::getJsonData(const int charFormat)
 			if (traceEnabled)
 			{
 				// create the trace line
-				sprintf(traceInfo, "Exiting DataFormatter::getJsonData() already exists m_data_json=%8.8X strlen(m_data_json)=%d", (unsigned int)(uintptr_t)m_data_json, strlen((char *)m_data_json));
+				sprintf(traceInfo, "Exiting DataFormatter::getJsonData() already exists m_data_json=%8.8X strlen(m_data_json)=%d", (unsigned int)(uintptr_t)m_data_json, (int)strlen((char *)m_data_json));
 
 				// trace exit from getJsonData
 				logTraceEntry(traceInfo);
@@ -2466,7 +2466,7 @@ void DataFormatter::getJsonData(const int charFormat)
 	json.buildParsedArea(ptr, fileSize * 16 + 8000, FALSE);
 
 	// get the amount of storage that was really used
-	len = strlen(ptr);
+	len = (int)strlen(ptr);
 
 	// allocate the necessary amount of storage
 	m_data_json = (unsigned char *)rfhMalloc(len + 16, "JSONDAT2");
@@ -2497,7 +2497,7 @@ void DataFormatter::getJsonData(const int charFormat)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getJsonData() len=%d strlen(m_data_json)=%d", len, strlen((const char *)m_data_json));
+		sprintf(traceInfo, "Exiting DataFormatter::getJsonData() len=%d strlen(m_data_json)=%d", len, (int)strlen((const char *)m_data_json));
 
 		// trace exit from getJsonData
 		logTraceEntry(traceInfo);
@@ -2533,7 +2533,7 @@ void DataFormatter::getFixData(const int charFormat)
 			if (traceEnabled)
 			{
 				// create the trace line
-				sprintf(traceInfo, "Exiting DataFormatter::getFixData() already exists m_data_fix=%8.8X strlen(m_data_fix)=%d", (unsigned int)(uintptr_t)m_data_fix, strlen((char *)m_data_fix));
+				sprintf(traceInfo, "Exiting DataFormatter::getFixData() already exists m_data_fix=%8.8X strlen(m_data_fix)=%d", (unsigned int)(uintptr_t)m_data_fix, (int)strlen((char *)m_data_fix));
 
 				// trace exit from getFixData
 				logTraceEntry(traceInfo);
@@ -2640,7 +2640,7 @@ void DataFormatter::getFixData(const int charFormat)
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getFixData() size=%d len=%d strlen(m_data_fix)=%d", size, len, strlen((const char *)m_data_fix));
+		sprintf(traceInfo, "Exiting DataFormatter::getFixData() size=%d len=%d strlen(m_data_fix)=%d", size, len, (int)strlen((const char *)m_data_fix));
 
 		// trace exit from getFixData
 		logTraceEntry(traceInfo);
@@ -2938,14 +2938,14 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 								_snprintf_s((char *) parsed_data + i, maxLength - i, _TRUNCATE,
 									"***** RFHUtil format error - end name does not match %.256s %.256s\r\n",
 									xmlVarName, tempVarName);
-								i += strlen((char *) parsed_data + i);
+								i += (int)strlen((char *) parsed_data + i);
 							}
 						}
 						else
 						{
 							// Result would have been negative - flag as error
 							strcpy((char *) parsed_data + i, "***** RFHUtil format error parsing XML - too few levels*****\r\n");
-							i += strlen((char *) parsed_data + i);
+							i += (int)strlen((char *) parsed_data + i);
 						}
 					}
 
@@ -2963,13 +2963,13 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 						if (strlen(xmlVarName) > 0)
 						{
 							strcpy((char *) parsed_data + i, xmlVarName);
-							i += strlen(xmlVarName);
+							i += (int)strlen(xmlVarName);
 							parsed_data[i++] = '.';
 						}
 
 						// add the empty variable to the display
 						strcpy((char *) parsed_data + i, tempVarName);
-						i += strlen(tempVarName);
+						i += (int)strlen(tempVarName);
 						strcpy((char *) parsed_data + i, "=\'\'");
 						i += 3;
 
@@ -2988,7 +2988,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 
 							// capture the attributes in the output area
 							strcpy((char *) parsed_data + i, xmlAttrStr);
-							i += strlen(xmlAttrStr);
+							i += (int)strlen(xmlAttrStr);
 						}
 
 					}
@@ -3035,14 +3035,14 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 						// We are starting a new level, so let's stop at this point
 						// append to the display data
 						strcpy((char *) parsed_data + i, xmlVarName);
-						i += strlen(xmlVarName);
+						i += (int)strlen(xmlVarName);
 						parsed_data[i++] = '\r';
 						parsed_data[i++] = '\n';
 					}
 					else
 					{
 						strcpy((char *) parsed_data + i, xmlVarName);
-						i += strlen(xmlVarName);
+						i += (int)strlen(xmlVarName);
 
 						// We may have some data, so we will collect it
 						// in a temporary variable
@@ -3123,7 +3123,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 							parsed_data[i++] = '\'';
 							removeEscSeq(tempVarValue);
 							strcpy((char *) parsed_data + i, tempVarValue);
-							i += strlen(tempVarValue);
+							i += (int)strlen(tempVarValue);
 							parsed_data[i++] = '\'';
 						}
 
@@ -3175,13 +3175,13 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 									if (rc > 0)
 									{
 										strcpy((char *) parsed_data + i, "***** RFHUtil format error - end name does not match\r\n");
-										i += strlen((char *) parsed_data + i);
+										i += (int)strlen((char *) parsed_data + i);
 									}
 								}
 								else
 								{
 									strcpy((char *) parsed_data + i, "***** RFHUtil format error parsing XML - missing element end\r\n");
-									i += strlen((char *) parsed_data + i);
+									i += (int)strlen((char *) parsed_data + i);
 								}
 
 							}
@@ -3189,7 +3189,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 							{
 								// append an error message
 								strcpy((char *) parsed_data + i, "***** RFHUtil format error parsing XML - no trailing end bracket\r\n");
-								i += strlen((char *) parsed_data + i);
+								i += (int)strlen((char *) parsed_data + i);
 							}
 						}
 					}
@@ -3207,7 +3207,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 						strcpy((char *) parsed_data + i, xmlAttrStr);
 
 						// account for the storage in the output
-						i += strlen(xmlAttrStr);
+						i += (int)strlen(xmlAttrStr);
 					}
 				}
 			}
@@ -3215,7 +3215,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 			{
 				// Didn't find an end bracket, put the rest of the line on a separate line
 				strcpy((char *) parsed_data + i, "***** RFHUtil format error - missing end bracket\r\n");
-				i += strlen((char *) parsed_data + i);
+				i += (int)strlen((char *) parsed_data + i);
 			}
 		}
 
@@ -3236,7 +3236,7 @@ void DataFormatter::getNameValueData(const unsigned char * input, int inputLen, 
 	if (traceEnabled)
 	{
 		// create the trace line
-		sprintf(traceInfo, "Exiting DataFormatter::getNameValueData() maxLength=%d strlen(parsed_data)=%d i=%d buffer=%d remaining=%d", maxLength, strlen((const char *)parsed_data), i, buffer, remaining);
+		sprintf(traceInfo, "Exiting DataFormatter::getNameValueData() maxLength=%d strlen(parsed_data)=%d i=%d buffer=%d remaining=%d", maxLength, (int)strlen((const char *)parsed_data), i, buffer, remaining);
 
 		// trace exit from getNameValueData
 		logTraceEntry(traceInfo);
@@ -3542,14 +3542,14 @@ void DataFormatter::getParsedData(const int charFormat)
 								_snprintf_s((char *) m_data_parsed + i, len - i, _TRUNCATE,
 									"***** RFHUtil format error - end name does not match %.256s %.256s\r\n",
 									xmlVarName, tempVarName);
-								i += strlen((char *) m_data_parsed + i);
+								i += (int)strlen((char *) m_data_parsed + i);
 							}
 						}
 						else
 						{
 							// Result would have been negative - flag as error
 							strcpy((char *) m_data_parsed + i, "***** RFHUtil format error parsing XML - too few levels*****\r\n");
-							i += strlen((char *) m_data_parsed + i);
+							i += (int)strlen((char *) m_data_parsed + i);
 						}
 					}
 
@@ -3567,13 +3567,13 @@ void DataFormatter::getParsedData(const int charFormat)
 						if (strlen(xmlVarName) > 0)
 						{
 							strcpy((char *) m_data_parsed + i, xmlVarName);
-							i += strlen(xmlVarName);
+							i += (int)strlen(xmlVarName);
 							m_data_parsed[i++] = '.';
 						}
 
 						// add the empty variable to the display
 						strcpy((char *) m_data_parsed + i, tempVarName);
-						i += strlen(tempVarName);
+						i += (int)strlen(tempVarName);
 						strcpy((char *) m_data_parsed + i, "=\'\'");
 						i += 3;
 						// append a carriage return/new line pair to start a new line
@@ -3591,7 +3591,7 @@ void DataFormatter::getParsedData(const int charFormat)
 
 							// capture the attributes in the output area
 							strcpy((char *) m_data_parsed + i, xmlAttrStr);
-							i += strlen(xmlAttrStr);
+							i += (int)strlen(xmlAttrStr);
 						}
 
 					}
@@ -3638,14 +3638,14 @@ void DataFormatter::getParsedData(const int charFormat)
 						// We are starting a new level, so let's stop at this point
 						// append to the display data
 						strcpy((char *) m_data_parsed + i, xmlVarName);
-						i += strlen(xmlVarName);
+						i += (int)strlen(xmlVarName);
 						m_data_parsed[i++] = '\r';
 						m_data_parsed[i++] = '\n';
 					}
 					else
 					{
 						strcpy((char *) m_data_parsed + i, xmlVarName);
-						i += strlen(xmlVarName);
+						i += (int)strlen(xmlVarName);
 
 						// We may have some data, so we will collect it
 						// in a temporary variable
@@ -3715,7 +3715,7 @@ void DataFormatter::getParsedData(const int charFormat)
 							m_data_parsed[i++] = '\'';
 							removeEscSeq(tempVarValue);
 							strcpy((char *) m_data_parsed + i, tempVarValue);
-							i += strlen(tempVarValue);
+							i += (int)strlen(tempVarValue);
 							m_data_parsed[i++] = '\'';
 						}
 
@@ -3767,13 +3767,13 @@ void DataFormatter::getParsedData(const int charFormat)
 									if (rc > 0)
 									{
 										strcpy((char *) m_data_parsed + i, "***** RFHUtil format error - end name does not match\r\n");
-										i += strlen((char *) m_data_parsed + i);
+										i += (int)strlen((char *) m_data_parsed + i);
 									}
 								}
 								else
 								{
 									strcpy((char *) m_data_parsed + i, "***** RFHUtil format error parsing XML - missing element end\r\n");
-									i += strlen((char *) m_data_parsed + i);
+									i += (int)strlen((char *) m_data_parsed + i);
 								}
 
 							}
@@ -3781,7 +3781,7 @@ void DataFormatter::getParsedData(const int charFormat)
 							{
 								// append an error message
 								strcpy((char *) m_data_parsed + i, "***** RFHUtil format error parsing XML - no trailing end bracket\r\n");
-								i += strlen((char *) m_data_parsed + i);
+								i += (int)strlen((char *) m_data_parsed + i);
 							}
 						}
 					}
@@ -3799,7 +3799,7 @@ void DataFormatter::getParsedData(const int charFormat)
 						strcpy((char *) m_data_parsed + i, xmlAttrStr);
 
 						// account for the storage in the output
-						i += strlen(xmlAttrStr);
+						i += (int)strlen(xmlAttrStr);
 					}
 				}
 			}
@@ -3807,7 +3807,7 @@ void DataFormatter::getParsedData(const int charFormat)
 			{
 				// Didn't find an end bracket, put the rest of the line on a separate line
 				strcpy((char *) m_data_parsed + i, "***** RFHUtil format error - missing end bracket\r\n");
-				i += strlen((char *) m_data_parsed + i);
+				i += (int)strlen((char *) m_data_parsed + i);
 			}
 		}
 
@@ -3829,7 +3829,7 @@ void DataFormatter::getParsedData(const int charFormat)
 	{
 		// create the trace line
 		//sprintf(traceInfo, "Exiting DataFormatter::getParsedData() len=%d strlen(m_data_parsed)=%d i=%d buffer=%d remaining=%d", len, strlen((const char *)m_data_parsed), i, buffer, remaining);
-		sprintf(traceInfo, "Exiting DataFormatter::getParsedData() len=%d strlen(m_data_parsed)=%d buffer=%d", len, strlen((const char *)m_data_parsed), buffer);
+		sprintf(traceInfo, "Exiting DataFormatter::getParsedData() len=%d strlen(m_data_parsed)=%d buffer=%d", len, (int)strlen((const char *)m_data_parsed), buffer);
 
 		// trace exit from getParsedData
 		logTraceEntry(traceInfo);
