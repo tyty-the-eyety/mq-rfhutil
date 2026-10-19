@@ -22,7 +22,7 @@ namespace rfh
 			void copyBlankFilled(MQCHAR * field, size_t fieldLength, const std::string & text)
 			{
 				memset(field, ' ', fieldLength);
-				memcpy(field, text.data(), std::min(text.size(), fieldLength));
+				memcpy(field, text.data(), (std::min)(text.size(), fieldLength));
 			}
 
 			// An MQ character field as text, with trailing blanks and controls removed.
@@ -30,7 +30,7 @@ namespace rfh
 			{
 				char temp[64];
 				memset(temp, 0, sizeof(temp));
-				memcpy(temp, field, std::min(fieldLength, sizeof(temp) - 1));
+				memcpy(temp, field, (std::min)(fieldLength, sizeof(temp) - 1));
 				Rtrim(temp);
 				return temp;
 			}
@@ -181,7 +181,7 @@ namespace rfh
 			// Windows copies the format over whatever the MQMD held, without blank filling
 			if (!f.format.empty())
 			{
-				memcpy(mqmd.Format, f.format.data(), std::min(f.format.size(), sizeof(mqmd.Format)));
+				memcpy(mqmd.Format, f.format.data(), (std::min)(f.format.size(), sizeof(mqmd.Format)));
 			}
 
 			mqmd.MsgFlags = buildFlags(f);
@@ -211,7 +211,7 @@ namespace rfh
 				// "YYYY/MM/DD HH:MM:SS.hh"; a shorter text leaves zero bytes, as on Windows
 				char temp[32];
 				memset(temp, 0, sizeof(temp));
-				memcpy(temp, f.dateTime.data(), std::min(f.dateTime.size(), sizeof(temp) - 1));
+				memcpy(temp, f.dateTime.data(), (std::min)(f.dateTime.size(), sizeof(temp) - 1));
 				memcpy(mqmd.PutDate, temp, 4);
 				memcpy(mqmd.PutDate + 4, temp + 5, 2);
 				memcpy(mqmd.PutDate + 6, temp + 8, 2);
@@ -223,7 +223,7 @@ namespace rfh
 
 			if (!f.accountingToken.empty())
 			{
-				unsigned int len = (unsigned int)std::min(f.accountingToken.size() / 2, sizeof(mqmd.AccountingToken));
+				unsigned int len = (unsigned int)(std::min)(f.accountingToken.size() / 2, sizeof(mqmd.AccountingToken));
 				std::string hex = f.accountingToken;
 				HexToAscii((unsigned char *)&hex[0], len, mqmd.AccountingToken);
 			}
@@ -274,11 +274,11 @@ namespace rfh
 
 			// pad the format on the right with blanks, then copy exactly 8 bytes
 			memset(mqmd.Format, ' ', sizeof(mqmd.Format));
-			memcpy(mqmd.Format, f.format.data(), std::min(f.format.size(), sizeof(mqmd.Format)));
+			memcpy(mqmd.Format, f.format.data(), (std::min)(f.format.size(), sizeof(mqmd.Format)));
 
 			// Windows copies the text over the existing contents, neither filling nor clearing
-			memcpy(mqmd.ReplyToQMgr, f.replyToQMgr.data(), std::min(f.replyToQMgr.size(), sizeof(mqmd.ReplyToQMgr)));
-			memcpy(mqmd.ReplyToQ, f.replyToQ.data(), std::min(f.replyToQ.size(), sizeof(mqmd.ReplyToQ)));
+			memcpy(mqmd.ReplyToQMgr, f.replyToQMgr.data(), (std::min)(f.replyToQMgr.size(), sizeof(mqmd.ReplyToQMgr)));
+			memcpy(mqmd.ReplyToQ, f.replyToQ.data(), (std::min)(f.replyToQ.size(), sizeof(mqmd.ReplyToQ)));
 
 			mqmd.Encoding = getEncodingValue(f.encoding, f.pdEncoding, f.floatEncoding);
 
@@ -374,7 +374,7 @@ namespace rfh
 			if (!f.userId.empty())
 			{
 				memset(mqmd.UserIdentifier, 0, sizeof(mqmd.UserIdentifier));
-				memcpy(mqmd.UserIdentifier, f.userId.data(), std::min(f.userId.size(), sizeof(mqmd.UserIdentifier)));
+				memcpy(mqmd.UserIdentifier, f.userId.data(), (std::min)(f.userId.size(), sizeof(mqmd.UserIdentifier)));
 			}
 			else if (!context.osUser.empty())
 			{
@@ -386,7 +386,7 @@ namespace rfh
 			{
 				unsigned char token[48];
 				memset(token, 0, sizeof(token));
-				unsigned int len = (unsigned int)std::min(f.accountingToken.size() / 2, sizeof(token));
+				unsigned int len = (unsigned int)(std::min)(f.accountingToken.size() / 2, sizeof(token));
 				std::string hex = f.accountingToken;
 				HexToAscii((unsigned char *)&hex[0], len, token);
 				memcpy(mqmd.AccountingToken, token, sizeof(mqmd.AccountingToken));
@@ -401,7 +401,7 @@ namespace rfh
 			if (!f.applIdentity.empty())
 			{
 				memset(mqmd.ApplIdentityData, 0, sizeof(mqmd.ApplIdentityData));
-				memcpy(mqmd.ApplIdentityData, f.applIdentity.data(), std::min(f.applIdentity.size(), sizeof(mqmd.ApplIdentityData)));
+				memcpy(mqmd.ApplIdentityData, f.applIdentity.data(), (std::min)(f.applIdentity.size(), sizeof(mqmd.ApplIdentityData)));
 			}
 
 			if (!f.applOrigin.empty() && (f.applOrigin.size() <= MQ_APPL_ORIGIN_DATA_LENGTH))
@@ -422,7 +422,7 @@ namespace rfh
 			// most); an empty text leaves it zero
 			char temp[48];
 			memset(temp, 0, sizeof(temp));
-			memcpy(temp, f.dateTime.data(), std::min(f.dateTime.size(), sizeof(temp) - 1));
+			memcpy(temp, f.dateTime.data(), (std::min)(f.dateTime.size(), sizeof(temp) - 1));
 			memcpy(mqmd.PutDate, temp, 4);
 			memcpy(mqmd.PutDate + 4, temp + 5, 2);
 			memcpy(mqmd.PutDate + 6, temp + 8, 2);

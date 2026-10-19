@@ -17,6 +17,7 @@ http://www.apache.org/licenses/LICENSE-2.0
 #include "xmlsubs.h"
 #include "mqsubs.h"
 #include "rfhconst.h"
+#include "Names.h"
 #include "JsonParse.h"
 #include "XMLParse.h"
 #include "rfh_codepage.h"

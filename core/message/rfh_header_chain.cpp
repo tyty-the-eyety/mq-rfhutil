@@ -254,7 +254,7 @@ namespace rfh
 		HeaderChain chain;
 
 		char trimmed[MQ_FORMAT_LENGTH + 1] = { 0 };
-		memcpy(trimmed, format.data(), std::min(format.size(), (size_t)MQ_FORMAT_LENGTH));
+		memcpy(trimmed, format.data(), (std::min)(format.size(), (size_t)MQ_FORMAT_LENGTH));
 		Rtrim(trimmed);
 
 		State s = { trimmed, ccsid, charFormat, encoding };
@@ -409,7 +409,7 @@ namespace rfh
 
 	bool looksLikeEbcdic(const unsigned char * data, size_t length)
 	{
-		size_t maxChars = std::min(length, (size_t)1024);
+		size_t maxChars = (std::min)(length, (size_t)1024);
 		if (maxChars < 64)
 		{
 			return false;
