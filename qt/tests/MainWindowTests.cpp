@@ -40,11 +40,27 @@ namespace
 		QString openAnswer, saveAnswer;
 	};
 
+	// RFHUTIL_TRACE_FILE for the life of the object: cleared on entry, so a window never depends on the developer's
+	// environment, and cleared on exit, so a failing test cannot leak it into the next one.
+	struct TraceEnv
+	{
+		explicit TraceEnv(const QString & value)
+		{
+			qunsetenv("RFHUTIL_TRACE_FILE");
+			if (!value.isEmpty())
+			{
+				qputenv("RFHUTIL_TRACE_FILE", value.toLocal8Bit());
+			}
+		}
+		~TraceEnv() { qunsetenv("RFHUTIL_TRACE_FILE"); }
+	};
+
 	// A window on the fake MQI with its own settings file.
 	struct Harness
 	{
-		explicit Harness(const std::function<void(MainWindow::Config &)> & tweak = nullptr, const std::function<void(const QString &)> & prepare = nullptr)
-			: api(rfh_test::fakeApi())
+		explicit Harness(const std::function<void(MainWindow::Config &)> & tweak = nullptr, const std::function<void(const QString &)> & prepare = nullptr,
+		                 const QString & traceFile = QString())
+			: env(traceFile), api(rfh_test::fakeApi())
 		{
 			fake.reset();
 			fake.queue(kQueue);
@@ -103,6 +119,7 @@ namespace
 			QCoreApplication::processEvents();
 		}
 
+		TraceEnv env;		// first: cleared last, after the window is gone
 		QTemporaryDir dir;
 		rfh::MqApi api;
 		StubChooser chooser;
@@ -724,17 +741,87 @@ private slots:
 	{
 		QTemporaryDir dir;
 		const QString trace = dir.filePath("trace.log");
-		qputenv("RFHUTIL_TRACE_FILE", trace.toLocal8Bit());
 		RfhTrace * before = rfhGetTrace();
 		{
-			Harness h;
+			Harness h(nullptr, nullptr, trace);
 			QVERIFY(rfhGetTrace()->isTraceEnabled());
 			QVERIFY(rfhGetTrace() != before);
 			QVERIFY(QFileInfo::exists(trace));
 		}
-		qunsetenv("RFHUTIL_TRACE_FILE");
 		QVERIFY(!rfhGetTrace()->isTraceEnabled());
 		QCOMPARE(rfhGetTrace(), before);
+	}
+
+	// The variable names the file, as in Windows (rfhutil.cpp startTrace); $XDG_STATE_HOME/rfhutil/trace.log is only the
+	// default of FileTrace's own constructor. A value that is not a path is therefore a relative file name.
+	void theTraceVariableIsALiteralPath()
+	{
+		QTemporaryDir dir;
+		const QString cwd = QDir::currentPath();
+		QVERIFY(QDir::setCurrent(dir.path()));
+		{
+			Harness h(nullptr, nullptr, "1");
+			QVERIFY(QFileInfo::exists(dir.filePath("1")));
+		}
+		QDir::setCurrent(cwd);
+	}
+
+	void aFailedTraceIsReportedInTheLog()
+	{
+		QTemporaryDir dir;
+		Harness h(nullptr, nullptr, dir.filePath("no/such/dir/../../../../../proc/nope/trace.log"));
+		QVERIFY2(h.window->statusLog().text().contains("trace"), qPrintable(h.window->statusLog().text()));
+	}
+
+	void closingRollsBackAPendingUnitInsteadOfCommittingIt()
+	{
+		for (int how = 0; how < 3; how++)		// destroy, close, Exit button
+		{
+			Harness h;
+			rfh::Message m;
+			m.body = { 'o', 'k' };
+			h.window->document().setMessage(std::move(m));
+			rfh::MqmdFields f;
+			f.segmentYes = true;		// a put of a segment runs under syncpoint and waits for its commit
+			h.window->document().setMqmd(f);
+			h.window->mainTab()->setNames("", kQueue, "");
+			QSignalSpy flows(&h.window->operations(), &Operations::flowFinished);
+			h.button("writeQButton")->click();
+			QTRY_VERIFY_WITH_TIMEOUT(flows.count() >= 1, 5000);
+			h.settle();
+			QCOMPARE(fake.pendingPuts.size(), size_t(1));
+			QCOMPARE(fake.queue(kQueue).messages.size(), size_t(0));
+			const int backs = fake.backCalls;
+			if (how == 1)
+			{
+				h.window->close();
+			}
+			else if (how == 2)
+			{
+				h.window->show();
+				h.button("exitButton")->click();
+			}
+			h.window.reset();
+			QVERIFY2(fake.backCalls > backs, "the unit was not backed out");
+			QCOMPARE(fake.pendingPuts.size(), size_t(0));
+			QCOMPARE(fake.queue(kQueue).messages.size(), size_t(0));		// nothing became visible
+		}
+	}
+
+	void changingTabsMovesTheFocusIntoTheDataAndMqmdPages()
+	{
+		Harness h;
+		QVERIFY(h.showActive());
+		h.window->tabs()->setCurrentIndex(MainWindow::TabData);
+		QCOMPARE(QApplication::focusWidget(), static_cast<QWidget *>(h.window->dataTab()->findChild<QPlainTextEdit *>("dataEdit")));
+		h.window->tabs()->setCurrentIndex(MainWindow::TabMqmd);
+		QWidget * format = h.window->mqmdTab()->findChild<QComboBox *>("formatCombo");
+		QCOMPARE(QApplication::focusWidget(), format);
+		// Qt gives a page back the widget that had the focus last; the tab must still start at its first field
+		h.window->mqmdTab()->findChild<QLineEdit *>("ccsidEdit")->setFocus();
+		h.window->tabs()->setCurrentIndex(MainWindow::TabMain);
+		h.window->tabs()->setCurrentIndex(MainWindow::TabMqmd);
+		QCOMPARE(QApplication::focusWidget(), format);
 	}
 
 	// RFHUTIL_SCREENSHOT_DIR=<dir> saves a picture of each working tab (offscreen only; a manual check, not an assertion)
@@ -762,7 +849,6 @@ private slots:
 
 	void withoutTheEnvironmentVariableThereIsNoTrace()
 	{
-		qunsetenv("RFHUTIL_TRACE_FILE");
 		Harness h;
 		QVERIFY(!rfhGetTrace()->isTraceEnabled());
 	}

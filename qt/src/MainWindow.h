@@ -17,6 +17,15 @@
 //   * Tabs. Only the Main, Data and MQMD tabs work in Phase 1; the others are shown disabled. A change is refused while a
 //     Find dialog is open (rfhutilView.cpp:749-780).
 //
+//   * Edit menu. It intentionally has only Top and Bottom: Cut, Copy, Paste and Sel All act on the focused edit and the edits
+//     already handle Ctrl+X, Ctrl+C, Ctrl+V and Ctrl+A themselves.
+//   * Geometry. Saved only in closeEvent (Exit, File > Exit and the window's close box all end there); a crash or a kill
+//     loses the change. Restored in the constructor, so the platform may clamp it to the screen.
+//   * Closing. Destroying the window stops the worker through SessionController, which backs out an open unit of work before
+//     it disconnects; see the limitation on a job that cannot be cancelled there.
+//   * Trace. RFHUTIL_TRACE_FILE is the path of the file, as in Windows; a value like "1" names a file "1". The
+//     $XDG_STATE_HOME default belongs to FileTrace's own constructor and is not applied here.
+//
 // Threading: GUI thread only.
 #pragma once
 
