@@ -372,7 +372,7 @@ TEST(Platform_Codepage, WideToAnsiUsesTheDefaultCharacter)
     const RFH_UCS2 in[] = { 'a', 0x4E00, 'b' };    // a CJK ideograph has no 1252 form
     char out[8] = { 0 };
     BOOL usedDefault = FALSE;
-    EXPECT_EQ(3, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 3, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ(3, rfh_WideCharToMultiByte(1252, 0, in, 3, out, sizeof(out), ".", &usedDefault));
     EXPECT_EQ(0, memcmp(out, "a.b", 3));
     EXPECT_TRUE(usedDefault);
 }
@@ -464,7 +464,7 @@ TEST(Platform_Codepage, WideToAnsiClearsUsedDefaultWhenNothingIsReplaced)
     const RFH_UCS2 in[] = { 'a' };
     char out[4] = { 0 };
     BOOL usedDefault = TRUE;
-    EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 1, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, 0, in, 1, out, sizeof(out), ".", &usedDefault));
     EXPECT_FALSE(usedDefault);
 }
 
@@ -485,7 +485,7 @@ TEST(Platform_Codepage, SurrogatePairNotInTheCodePageIsTwoDefaultCharacters)
     const RFH_UCS2 in[] = { 0xD83D, 0xDE00 };
     char out[8] = { 0 };
     BOOL usedDefault = FALSE;
-    EXPECT_EQ(2, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, in, 2, out, sizeof(out), ".", &usedDefault));
+    EXPECT_EQ(2, rfh_WideCharToMultiByte(1252, 0, in, 2, out, sizeof(out), ".", &usedDefault));
     EXPECT_EQ(0, memcmp(out, "..", 2));
     EXPECT_TRUE(usedDefault);
 }
@@ -523,7 +523,7 @@ TEST(Platform_Codepage, Code1252MapsItsFiveUndefinedBytesToTheSameCodePoints)
 
         char back[2] = { 0 };
         BOOL usedDefault = FALSE;
-        EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, WC_DEFAULTCHAR, unit, 1, back, sizeof(back), ".", &usedDefault));
+        EXPECT_EQ(1, rfh_WideCharToMultiByte(1252, 0, unit, 1, back, sizeof(back), ".", &usedDefault));
         EXPECT_EQ((char)byte, back[0]);
         EXPECT_FALSE(usedDefault);
     }
