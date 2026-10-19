@@ -169,6 +169,40 @@ class MqSession {                         // one thread at a time; handles use M
 // (owner decision); with duplicate MsgIds the browse can stick, as documented on
 // GetOptions::convert in rfh_mq_session.h.
 
+// Added by Plan 3 (the Qt application). Summary only; the headers are authoritative.
+enum class PropertiesMode { AsQueue, None, Rfh2, Compat };      // GetOptions::properties (the Main tab's User Props)
+// ConnectOptions also gained: TLS (sslEnabled, cipherSpec, keyRepository, sslPeerName, sslClientValidation, fipsRequired, sslResetCount,
+// certificateLabel), securityExit with securityData, localAddress. Passwords still live in memory only (wipePassword()).
+// PutOptions also gained: logicalOrder, syncpoint, alternateUser.
+// GetOptions also gained: matchGroupId with groupId, logicalOrder, completeMsg, allAvailable, selector, alternateUser, inputShared, properties.
+struct PurgeOptions { std::string selector; bool syncpoint = false; MQLONG batchSize = 100; const std::atomic<bool> * cancel = nullptr; };
+struct QueueInfo { /* type, current depth, maximum message length, resolved queue name */ };
+struct QueueListOptions { /* queue name pattern, queue types, reply wait, limits */ };
+// MqSession also has: Result queueInfo(queue, QueueInfo &);  long browsePosition() const;
+//   Result listQueues(const QueueListOptions &, std::vector<std::string> & names);   // PCF Inquire Queue
+//   Result purge(queue, count, const PurgeOptions &, uncertain);  Result commit();  Result rollback();
+//   and connect() records the queue manager's platform and command level (QueueManagerInfo).
+std::string statusText(const Result &, const StatusContext &);        // core/mq/rfh_status_text.h: the Windows status line wording
+namespace mq {
+  Result listLocalQueueManagers(const std::string & mqDataPath, LocalQueueManagers & out);   // core/mq/rfh_queue_managers.h: mqs.ini
+  std::string defaultMqDataPath();
+}
+bool parseServerString(const std::string & text, ConnectOptions &, std::string & error);     // core/mq/rfh_connect_string.h
+std::string rfh_current_user();                                       // core/platform/rfh_platform.h
+namespace mqmd_fields {                   // the Windows put and get paths, which differ from the file paths above
+  void toPutMqmd(const MqmdFields &, const PutContext &, MQMD2 &);                    // MQMDPAGE::buildMQMD as a put calls it
+  void applyAfterPut(const MQMD2 & returned, MQLONG msgLen, MqmdFields &);            // the tab after a put
+  void fromGetMqmd(const MQMD2 & received, MqmdFields &);                             // the tab after a get
+}
+namespace id_display {                    // core/message/rfh_id_display.h: Message Id, Correl Id, Group Id (hex, character, mixed)
+  std::string toText(const MQBYTE24 id, Mode);  bool applyEdit(Field, MQBYTE24 id, const std::string & typed,
+                                                               const std::string & previous, Mode, std::string & error);
+  size_t maxLength(Mode);  bool isHexDigit(char);
+}
+namespace format {
+  bool locate(View, const RenderOptions &, const Message &, size_t offset, TextPos &);   // the text line and column of a body byte
+}
+
 struct Message {                          // core/message/rfh_message.h
   MQMD2 mqmd = {MQMD2_DEFAULT};
   std::vector<unsigned char> headers;     // MQ headers (DLQ, CICS, IMS, RFH1, RFH2, MQMDE) as raw bytes
@@ -291,9 +325,16 @@ void rfhSetTrace(RfhTrace *);
   tooltip "Not yet ported".
 - **Layouts:** Qt Designer `.ui` files with Qt layouts, so the window can be
   resized and works on HiDPI screens. They keep the original labels,
-  groupings, and keyboard shortcuts (Alt+Q Read Q, Alt+W Write Q, Alt+B
-  Browse Q, Alt+O Open File, Alt+S Save File, Alt+E Purge Q, Alt+N/R Browse
-  Next/Prev).
+  groupings, and keyboard shortcuts. **As built**, the keys are the Windows
+  accelerator table, not the Alt+ list first drafted here (Alt+Q Read Q and so on): Ctrl+letters
+  whose meaning depends on the tab (Main: Ctrl+Q Read Q, Ctrl+W Write Q, Ctrl+B Browse Q, Ctrl+T Start Browse,
+  Ctrl+N Browse Next, Ctrl+R Browse Prev, Ctrl+M or Alt+V End Browse, Ctrl+K Close Q, Ctrl+E Purge Q, Ctrl+H Load Names,
+  Ctrl+I Set Conn Id, Ctrl+J Clear All, Alt+X Clear Data, Alt+Y Clear All, Ctrl+O Open File, Ctrl+S Save File; Data:
+  Ctrl+Q Parsed, Ctrl+B Both, Ctrl+T Character, Ctrl+K COBOL, Ctrl+L XML, Ctrl+H Hex, Ctrl+E EBCDIC, Ctrl+D and Ctrl+I toggle
+  the packed decimal and integer formats, Ctrl+F Find, Ctrl+Z Find Hex, Ctrl+G Go To; MQMD: Alt+J reset ids, Alt+C copy Msg
+  Id), with Alt+N and Alt+P stepping through the tabs and the Alt mnemonics of the controls kept (Browse Next lost its N).
+  The menu bar has only the Alt+M mnemonic for MQ. The tables are in `MainTab::addShortcuts`,
+  `DataTab::addShortcuts` and the inventory (`2026-10-17-qt-ui-inventory.md`, section 7.1).
 - **Main tab:**
   - **Fields:** Queue Manager (editable dropdown filled from local QMs and
     history), Queue Name (with Load Names), Remote QM, File Name, COBOL
@@ -312,6 +353,11 @@ void rfhSetTrace(RfhTrace *);
   choice, and Find, Find Hex, and Go To.
 - **MQMD tab:** every field that `MQMDPAGE` shows, edited through
   `mqmd_fields`. MsgId, CorrelId, and GroupId are edited in hex.
+- **As built (Plan 3):** the code is in `qt/` (static library `rfhqt` and `rfhutil-qt`); `docs/CODEMAP.md` section 3 lists its classes
+  (`MainWindow`, `SessionController`, `AppDocument`, `Operations`, the three tabs, `FindDialogs`, `AppSettings`, `StatusLog`,
+  `FileTrace`). The tabs only translate between widgets and the document; `Operations` holds the Windows button flows and
+  `AppDocument::enablesFor` the enable rules. A Wait field and a Cancel button belong to the Main tab, and a display code page setting decides how
+  the Data tab decodes text.
 - **Threading:** one worker `QThread` owns the `MqSession`. The UI disables
   conflicting actions while a call is running. A Get with a wait interval can
   be cancelled, which stops it on the next wait slice; the core passes waits
@@ -516,3 +562,18 @@ void rfhSetTrace(RfhTrace *);
   return 1); and `rfh_convert_char` and `rfh_WideCharToMultiByte` accept a default
   character for 1208 and 65001 on Linux, where Windows rejects `lpDefaultChar` for
   `CP_UTF8`.
+- **The Qt application's differences from Windows** (Plan 3; each is deliberate, and `CHANGELOG.md` lists the user-visible ones):
+  - decided by the owner on 2026-10-17: the Cluster Open `Group` radio works (Windows has no click handler); the purge error text has `cc`
+    and `rc` in the right order; Find finds a match that ends exactly at the end of the data and searching up starts at the last possible
+    match; Find Hex does not translate the hex input to EBCDIC; `Ignore MQMD` is dropped as dead; the local queue managers are listed from
+    `mqs.ini`; passwords are kept in memory only (Windows stores the Set Conn Id password, DPAPI encrypted, when "Save password" is on);
+  - the keys are the Windows accelerator table (the Ctrl+ table of section 5), not the Alt+ list of the first draft;
+  - the Wait field with Cancel, the Connection box and the display code page setting are additions;
+  - the Windows status line wording is kept (`statusText`), except that a Qt-only state has its own text ("Another operation is still running",
+    "Get cancelled", "Purge was not started: ...", "too large");
+  - errors Windows hides are reported: a TLS cipher spec without a channel, a selector over 10,239 characters, an unknown transport in a connection
+    string, a queue list refused by the command server, a failed commit (a failed commit rolls back and disconnects);
+  - an open unit of work is rolled back before Close Q, End Browse, a queue manager change, Exit or the window closing (MQDISC would commit it);
+  - settings and trace files are written private to the user (0600) and the trace is rotated at 10 MiB;
+  - not ported: Save Q, Load Q, Move Q, Display Q, Save Headers, audit records, the MQ menu's Open items, Ids, Cluster Queues, Theme, Help,
+    reconnect and the header tabs (`CHANGELOG.md`; Plan 3 "Not in this plan").

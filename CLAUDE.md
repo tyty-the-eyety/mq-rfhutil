@@ -21,7 +21,9 @@ Linux Qt6 port of IBM RFHUtil. This file is for agents working in this fork; lea
 - `git commit -s`, Conventional Commit subjects, and end each message with the two trailer lines you were given
   (`Co-Authored-By: ...` and `Claude-Session: ...`). **Never push.** Do not install anything (dnf, pip, brew, npm) without asking.
 - Build and test: `cmake --preset linux-debug && cmake --build --preset linux-debug && ctest --preset linux-debug`
-  (expect 978 tests, 8 skipped). `ctest -L memcheck` (6 tests) runs the parsers under the guard allocator.
+  (expect 1172 tests; 8 skipped with `TEST_QM` running, 71 without it). `ctest -L qt` (11 tests) runs the Qt tests offscreen,
+  `ctest -L mq` (73) needs a queue manager, `ctest -L memcheck` (9 tests) runs the parsers under the guard allocator. The Qt application is
+  `build/linux-debug/qt/rfhutil-qt` (CODEMAP section 3, "The Qt layer").
 - Windows-only files (MFC, `DataArea.cpp`, `.vcxproj`) cannot be compiled here. Say what is unverified.
 
 ## Policies (details and reasons: CODEMAP section 7)

@@ -45,8 +45,51 @@ Newest updates are at the top of this file
 - Pending, not in this release yet: making `DataArea` show its views through
   `DataFormatter` and deleting its own copies. This changes Windows-only files and
   waits for a Windows build of the portable core.
+- The Qt6 application `rfhutil-qt` (`qt/`, Fedora 44, Qt 6.11): Main, Data and MQMD tabs with the Windows wording and flows; connect in
+  bindings or client mode (a Connection box, MQSERVER-style strings, TLS, security exit, local address), Read Q, Write Q, Browse
+  (start, next, previous, end), Close Q, Purge Q, Load Names, Open File, Save File, Clear Data and Clear All, the eight Data tab views with Find,
+  Find Hex and Go To, the MQMD tab with the Message Id, Correl Id and Group Id display modes, a Wait field with Cancel for a waiting Get, the
+  local queue manager list, a status box, a settings file and an optional trace file. One worker thread owns the queue manager session.
+- Core functions the application needed, each with its own tests: `statusText` (the Windows status line wording for a failed MQ call),
+  `rfh_current_user`, `mqmd_fields::toPutMqmd` / `applyAfterPut` / `fromGetMqmd` (the MQMD a put sends and the tab after a get),
+  `id_display` (Message Id, Correl Id and Group Id display and edit rules), `MqSession::queueInfo` (type, depth, maximum length, resolved name),
+  `MqSession::browsePosition`, `mq::listLocalQueueManagers` (reads `mqs.ini`), `MqSession::listQueues` (queue names over PCF),
+  `parseServerString`, the Get options (group id, logical order, complete message, all available, selector, input shared, alternate user, message
+  properties mode), the Put options (logical order, syncpoint, alternate user), `MqSession::commit` and `rollback`, the Connect options (TLS
+  cipher spec, peer name, key repository and certificate label, security exit, local address), purge options (selector, syncpoint, cancel),
+  and `format::locate` (the text position of a body byte).
+- Tests: Qt Test executables for each class (`ctest -L qt`, run offscreen), a test that fails the build if `core/` mentions a dialog, an exit call
+  or a UI toolkit, a shared fake MQ (`tests/core/fake_mq.h`), memcheck suites for the connect string, the connect security options and `locate`, and
+  a golden message file set (`tests/core/golden/`, `tools/golden/`) with its round-trip tests and a script that compares it with Windows output.
+- Pending, not in this release yet: `MQMDPAGE`'s put, get and ID display paths delegating to the core (Plan 3 Task 30), which changes Windows-only
+  files and waits for a Windows build.
+
+### Differences from the Windows program (the Qt application)
+Deliberate; the owner decided the first group on 2026-10-17. Listed with the other differences in spec section 9.
+- The Cluster Open `Group` radio works (Windows has no click handler for it).
+- The purge error text has the completion code and reason code in the right order (Windows swaps them).
+- Find also finds a match that ends exactly at the end of the data, and searching up starts at the last possible match.
+- Find Hex does not translate the hex input to EBCDIC.
+- `Ignore MQMD` is not offered (it does nothing on Windows).
+- The keys are the Windows accelerator table (Ctrl+letter, whose meaning depends on the tab), not the spec's earlier Alt+ list; the Alt
+  mnemonics of the controls are kept, except Browse Next, which lost its N because Alt+N and Alt+P step through the tabs.
+- A display code page setting (default 1252) decides how the Data tab decodes text; the CJK, Thai and Russian character set radios choose a code
+  page for the Data tab only.
+- A Wait field with a Cancel button for a Get that waits.
+- The local queue managers are listed from `mqs.ini` (Windows has no such list); Load Names reports a refused PCF request instead of dropping it.
+- Passwords are kept in memory only: no "Save password" box, nothing in the settings file, the trace or a CCDT URL that carries a credential.
+- A TLS cipher spec without a channel, or TLS ticked with no cipher spec and channel, is an error (Windows connects in clear text without saying so).
+- An open unit of work is backed out before the connection closes (a disconnect would commit it).
+- The settings file and the trace file are private to the user (mode 0600), and the trace file is rotated at 10 MiB (Windows never rotates it).
+  The trace is switched on with `RFHUTIL_TRACE_FILE` as on Windows; the value `stdout` is not supported.
+- Not ported in this release: Save Q, Load Q, Move Q, Display Q, Save Headers, audit records, the MQ menu's Open items, Ids, Cluster Queues,
+  Theme, Help, automatic reconnect and the header tabs.
 
 ### Changed
+- `MqSession`'s converted-too-big browse retry re-reads the message under the cursor (`MQGMO_BROWSE_MSG_UNDER_CURSOR`) instead of restarting with
+  `BROWSE_FIRST` matched on the MsgId; messages that share a MsgId are no longer confused, and a message that is not first in its group under
+  logical order is found. The session now backs a quiescing connection out before it disconnects, and a purge reports messages whose outcome is
+  unknown (a broken connection, a failed back-out) in a separate count instead of saying they remain on the queue.
 - comsubs, xmlsubs, JsonParse, XMLParse and Names use `core/platform` instead of
   direct Win32 calls; behaviour on Windows is unchanged.
 - `processBackspace` moved from comsubs.cpp to the MFC-only uisubs.cpp.

@@ -1,7 +1,7 @@
 # Code map
 
 For an agent that knows nothing about this repository. Facts were checked against the
-code at `f415713` (branch `features/linux-qt-port`); names of symbols are stable, line
+code at `5bf0871` (branch `features/linux-qt-port`); names of symbols are stable, line
 numbers are not, so use `tools/index/q sym NAME` or `q outline PATH` to get current ranges
 (`tools/index/README.md`). Plans and the spec are the authority for decisions; this file
 says where things are.
@@ -18,13 +18,16 @@ says where things are.
   sources. Phase 1 covers the Main, Data and MQMD tabs. Both connection modes (local bindings and
   client) are chosen at run time in one binary.
 - **What exists.** The core (platform layer, MQ loader and session, MQMD field conversion, header chain,
-  message files, the eight Data tab views) with 978 ctest tests. **There is no GUI yet**: the Qt
-  application (`qt/` in the spec) is Plan 3 and has not been started.
+  message files, the eight Data tab views, the Windows status texts, ID display rules, queue and queue manager
+  listing, connection strings, TLS and security options) and the Qt application `rfhutil-qt` (`qt/`: Main, Data and
+  MQMD tabs, menus, settings, trace) with 1172 ctest tests. Plan 3 is done except Task 28 (GUI smoke test against
+  a queue manager) and Task 30 (the gated MFC edit); see section 10.
 - **Branch.** `features/linux-qt-port` (the spec says `feat/...`; it was renamed so upstream CI,
   which runs on `master` and `features/**`, would run). Not pushed.
 - **Governing documents.** Spec: `docs/superpowers/specs/2026-10-15-linux-qt-port-design.md` (section 4 core
   API, section 9 risks and differences). Plans: `docs/superpowers/plans/` (1 portable core, 2A message
-  files, 2B Data views; each ends with Execution notes). Release notes: `CHANGELOG.md`, `[Unreleased]`.
+  files, 2B Data views, 3 the Qt application; each ends with Execution notes; `...-plan-3a-qt-app.md` is a superseded draft).
+  UI inventory (the Windows source for every fact the Qt layer ports): `docs/superpowers/specs/2026-10-17-qt-ui-inventory.md`. Release notes: `CHANGELOG.md`, `[Unreleased]`.
 
 ## 2. Layout
 
@@ -37,15 +40,17 @@ says where things are.
 | `core/fileio/` | ours | RFHUtil message file read and write |
 | `core/format/` | ours | `format::render` and `format::defaultsFor` |
 | `core/CMakeLists.txt` | ours | `rfhcore` static library; lists `RFHUTIL_SHARED_SOURCES` |
+| `qt/` | ours | The Qt6 application: static library `rfhqt` (`qt/src`, `qt/ui`), the `rfhutil-qt` executable, Qt Test executables (`qt/tests`); section 3 |
 | `RFHUtil/` | IBM's (about 86k lines of MFC C++, about 100 files) | The Windows application. Edited only where noted below. |
 | `RFHUtil/DataFormatter.{h,cpp}`, `uisubs.{h,cpp}`, `rfhconst.h` | ours, new | Shared formatters (generated from `DataArea.cpp` by a script), MFC-only `processBackspace`, constants moved out of `rfhutil.h` |
 | `Client/` | IBM's | `Client.vcxproj`: the client-only Windows build (`rfhutilc`); compiles the same `RFHUtil/` sources |
 | `tests/UnitTests/` | IBM's, adapted | GoogleTest suites compiled by both `UnitTests.vcxproj` (Windows) and CMake (Linux); `prelude.h`, `rfhutil.h`, `stdafx.h` are test stubs |
-| `tests/core/` | ours | Linux CMake tests (+ `PlatformTests.cpp`, `SharedSourcesTests.cpp`, which Windows also compiles) |
+| `tests/core/` | ours | Linux CMake tests (+ `PlatformTests.cpp`, `SharedSourcesTests.cpp`, which Windows also compiles); `tests/core/golden/` holds the golden message files |
 | `tests/tools/guardmalloc.cpp` | ours | Guard-page allocator (`LD_PRELOAD`) |
 | `tests/docker/` | IBM's | `compose.yaml` + `config/test-qm.mqsc`: a queue manager container for client-mode tests |
 | `tests/IntegrationTests/` | IBM's | Windows-only IDPWOS authentication tests |
 | `tools/port/` | ours | Perl edit scripts for IBM's files (section 4) |
+| `tools/golden/` | ours | `make_goldens.cpp` (writes the golden message files) and the Windows comparison scripts (`compare-windows-output.sh`, `.ps1`) |
 | `tools/index/` | ours | `q`, the code index (not part of any product build) |
 | `mqperf/` | IBM's | Command-line MQ performance tools; own `Makefile`, builds on Linux, unchanged |
 | `bin/`, `packages/`, `.readme/` | IBM's | Prebuilt Windows executables, vendored GoogleTest 1.8.1 NuGet package, README images. Binary or vendored: do not read. |
@@ -72,6 +77,7 @@ platform <- mq, message <- fileio <- format. The headers are authoritative; each
 listing its differences from Windows.
 
 **core/platform** (`rfh_platform.h`, `rfh_codepage.h`, `rfh_trace.h`). Depends on libc, iconv, pthread.
+- `rfh_current_user()`: the operating system user name (Windows branch `GetUserNameEx`, not compiled here).
 - `rfh_platform.h`: Win32 names on Linux (`BOOL`, `UINT`, `LPCTSTR`, `_snprintf_s`, `RFH_DIR_SEP`), `RFH_UCS2` (16-bit
   code unit: `char16_t` on Linux because `wchar_t` is 32-bit), `rfh_strupr`, `rfh_ucs2len`, `rfh_hrtime_now`,
   `rfh_utc_now`, `rfh_dump_path` (debug dump files go to `/tmp` on Linux).
@@ -96,8 +102,16 @@ listing its differences from Windows.
   from `DataArea::setErrorMsg`.
 - `rfh_queue_managers.{h,cpp}` (`mq::listLocalQueueManagers`, `mq::defaultMqDataPath`): queue managers defined on this machine, read from
   `mqs.ini`. Windows has no counterpart.
+- `rfh_connect_string.{h,cpp}` (`parseServerString`): an MQSERVER-style `CHANNEL/TCP/host(port)` string into `ConnectOptions`; refuses what
+  Windows silently cuts or blanks, and leaves the options unchanged on failure.
+- `MqSession` additions (Plan 3): `queueInfo` (type, depth, maximum length, resolved name), `browsePosition`, the Get options (group id,
+  logical order, complete message, all available, selector, input shared, alternate user, `PropertiesMode`), the Put options (logical order,
+  syncpoint, alternate user), `commit` / `rollback`, `PurgeOptions` (selector, syncpoint, cancel), and the queue manager platform and level
+  learned at connect. `ConnectOptions` gained TLS (cipher spec, peer name, key repository, certificate label), security exit and local address.
 
 **core/message** (`rfh_message.h`, `rfh_mqmd_fields.h`, `rfh_header_chain.h`). Depends on MQ headers and `rfhconst.h`.
+- `mqmd_fields::toPutMqmd` / `applyAfterPut` / `fromGetMqmd`: the MQMD a put sends, the tab update after a put, and the tab after a get, as the
+  Windows put and get paths do them (they differ from the file paths `toMqmd` / `fromMqmd` serve; both are kept).
 - `rfh_id_display.{h,cpp}` (`id_display::toText`, `applyEdit`, `maxLength`, `isHexDigit`, `reset`): the MQMD tab's Message Id, Correl Id and
   Group Id display and edit rules (hex, character, mixed), from `MQMDPAGE`.
 - `Message {MQMD2 mqmd; vector headers; vector body}`: owns the message bytes. Headers are raw bytes (header tabs are not ported).
@@ -117,6 +131,8 @@ listing its differences from Windows.
 - `DataFormats {ccsid, intFormat, charFormat, numericFormat, pdNumericFormat}` come from the message; `RenderOptions : DataFormats`
   adds the user's choices (`crlf, edi, bom, indent, checkData, display, conversionTableDir, copybookPath`) and `apply(DataFormats)`.
 - `defaultsFor(Message, warnings)` / `defaultsFor(ReadResult)`: the Data tab settings after a get / a file read.
+- `locate(View, RenderOptions, Message, offset, TextPos &)`: the text line and column of a body byte in the Character, Hex or Both view (the Data
+  tab's Find, Find Hex and Go To use it). For CR/LF and EDI it returns the byte's own column.
 - `render(Message, View, RenderOptions, out)`: shows `message.body` (never the headers) in the Windows ANSI code page
   (`options.display.ansi`), not UTF-8. Fails for a body over `kMaxRenderBody` (100 MB). Nothing is cached.
 
@@ -126,6 +142,49 @@ listing its differences from Windows.
 - *File read:* `fileio::read` -> `ReadResult` (+ fills `MqmdFields`) -> `defaultsFor(ReadResult)` -> `apply` -> `render`.
 - *Put:* `fileio::read` or typed data -> `Message`; MQMD tab fields -> `mqmd_fields::toMqmd` -> `message.mqmd` -> `MqSession::put`.
 - *Save:* `fileio::write(path, message, WriteOptions)`, byte layout equal to `DataArea::WriteFile`.
+- *In the Qt app* each of these is one `Operations` flow on the worker thread; a get fills the MQMD tab with `fromGetMqmd`, a put builds the MQMD with `toPutMqmd` (see the Qt layer below).
+
+### The Qt layer (`qt/`)
+
+Depends on `rfhcore` and Qt 6 Widgets. Built when Qt6 Widgets and Test are found (`-DRFHUTIL_BUILD_QT=OFF` skips it; the core still builds).
+Every header opens with a comment that cites the Windows source for what it ports and lists the differences; those comments are authoritative.
+The layers point inward: tabs -> `Operations` -> `AppDocument` + `SessionController` -> core.
+
+| Class (`qt/src`) | Owns |
+|---|---|
+| `MainWindow` | The shared objects (trace, settings, status log, document, controller, operations), the tab widget (only Main, Data and MQMD enabled), the menus, window-wide keys (Alt+N / Alt+P step tabs), geometry (saved in `closeEvent` only) |
+| `SessionController` | The one worker `QThread` and the only `MqSession`. `submit(job)` runs a function on the worker and returns the outcome as the `finished` signal on the GUI thread; refuses a job while `busy()`; `cancel()` sets the flag that `GetOptions::cancel` and `PurgeOptions::cancel` point at |
+| `AppDocument` | The state the tabs share: the message bytes (one copy), the MQMD tab's `MqmdFields`, view and render options, connection and queue state, and the enable rules as one pure function (`enablesFor`) |
+| `Operations` | The button flows of `General.cpp` / `DataArea` (connect, Read Q, Write Q, browse, Close Q, Purge, Open File, Save File, Clear, Load Names). One flow = one worker job = one status entry = one `flowFinished()`. Confirmations go through a `Prompter`, file names through a `FileChooser`, so tests answer them |
+| `MainTab`, `MqmdTab`, `DataTab` (+ `qt/ui/*.ui`) | Widgets only: translate between widgets and `MainOptions` / `MqmdFields` / the document; enable states come from the document |
+| `FindDialogs` | Find, Find Hex and Go To dialogs and `searchBytes` (the byte search, without state; `DataTab` keeps the search position) |
+| `ConnUserDialog`, `IdEdit`, `PopupComboBox` | Set Conn Id dialog (passwords in memory only), the Message/Correl/Group Id edit box (overtype, hex filter), a combo that refills its list before opening |
+| `AppSettings`, `StatusLog`, `FileTrace` | INI settings (`$XDG_CONFIG_HOME/rfhutil/rfhutil.conf`; never a password), the Main tab status box (newest first, cut at 8191), the trace file (`$XDG_STATE_HOME/rfhutil/trace.log`, 0600, 10 MiB rotation; `RFHUTIL_TRACE_FILE` and `RFHUTIL_VERBOSE_TRACE` as on Windows) |
+| `ProcessSetup` | `useCLocaleForNumbersAndCharacters()`: the C library locale must be "C" after `QApplication` exists |
+
+**Threading rule.** `MqSession` is not thread-safe: only the worker touches it, and only the GUI thread touches widgets, the document, the log and
+settings. A job captures its inputs when the flow starts; its result comes back by value. A job that does not poll the cancel flag (MQCONN,
+MQPUT, an unanswered PCF request) cannot be interrupted, and closing the window waits for it.
+
+**Flow of a button press** (for example Read Q): `MainTab` copies its widgets into the document (`syncDocument`, at click time) and calls
+`Operations::readQ()` -> `Operations` checks `AppDocument::enables()` (a disabled flow does nothing, silently) and `busy()` ("Another operation is
+still running"), captures options, and submits a job -> the worker connects if needed and calls `MqSession::get` -> `finished` on the GUI thread ->
+`Operations::acceptMessage` runs `fromGetMqmd` and `AppDocument::acceptMessage` (message, MQMD tab state and formats as one change), `statusText(...)` goes to the `StatusLog`, and `Operations` emits
+`flowFinished()` -> `DataTab` and `MqmdTab` show what the document changed (the Data tab renders once, and lazily while it is hidden).
+
+**Shortcuts.** The Windows accelerator table is Ctrl+letters whose meaning depends on the tab (inventory section 7.1); the spec's Alt+Q-style list
+is not used. Main tab: `MainTab::addShortcuts`; Data tab: `DataTab::addShortcuts`; MQMD tab: Alt+J (reset ids), Alt+C (copy Msg Id) in `MqmdTab`;
+window: Ctrl+O and Ctrl+S on every page, Alt+N / Alt+P in `MainWindow`. Menu bar names carry only the `&MQ` mnemonic (other letters belong to
+controls on the tabs, and two widgets with one letter make the key do nothing).
+
+**Run it.** `build/linux-debug/qt/rfhutil-qt` after the build of section 5. Headless: `QT_QPA_PLATFORM=offscreen build/linux-debug/qt/rfhutil-qt`.
+Needs the MQ client or server library at run time (the window shows the loader's reason when it is missing).
+
+**Qt tests** (`qt/tests`, label `qt`, 11 ctest entries, one Qt Test executable each, run with `QT_QPA_PLATFORM=offscreen`; `qDebug()` prints
+nothing on this machine, use `printf`): `rfhqt_mainwindow_tests`, `_sessioncontroller_`, `_appsettings_`, `_statuslog_`, `_filetrace_`, `_appdocument_`,
+`_operations_` (the largest; drives the flows against the fake MQ and the golden files), `_maintab_`, `_mqmdtab_`, `_datatab_`, `_finddialogs_`.
+The fake MQ is `tests/core/fake_mq.h`, shared with the core tests. `tests/core/CoreHasNoUiTests.cmake` fails the build if `core/` mentions a dialog,
+an exit call or a UI toolkit.
 
 ## 4. IBM's shared sources and the edit scripts
 
@@ -164,12 +223,16 @@ edited by hand, and this was not reproduced. If a script drifts from `HEAD`, the
   Requires CMake 3.21+, GCC with C++17, GoogleTest (`-DRFHUTIL_FETCH_GTEST=ON` downloads 1.17.0), IBM MQ SDK headers (`MQ_HOME`,
   default `/opt/mqm`; headers only, the library is loaded at run time).
 - **Executables** (`tests/CMakeLists.txt`): `rfhutil_unit_tests` (IBM's suites + platform + shared-source tests), `rfhutil_core_tests`
-  (everything else, no queue manager), `rfhutil_loader_tests` and `rfhutil_mq_tests` (label `mq`), `rfhutil_mq_fake_tests` (fake MQI).
-- **Expected result:** 978 tests, 100% pass, 8 skipped (6 `GuardMalloc` tests and
-  `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad`, which need the allocator preloaded and run under memcheck;
-  `MqClient.PutThenGetOverClientChannel`).
-- **Labels.** `ctest -L mq` (60 tests: loader and session tests against a real queue manager, plus the client test).
-  `ctest -L memcheck` (6 tests: `memcheck.GuardMalloc`, `.DataFormatter`, `.ListQueues`, `.Parsers`, `.Format`, `.FormatFuzz`).
+  (everything else, no queue manager), `rfhutil_golden_tests` (with `rfh_make_goldens`), `rfhutil_loader_tests` and `rfhutil_mq_tests`
+  (label `mq`), `rfhutil_mq_fake_tests` (fake MQI; also the connect string, connect security, get options and queue listing tests); the Qt
+  Test executables are in `qt/tests` (section 3).
+- **Expected result:** 1172 tests, 100% pass. Skips count as passed. With no queue manager `TEST_QM` running, 71 are skipped: 63
+  `MqBindingsTest.*`, `MqClient.PutThenGetOverClientChannel`, 6 `GuardMalloc` tests and
+  `DataFormatter.SetDataAllocatesExactlyTheDataAndItsPad` (the last seven need the allocator preloaded and run under memcheck). With the
+  queue manager up, only 8 are skipped (the same seven, and the client test unless `MQ_CHANNEL` is set). The Qt tests do not need a queue manager.
+- **Labels.** `ctest -L mq` (73 tests: 7 loader and 2 session tests, which run without a queue manager, 63 `MqBindingsTest.*` and the client test,
+  which skip without one). `ctest -L qt` (11 tests, one per Qt Test executable). `ctest -L memcheck` (9 tests: `memcheck.GuardMalloc`,
+  `.DataFormatter`, `.ListQueues`, `.ConnectString`, `.ConnectSecurity`, `.Parsers`, `.Format`, `.Locate`, `.FormatFuzz`).
 - **Queue manager.** `MqSessionTests.cpp` uses `MQ_BINDINGS_QMGR` (default `TEST_QM`; the spec's `RFHUTIL_TEST_QM` is not what
   the code reads). Its fixture creates `RFHUTIL.TEST.Q`, `.EMPTY`, `.EXCL` with `runmqsc` and deletes them; the user must be in the
   `mqm` group. **Rule:** tests may create and delete only `RFHUTIL.TEST.*` queues, and must leave none behind
@@ -184,6 +247,8 @@ edited by hand, and this was not reproduced. If a script drifts from `HEAD`, the
   tree) uses Homebrew's compiler:
   `g++-15 -B/usr/lib64 -fsanitize=address,undefined ...`, for example
   `cmake -S . -B build/asan -DCMAKE_CXX_COMPILER=g++-15 -DCMAKE_CXX_FLAGS="-B/usr/lib64 -fsanitize=address,undefined"` (that cmake line is untested).
+- **Qt.** Qt 6.11 with Widgets and Test (`qtbase-devel`) is found by the same configure; without it the Qt application is skipped with a message. The
+  application is `build/linux-debug/qt/rfhutil-qt`.
 - **Code index.** `tools/index/q` (see its README); tests `python3 -m unittest discover tools/index/tests`, smoke test `tools/index/smoke.sh`.
 - **Windows.** `RFHUtil.sln` (Release|x64 and others) is the owner's build; CI is `.github/workflows/build-and-test.yml`
   (windows-2022, `UnitTests` for Win32 and x64, on `master` and `features/**`). It cannot run here.
@@ -257,6 +322,11 @@ IBM bugs a test records and the port keeps (`tests/core/MqmdFieldsTests.cpp`, `t
 - `editIDField` truncates `m_mqmd_group_id` instead of `m_mqmd_correl_id` (`:3767`, `:3799`).
 - `setErrorMsg` text for 6104 is spelled "Resouce" (`DataArea.cpp`, `rfh_status_text.cpp`).
 
+Deliberate differences from Windows in the Qt application (owner decisions of 2026-10-17 and later; the full list is in `CHANGELOG.md` and
+spec section 9): the Cluster Open `Group` radio works, the purge error text has `cc` and `rc` in the right order, Find also finds a match at the
+very end of the data, Find Hex does not translate to EBCDIC, passwords are never stored, the local queue managers are listed from `mqs.ini`,
+`Ignore MQMD` is dropped.
+
 ## 9. Where do I look for...
 
 Use `tools/index/q sym NAME` for the current range.
@@ -305,22 +375,44 @@ Use `tools/index/q sym NAME` for the current range.
 | Test helpers for MQ structures | `tests/core/mq_layout.h` (builds MQ structures byte by byte at IBM's offsets); `tests/core/gtest_compat.h` (`GTEST_SKIP` for googletest 1.8.1) |
 | Windows test stubs | `tests/UnitTests/prelude.h`, `rfhutil.h`, `stdafx.h` |
 | Client-mode test queue manager | `tests/docker/compose.yaml`, `tests/docker/config/test-qm.mqsc`; `MqClient.*` in `MqSessionTests.cpp` |
-| What the Qt app must offer | spec section 5; Plan 3 does not exist yet |
+| What the Qt app must offer | spec section 5 (as built); Plan 3 (`docs/superpowers/plans/2026-10-17-linux-port-plan-3-qt-application.md`); the Windows source for every UI fact: the UI inventory (`docs/superpowers/specs/2026-10-17-qt-ui-inventory.md`) |
+| Where do I start in the Qt layer? | section 3 "The Qt layer"; each `qt/src/*.h` opens with a comment that cites the Windows lines it ports |
+| Which Windows flow rule does a button follow (Read Q, Write Q, Browse, Purge, Open File, Save File, Clear)? | `Operations` (`qt/src/Operations.cpp`); tests `qt/tests/OperationsTests.cpp`; Windows `General.cpp` and `DataArea` (`getMessage`, `putMessage`, `purgeQ`) |
+| Which control is enabled when? | `AppDocument::enablesFor` (`qt/src/AppDocument.cpp`), one pure function; the test table cites the Windows line for every row (`qt/tests/AppDocumentTests.cpp`) |
+| Keyboard shortcuts | `MainTab::addShortcuts`, `DataTab::addShortcuts`, `MqmdTab` (Alt+J, Alt+C), `MainWindow` (Ctrl+O, Ctrl+S, Alt+N, Alt+P); inventory section 7.1 |
+| Find, Find Hex, Go To | `DataTab` (search position, highlight) and `searchBytes` in `qt/src/FindDialogs.cpp`; position in the text: `format::locate`; tests `FindDialogsTests.cpp`, `DataTabTests.cpp`, `Locate.*` |
+| The worker thread, busy and cancel | `SessionController` (`qt/src/SessionController.cpp`); tests `qt/tests/SessionControllerTests.cpp` |
+| Settings, status box, trace file | `AppSettings`, `StatusLog`, `FileTrace` in `qt/src`; tests in `qt/tests` |
+| The put and get MQMD rules | `mqmd_fields::toPutMqmd`, `applyAfterPut`, `fromGetMqmd` (`core/message/rfh_mqmd_fields.cpp`); tests `MqmdFields.*` |
+| Parsing `CHANNEL/TCP/host(port)` | `parseServerString` (`core/mq/rfh_connect_string.cpp`); tests `tests/core/ConnectStringTests.cpp` (also `memcheck.ConnectString`) |
+| TLS, security exit, local address, credentials | `MqSession::connect` and `ConnectOptions` (`core/mq/rfh_mq_session.{h,cpp}`); tests `tests/core/ConnectSecurityTests.cpp` (also `memcheck.ConnectSecurity`) |
+| Queue type, depth, browse position | `MqSession::queueInfo`, `browsePosition`; tests in `MqSessionFakeTests.cpp` and `MqBindingsTest.*` |
+| Offset to text position | `format::locate` (`core/format/rfh_format.cpp`); tests `Locate.*` (also `memcheck.Locate`) |
+| The operating system user name | `rfh_current_user` (`core/platform/rfh_platform.cpp`); `PlatformTests.cpp` |
 | Release notes and what is unreleased | `CHANGELOG.md` `[Unreleased]` |
 | Upstream bugs found by the port | spec sections 9 and Plan 1/2A/2B "Background"; the draft issue is outside the repository |
 | What warns when put's headers and the MQMD format disagree? | `MqSession::put`, `core/mq/rfh_mq_session.cpp` (it walks the joined payload exactly as a get will; warning text `headers do not match the MQMD format chain; a get splits them differently`) |
 
 ## 10. Current status and what is next
 
-- **Done.** Plan 1 (portable core, complete at `7febad7`; client mode verified 2026-10-16 against an MQ 10.0.1.0 container), Plan 2A (message files,
-  MQMD fields, headers; `0e065a2`), Plan 2B (Data tab views, guard allocator, memory-safety fixes; Tasks 1-8 and 10, HEAD `f415713`).
-  978 tests pass, 8 skipped; `ctest -L memcheck` passes 6 of 6.
-- **Gated on the owner's Windows build of Plan 1** (RFHUtil, rfhutilc, UnitTests): Plan 2A Task 6 and Plan 2B Task 9 (section 7.5). Windows
-  CI (Plan 1 Task 6) is also the owner's. Unverified on Windows: everything under `core/` and all edited shared sources;
-  behaviours still assumed: unmappable surrogate pair gives two default characters, code page 1258 flush, the used-default flag, `mbclen`.
-- **Next.** Plan 3: the Qt6 application (Main, Data, MQMD tabs; `qt/`); it also moves the put/get MQMD paths (`setMessageMQMD`,
-  `processMessageMQMD`) and ID display into the core. Plan 4: RPM packaging, `.desktop` file, Linux CI. Plan 3 is not written.
-- **Open owner decisions** (facts only, from the 2B "Open points"): when to run Task 6 and Task 9; whether `CopybookTests` joins `UnitTests.vcxproj`;
-  licence headers on new files; the `Co-Authored-By` / DCO name; `PubSub.cpp:2007` passes `sizeof(tempCommand)` (32) for a 64-byte buffer, so queue
-  manager names of 32 or more characters are now cut to 31; remaining UBSan findings in IBM's code (`Names.cpp`, `Copybook.cpp`, `findDelim`,
-  `removeVarName`); filing the upstream issue draft (moot while this is a fork).
+- **Done.** Plan 1 (portable core, complete at `7febad7`; client mode verified 2026-10-16 against an MQ 10.0.1.0 container), Plan 2A (message
+  files, MQMD fields, headers; `0e065a2`), Plan 2B (Data tab views, guard allocator, memory-safety fixes; Tasks 1-8 and 10, `f415713`), and Plan 3
+  (the Qt application and the core gaps it needed) apart from Tasks 28 and 30: Tasks 1-27, 29 and 31, HEAD `5bf0871` before this documentation
+  commit. `ctest --preset linux-debug`: 1172 tests pass, 71 skipped when `TEST_QM` is down (section 5); `-L qt` 11 of 11, `-L mq` 73 of 73
+  (64 skipped), `-L memcheck` 9 of 9.
+- **Not done in Plan 3.** Task 28 (GUI smoke tests against `TEST_QM`; not run, the queue manager was down) and Task 30 (the MFC MQMD tab
+  delegates its put, get and ID paths to the core; gated on the owner's Windows build, so criterion 5 is open).
+- **Gated on the owner's Windows build of Plan 1** (RFHUtil, rfhutilc, UnitTests): Plan 2A Task 6, Plan 2B Task 9 and Plan 3 Task 30 (section
+  7.5). Windows CI (Plan 1 Task 6) is also the owner's. **No Windows build is recorded as passing**: unverified on Windows is everything
+  under `core/`, every edited shared source and `rfh_current_user`'s Windows branch. A Windows report (`windows-report/` on the
+  Windows disk) found an include order (`secext.h`) and the `small` macro, fixed in `d1cedef`; the unit tests and the assumption probes there are still
+  to be rerun, and one probe (`WC_NO_BEST_FIT_CHARS`, flag 64, returned n=0 on code page 1252) needs checking. The PowerShell golden comparison script was
+  verified on Windows (self-check, tampered file, missing file); the golden files themselves are confirmed against Windows output only when the owner runs
+  the procedure in `tests/core/golden/MANIFEST.md`.
+- **Not verified at all.** Real TLS (no TLS channel to test with), client mode in the Qt application, a thread sanitizer run on `SessionController`
+  (TSan was inconclusive: it reports only at Qt's uninstrumented queued-event hand-off), the application on Wayland or a HiDPI screen (only offscreen
+  grabs), and the GUI against a live queue manager (Task 28).
+- **Next.** Task 28 when `TEST_QM` is up; Task 30 after the Windows build; Plan 4 (RPM packaging, `.desktop` file, Linux CI).
+- **Open owner decisions** are collected in the "Open points for the owner" of each plan (Plan 3's is the longest: 40 bullets) and in the Plan 2B
+  list: when to run Task 6, Task 9 and Task 30; whether `CopybookTests` joins `UnitTests.vcxproj`; licence headers on new files; the
+  `Co-Authored-By` / DCO name; `PubSub.cpp:2007`; remaining UBSan findings in IBM's code; filing the upstream issue draft (moot while this is a fork).
