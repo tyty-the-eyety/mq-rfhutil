@@ -1327,6 +1327,7 @@ TEST_F(MqBindingsTest, InputSharedLetsASecondSessionOpenAQueueWhoseDefaultIsExcl
 
     Message in;
     GetOptions asDefined;
+    asDefined.inputShared = false;		// MQOO_INPUT_AS_Q_DEF: takes the queue's exclusive default
     ASSERT_EQ(MQRC_NO_MSG_AVAILABLE, session.get(shared.name, in, asDefined).rc);
     Result blocked = other.get(shared.name, in, asDefined);
     EXPECT_EQ(MQRC_OBJECT_IN_USE, blocked.rc) << "MQOO_INPUT_AS_Q_DEF takes the queue's exclusive default: " << blocked.text;
