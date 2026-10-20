@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>PsTab</class>
+  <widget class="QWidget" name="PsTab">
+    <property name="windowTitle"><string>PS</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <layout class="QFormLayout" name="mainForm">
+          <item row="0" column="0">
+            <widget class="QLabel" name="topicLabel">
+              <property name="text"><string>Topic</string></property>
+              <property name="buddy"><cstring>topicEdit</cstring></property>
+            </widget>
+          </item>
+          <item row="0" column="1">
+            <widget class="QLineEdit" name="topicEdit">
+              <property name="toolTip"><string>Pub/sub topic string</string></property>
+            </widget>
+          </item>
+          <item row="1" column="0">
+            <widget class="QLabel" name="subNameLabel">
+              <property name="text"><string>Sub Name</string></property>
+              <property name="buddy"><cstring>subNameEdit</cstring></property>
+            </widget>
+          </item>
+          <item row="1" column="1">
+            <widget class="QLineEdit" name="subNameEdit">
+              <property name="toolTip"><string>Durable subscription name</string></property>
+            </widget>
+          </item>
+          <item row="2" column="0">
+            <widget class="QLabel" name="subQmLabel">
+              <property name="text"><string>Sub QM</string></property>
+              <property name="buddy"><cstring>subQmEdit</cstring></property>
+            </widget>
+          </item>
+          <item row="2" column="1">
+            <widget class="QLineEdit" name="subQmEdit">
+              <property name="toolTip"><string>Queue manager for the subscription destination queue</string></property>
+              <property name="maxLength"><number>48</number></property>
+            </widget>
+          </item>
+          <item row="3" column="0">
+            <widget class="QLabel" name="pubQueueLabel">
+              <property name="text"><string>Pub Queue</string></property>
+              <property name="buddy"><cstring>pubQueueEdit</cstring></property>
+            </widget>
+          </item>
+          <item row="3" column="1">
+            <widget class="QLineEdit" name="pubQueueEdit">
+              <property name="toolTip"><string>Queue for publication responses</string></property>
+              <property name="maxLength"><number>48</number></property>
+            </widget>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <spacer name="bottomVSpacer">
+          <property name="orientation"><enum>Qt::Vertical</enum></property>
+          <property name="sizeHint" stdset="0">
+            <size><width>20</width><height>40</height></size>
+          </property>
+        </spacer>
+      </item>
+    </layout>
+  </widget>
+</ui>

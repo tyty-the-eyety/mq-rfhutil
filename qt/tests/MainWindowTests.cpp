@@ -209,19 +209,23 @@ private slots:
 
 	void onlyMainDataAndMqmdAreEnabled()
 	{
+		// Main, Data, Mqmd and Conn are always enabled; header tabs enable when data is present.
 		Harness h;
 		for (int i = 0; i < h.window->tabs()->count(); i++)
 		{
-			const bool phase1 = (i == MainWindow::TabMain) || (i == MainWindow::TabData) || (i == MainWindow::TabMqmd);
-			QCOMPARE(h.window->tabs()->isTabEnabled(i), phase1);
+			const bool alwaysOn = (i == MainWindow::TabMain) || (i == MainWindow::TabData)
+			                   || (i == MainWindow::TabMqmd) || (i == MainWindow::TabConn);
+			QCOMPARE(h.window->tabs()->isTabEnabled(i), alwaysOn);
 		}
 	}
 
 	void disabledTabsSayTheyAreNotPortedYet()
 	{
+		// Header tabs are disabled without data; Conn is enabled and has no tooltip.
 		Harness h;
-		QCOMPARE(h.window->tabs()->tabToolTip(MainWindow::TabRfh), QString("Not yet ported"));
-		QCOMPARE(h.window->tabs()->tabToolTip(MainWindow::TabConn), QString("Not yet ported"));
+		QCOMPARE(h.window->tabs()->tabToolTip(MainWindow::TabRfh),
+		         QString("Enabled when data is present"));
+		QVERIFY(h.window->tabs()->tabToolTip(MainWindow::TabConn).isEmpty());
 		QVERIFY(h.window->tabs()->tabToolTip(MainWindow::TabMain).isEmpty());
 	}
 

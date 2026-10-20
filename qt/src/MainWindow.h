@@ -47,12 +47,24 @@ namespace rfhqt
 {
 	class AppDocument;
 	class AppSettings;
+	class CicsTab;
+	class ConnTab;
 	class DataTab;
+	class DlqTab;
+	class ImsTab;
+	class JmsTab;
 	class MainTab;
 	class MqmdTab;
+	class OtherTab;
 	class Operations;
+	class PscrTab;
+	class PsTab;
+	class PubSubTab;
+	class RfhTab;
 	class SessionController;
 	class StatusLog;
+	class UsrPropTab;
+	class UsrTab;
 
 	class MainWindow : public QMainWindow
 	{
@@ -126,6 +138,18 @@ namespace rfhqt
 		MainTab * mainPage = nullptr;
 		DataTab * dataPage = nullptr;
 		MqmdTab * mqmdPage = nullptr;
+		PsTab * psPage = nullptr;
+		UsrPropTab * usrPropPage = nullptr;
+		RfhTab * rfhPage = nullptr;
+		PubSubTab * pubSubPage = nullptr;
+		PscrTab * pscrPage = nullptr;
+		JmsTab * jmsPage = nullptr;
+		UsrTab * usrPage = nullptr;
+		OtherTab * otherPage = nullptr;
+		CicsTab * cicsPage = nullptr;
+		ImsTab * imsPage = nullptr;
+		DlqTab * dlqPage = nullptr;
+		ConnTab * connPage = nullptr;
 		int shownTab = 0;
 		QAction * readRemoveCrLf = nullptr;
 		QAction * readUnixText = nullptr;

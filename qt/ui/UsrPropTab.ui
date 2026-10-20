@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>UsrPropTab</class>
+  <widget class="QWidget" name="UsrPropTab">
+    <property name="windowTitle"><string>Usr Prop</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <widget class="QLabel" name="noteLabel">
+          <property name="text"><string>User-defined message properties (MQPROPVALUE)</string></property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QTableWidget" name="propTable">
+          <property name="toolTip"><string>User message properties: name, type and value</string></property>
+          <property name="selectionBehavior">
+            <enum>QAbstractItemView::SelectRows</enum>
+          </property>
+          <property name="columnCount"><number>3</number></property>
+          <attribute name="horizontalHeaderStretch"><bool>false</bool></attribute>
+          <column>
+            <property name="text"><string>Name</string></property>
+          </column>
+          <column>
+            <property name="text"><string>Type</string></property>
+          </column>
+          <column>
+            <property name="text"><string>Value</string></property>
+          </column>
+        </widget>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="buttonRow">
+          <item>
+            <widget class="QPushButton" name="addButton">
+              <property name="text"><string>Add</string></property>
+              <property name="toolTip"><string>Add a new user property</string></property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPushButton" name="removeButton">
+              <property name="text"><string>Remove</string></property>
+              <property name="toolTip"><string>Remove the selected property</string></property>
+            </widget>
+          </item>
+          <item>
+            <spacer name="buttonHSpacer">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>40</width><height>20</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+    </layout>
+  </widget>
+</ui>

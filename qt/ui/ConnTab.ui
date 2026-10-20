@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>ConnTab</class>
+  <widget class="QWidget" name="ConnTab">
+    <property name="windowTitle"><string>Conn</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <layout class="QHBoxLayout" name="columnsLayout" stretch="1,1">
+          <item>
+            <layout class="QFormLayout" name="leftForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="heartbeatLabel">
+                  <property name="text"><string>Heartbeat (s)</string></property>
+                  <property name="buddy"><cstring>heartbeatSpin</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QSpinBox" name="heartbeatSpin">
+                  <property name="toolTip"><string>Client channel heartbeat interval in seconds (0 = disabled)</string></property>
+                  <property name="minimum"><number>0</number></property>
+                  <property name="maximum"><number>999999</number></property>
+                  <property name="value"><number>60</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="sslEnabledLabel">
+                  <property name="text"><string>Use SSL/TLS</string></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QCheckBox" name="sslEnabledCheck">
+                  <property name="toolTip"><string>Enable SSL/TLS for the MQ client channel</string></property>
+                  <property name="text"><string></string></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="cipherSpecLabel">
+                  <property name="text"><string>Cipher Spec</string></property>
+                  <property name="buddy"><cstring>cipherSpecEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QLineEdit" name="cipherSpecEdit">
+                  <property name="toolTip"><string>SSL/TLS cipher specification (MQCD.SSLCipherSpec, 32 chars max)</string></property>
+                  <property name="maxLength"><number>32</number></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <layout class="QFormLayout" name="rightForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="keyRepositoryLabel">
+                  <property name="text"><string>Key Repository</string></property>
+                  <property name="buddy"><cstring>keyRepositoryEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="keyRepositoryEdit">
+                  <property name="toolTip"><string>Path to the SSL key repository (MQSCO.KeyRepository)</string></property>
+                  <property name="maxLength"><number>256</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="sslPeerNameLabel">
+                  <property name="text"><string>SSL Peer Name</string></property>
+                  <property name="buddy"><cstring>sslPeerNameEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QLineEdit" name="sslPeerNameEdit">
+                  <property name="toolTip"><string>SSL peer name pattern for certificate verification (MQCD.SSLPeerNamePtr)</string></property>
+                  <property name="maxLength"><number>1024</number></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="sslResetCountLabel">
+                  <property name="text"><string>SSL Reset Count</string></property>
+                  <property name="buddy"><cstring>sslResetCountSpin</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QSpinBox" name="sslResetCountSpin">
+                  <property name="toolTip"><string>Number of bytes to send before resetting the SSL secret key (0 = no reset)</string></property>
+                  <property name="minimum"><number>0</number></property>
+                  <property name="maximum"><number>999999999</number></property>
+                  <property name="value"><number>0</number></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <widget class="QDialogButtonBox" name="buttonBox">
+          <property name="orientation"><enum>Qt::Horizontal</enum></property>
+          <property name="standardButtons">
+            <set>QDialogButtonBox::Apply|QDialogButtonBox::Reset</set>
+          </property>
+        </widget>
+      </item>
+      <item>
+        <spacer name="bottomVSpacer">
+          <property name="orientation"><enum>Qt::Vertical</enum></property>
+          <property name="sizeHint" stdset="0">
+            <size><width>20</width><height>40</height></size>
+          </property>
+        </spacer>
+      </item>
+    </layout>
+  </widget>
+</ui>

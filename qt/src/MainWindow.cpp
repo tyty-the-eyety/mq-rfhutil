@@ -2,13 +2,25 @@
 
 #include "AppDocument.h"
 #include "AppSettings.h"
+#include "CicsTab.h"
+#include "ConnTab.h"
 #include "DataTab.h"
+#include "DlqTab.h"
 #include "FileTrace.h"
+#include "ImsTab.h"
+#include "JmsTab.h"
 #include "MainTab.h"
 #include "MqmdTab.h"
+#include "OtherTab.h"
 #include "Operations.h"
+#include "PscrTab.h"
+#include "PsTab.h"
+#include "PubSubTab.h"
+#include "RfhTab.h"
 #include "SessionController.h"
 #include "StatusLog.h"
+#include "UsrPropTab.h"
+#include "UsrTab.h"
 #include "rfh_trace.h"
 
 #include <QCoreApplication>
@@ -109,22 +121,46 @@ namespace rfhqt
 		                             : QStringLiteral("RfhUtil ") + ver + QStringLiteral(" (Linux)"));
 		setCentralWidget(tabWidget);
 
-		mainPage = new MainTab(*doc, *ops, *log, appSettings.get());
-		dataPage = new DataTab(*doc, *ops, appSettings.get());
-		mqmdPage = new MqmdTab(*doc);
+		mainPage    = new MainTab(*doc, *ops, *log, appSettings.get());
+		dataPage    = new DataTab(*doc, *ops, appSettings.get());
+		mqmdPage    = new MqmdTab(*doc);
+		psPage      = new PsTab(*doc);
+		usrPropPage = new UsrPropTab(*doc);
+		rfhPage     = new RfhTab(*doc);
+		pubSubPage  = new PubSubTab(*doc);
+		pscrPage    = new PscrTab(*doc);
+		jmsPage     = new JmsTab(*doc);
+		usrPage     = new UsrTab(*doc);
+		otherPage   = new OtherTab(*doc);
+		cicsPage    = new CicsTab(*doc);
+		imsPage     = new ImsTab(*doc);
+		dlqPage     = new DlqTab(*doc);
+		connPage    = new ConnTab(*appSettings);
 
 		const QStringList & captions = tabCaptions();
 		for (int i = 0; i < TabCount; i++)
 		{
-			QWidget * page = (i == TabMain) ? static_cast<QWidget *>(mainPage)
-				: (i == TabData) ? static_cast<QWidget *>(dataPage)
-				: (i == TabMqmd) ? static_cast<QWidget *>(mqmdPage)
-				: new QLabel(captions[i], tabWidget);	// the later phases replace these placeholders
+			QWidget * page = (i == TabMain)    ? static_cast<QWidget *>(mainPage)
+				: (i == TabData)    ? static_cast<QWidget *>(dataPage)
+				: (i == TabMqmd)    ? static_cast<QWidget *>(mqmdPage)
+				: (i == TabPs)      ? static_cast<QWidget *>(psPage)
+				: (i == TabUsrProp) ? static_cast<QWidget *>(usrPropPage)
+				: (i == TabRfh)     ? static_cast<QWidget *>(rfhPage)
+				: (i == TabPubSub)  ? static_cast<QWidget *>(pubSubPage)
+				: (i == TabPscr)    ? static_cast<QWidget *>(pscrPage)
+				: (i == TabJms)     ? static_cast<QWidget *>(jmsPage)
+				: (i == TabUsr)     ? static_cast<QWidget *>(usrPage)
+				: (i == TabOther)   ? static_cast<QWidget *>(otherPage)
+				: (i == TabCics)    ? static_cast<QWidget *>(cicsPage)
+				: (i == TabIms)     ? static_cast<QWidget *>(imsPage)
+				: (i == TabDlq)     ? static_cast<QWidget *>(dlqPage)
+				: (i == TabConn)    ? static_cast<QWidget *>(connPage)
+				: nullptr;
 			tabWidget->addTab(page, captions[i]);
 			if (!isPhase1Tab(i))
 			{
 				tabWidget->setTabEnabled(i, false);
-				tabWidget->setTabToolTip(i, "Not yet ported");
+				tabWidget->setTabToolTip(i, "Enabled when data is present");
 			}
 		}
 

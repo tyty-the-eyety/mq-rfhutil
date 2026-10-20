@@ -129,11 +129,23 @@ namespace rfhqt
 		e.mqmdUserIdEditable = in.setIdentity || in.setAll || in.alternateUser;
 		e.mqmdPutApplEditable = in.setAll;
 
-		// Tabs: Main, Data and MQMD work in Phase 1 (NEW). Windows ignores a tab change while a Find dialog is open
-		// (rfhutilView.cpp:788).
-		e.tabs[(size_t)Tab::Main] = true;
-		e.tabs[(size_t)Tab::Data] = true;
-		e.tabs[(size_t)Tab::Mqmd] = true;
+		// Tabs: Main, Data and MQMD always; header tabs when data is present; Conn always. Windows ignores a tab
+		// change while a Find dialog is open (rfhutilView.cpp:788).
+		e.tabs[(size_t)Tab::Main]    = true;
+		e.tabs[(size_t)Tab::Data]    = true;
+		e.tabs[(size_t)Tab::Mqmd]    = true;
+		e.tabs[(size_t)Tab::Ps]      = in.dataPresent;
+		e.tabs[(size_t)Tab::UsrProp] = in.dataPresent;
+		e.tabs[(size_t)Tab::Rfh]     = in.dataPresent;
+		e.tabs[(size_t)Tab::PubSub]  = in.dataPresent;
+		e.tabs[(size_t)Tab::Pscr]    = in.dataPresent;
+		e.tabs[(size_t)Tab::Jms]     = in.dataPresent;
+		e.tabs[(size_t)Tab::Usr]     = in.dataPresent;
+		e.tabs[(size_t)Tab::Other]   = in.dataPresent;
+		e.tabs[(size_t)Tab::Cics]    = in.dataPresent;
+		e.tabs[(size_t)Tab::Ims]     = in.dataPresent;
+		e.tabs[(size_t)Tab::Dlq]     = in.dataPresent;
+		e.tabs[(size_t)Tab::Conn]    = true;
 		e.tabChangeBlocked = in.findDialogOpen;
 		return e;
 	}

@@ -39,15 +39,20 @@ namespace
         return all;
     }
 
-    // Enabled in every state of the Main, Data and MQMD tabs (Phase 1) unless a row says otherwise.
+    // Enabled in every state of the Main, Data and MQMD tabs unless a row says otherwise.
     //   saveFile, setConnId, exit: never changed (GEN)    menuSave: always, except with a Find dialog (MENU 1634)
     //   menuCopy, menuSelectAll: Enable(TRUE) (MENU 1144, 1151)
     //   mqmdMsgIdEditable: SetReadOnly(FALSE) unconditionally (MQMD 424)
     //   selectorEditable: the default propertiesSupported = true
-    //   tabs: Main, Data, MQMD (NEW, Phase 1)
+    //   tabs: Main, Data, MQMD always; Conn always; header tabs when dataPresent (Plan 4)
     const Names ALWAYS = {
         "saveFile", "setConnId", "exit", "menuSave", "menuCopy", "menuSelectAll", "mqmdMsgIdEditable", "selectorEditable",
-        "tab:Main", "tab:Data", "tab:Mqmd"
+        "tab:Main", "tab:Data", "tab:Mqmd", "tab:Conn"
+    };
+    // Header tabs (Ps..Dlq) that turn on when data is present.
+    const Names HEADER_TABS = {
+        "tab:Ps", "tab:UsrProp", "tab:Rfh", "tab:PubSub", "tab:Pscr",
+        "tab:Jms", "tab:Usr", "tab:Other", "tab:Cics", "tab:Ims", "tab:Dlq"
     };
 
     // Main tab, browse not active, no job running (GEN 586-612): the buttons that start a job or replace data,
@@ -148,7 +153,7 @@ namespace
         t.push_back({ "browse active at message 3, Data tab, data present",
             withData(withBrowse(withConn(state(Tab::Data), true, true), true, 3), View::Character),
             // Find, Find Hex, Go To and Print: Data tab, data present, Character view (MENU 1059, 1737, 1786, 1873)
-            join({ ALWAYS, ON_DATA, { "browseNext", "browsePrev", "endBrowse", "dataBrowseNext", "dataBrowsePrev",
+            join({ ALWAYS, HEADER_TABS, ON_DATA, { "browseNext", "browsePrev", "endBrowse", "dataBrowseNext", "dataBrowsePrev",
                    "menuMqEndBrowse", "menuPrint", "menuFind", "menuFindHex", "menuGoto" } }) });
         t.push_back({ "browse active at message 1, MQMD tab: End Browse menu needs Main or Data (MENU 2435)",
             withBrowse(withConn(state(Tab::Mqmd), true, true), true, 1),
@@ -170,15 +175,15 @@ namespace
             join({ ALWAYS, ON_MAIN, IDLE_BUTTONS, MENU_OPEN, { "menuMqConn" } }) });
         t.push_back({ "busy on the Data tab with a message: Find and Print are not jobs and stay on",
             [] { EnableInputs in = withData(withConn(state(Tab::Data), true, true), View::Hex); in.busy = true; return in; }(),
-            join({ ALWAYS, ON_DATA, { "getOptions", "propsRadios", "menuPrint", "menuFind", "menuFindHex", "menuGoto" } }) });
+            join({ ALWAYS, HEADER_TABS, ON_DATA, { "getOptions", "propsRadios", "menuPrint", "menuFind", "menuFindHex", "menuGoto" } }) });
 
         // ---- Find dialog open (MENU 1634, 1670, 1737-1900; TABS 788) ---------------------------------------
         t.push_back({ "Find dialog open, Data tab, data present: Save, Open and the Search items are off, tabs blocked",
             [] { EnableInputs in = withData(state(Tab::Data), View::Character); in.findDialogOpen = true; return in; }(),
             // menuSave off (OnUpdateFileWrite), menuOpen off (OnUpdateOpen), Find/FindHex/Goto off; Print has no such test
             join({ Names{ "saveFile", "setConnId", "exit", "menuCopy", "menuSelectAll", "mqmdMsgIdEditable", "selectorEditable",
-                          "tab:Main", "tab:Data", "tab:Mqmd", "tabChangeBlocked" },
-                   ON_DATA, IDLE_BUTTONS, { "menuPrint" } }) });
+                          "tab:Main", "tab:Data", "tab:Mqmd", "tab:Conn", "tabChangeBlocked" },
+                   HEADER_TABS, ON_DATA, IDLE_BUTTONS, { "menuPrint" } }) });
 
         // ---- Find, Find Hex, Go To by display (MENU 1737-1900) ---------------------------------------------
         const Names findAll = { "menuFind", "menuFindHex", "menuGoto", "menuPrint" };
@@ -194,17 +199,17 @@ namespace
         for (const ViewCase & v : views)
         {
             t.push_back({ std::string("Data tab, data present, ") + v.name + " view", withData(state(Tab::Data), v.view),
-                join({ ALWAYS, ON_DATA, IDLE_BUTTONS, MENU_OPEN, v.extra }) });
+                join({ ALWAYS, HEADER_TABS, ON_DATA, IDLE_BUTTONS, MENU_OPEN, v.extra }) });
         }
         t.push_back({ "Data tab, no data: Print, Find, Find Hex and Go To off (fileSize == 0)",
             withData(state(Tab::Data), View::Character, false),
             join({ ALWAYS, ON_DATA, IDLE_BUTTONS, MENU_OPEN }) });
         t.push_back({ "Main tab, data present: Find and Go To need the Data tab, Print has no Main branch",
             withData(state(Tab::Main), View::Character),
-            join({ ALWAYS, ON_MAIN, IDLE_BUTTONS, MENU_OPEN, { "menuMqConn" } }) });
+            join({ ALWAYS, HEADER_TABS, ON_MAIN, IDLE_BUTTONS, MENU_OPEN, { "menuMqConn" } }) });
         t.push_back({ "MQMD tab, data present: as the Main tab",
             withData(state(Tab::Mqmd), View::Character),
-            join({ ALWAYS, ON_MQMD, IDLE_BUTTONS, MENU_OPEN }) });
+            join({ ALWAYS, HEADER_TABS, ON_MQMD, IDLE_BUTTONS, MENU_OPEN }) });
 
         // ---- clipboard (MENU 1120): Paste on every tab but Data, when the clipboard holds text ----------------
         t.push_back({ "clipboard text, Main tab: Paste on",
@@ -380,10 +385,13 @@ private slots:
             QVERIFY(e.saveFile && e.setConnId && e.exit && e.mqmdMsgIdEditable);
             // not ported in Phase 1
             QVERIFY(!e.displayQ && !e.loadQ && !e.saveQ && !e.moveQ && !e.dataAllowEdit && !e.dataWriteQ && !e.dataBom);
-            // the Phase 1 tabs
+            // tabs: Main/Data/Mqmd and Conn always; header tabs (Ps..Dlq) when dataPresent
             for (int i = 0; i < (int)Tab::Count; i++)
             {
-                QCOMPARE(e.tabEnabled((Tab)i), i <= (int)Tab::Mqmd);
+                const bool alwaysOn = (i <= (int)Tab::Mqmd) || (i == (int)Tab::Conn);
+                const bool headerTab = (i > (int)Tab::Mqmd) && (i < (int)Tab::Conn);
+                const bool expected = alwaysOn || (headerTab && (bool)data);
+                QCOMPARE(e.tabEnabled((Tab)i), expected);
             }
             QCOMPARE(e.tabChangeBlocked, (bool)find);
             // busy: nothing that starts a job, nothing that replaces the data; Cancel only for a cancellable job
