@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>PscrTab</class>
+  <widget class="QWidget" name="PscrTab">
+    <property name="windowTitle"><string>pscr</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <layout class="QHBoxLayout" name="topRow">
+          <item>
+            <widget class="QCheckBox" name="includedCheck">
+              <property name="toolTip"><string>Include the pscr folder in the RFH2 header</string></property>
+              <property name="text"><string>Include pscr folder</string></property>
+            </widget>
+          </item>
+          <item>
+            <spacer name="topHSpacer">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>40</width><height>20</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <widget class="QPlainTextEdit" name="xmlEdit">
+          <property name="toolTip"><string>XML content of the pscr pub/sub create-response folder</string></property>
+        </widget>
+      </item>
+    </layout>
+  </widget>
+</ui>

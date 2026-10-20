@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>OtherTab</class>
+  <widget class="QWidget" name="OtherTab">
+    <property name="windowTitle"><string>other</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <widget class="QLabel" name="noteLabel">
+          <property name="text"><string>Unrecognized RFH2 folders (read-only)</string></property>
+        </widget>
+      </item>
+      <item>
+        <widget class="QPlainTextEdit" name="xmlEdit">
+          <property name="toolTip"><string>Concatenated XML of unrecognized RFH2 folders</string></property>
+          <property name="readOnly"><bool>true</bool></property>
+        </widget>
+      </item>
+    </layout>
+  </widget>
+</ui>

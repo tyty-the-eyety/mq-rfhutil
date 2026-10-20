@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>JmsTab</class>
+  <widget class="QWidget" name="JmsTab">
+    <property name="windowTitle"><string>jms</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <layout class="QHBoxLayout" name="topRow">
+          <item>
+            <widget class="QCheckBox" name="includedCheck">
+              <property name="toolTip"><string>Include the jms folder in the RFH2 header</string></property>
+              <property name="text"><string>Include jms folder</string></property>
+            </widget>
+          </item>
+          <item>
+            <spacer name="topHSpacer">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>40</width><height>20</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="columnsLayout" stretch="1,1">
+          <item>
+            <layout class="QFormLayout" name="leftForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="dstLabel">
+                  <property name="text"><string>Dst</string></property>
+                  <property name="buddy"><cstring>dstEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="dstEdit">
+                  <property name="toolTip"><string>JMS Dst: destination name</string></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="rtoLabel">
+                  <property name="text"><string>Rto</string></property>
+                  <property name="buddy"><cstring>rtoEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QLineEdit" name="rtoEdit">
+                  <property name="toolTip"><string>JMS Rto: reply-to destination</string></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="expLabel">
+                  <property name="text"><string>Exp</string></property>
+                  <property name="buddy"><cstring>expEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QLineEdit" name="expEdit">
+                  <property name="toolTip"><string>JMS Exp: expiration time (ms since epoch)</string></property>
+                  <property name="maxLength"><number>20</number></property>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="cidLabel">
+                  <property name="text"><string>Cid</string></property>
+                  <property name="buddy"><cstring>cidEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QLineEdit" name="cidEdit">
+                  <property name="toolTip"><string>JMS Cid: correlation ID</string></property>
+                </widget>
+              </item>
+              <item row="4" column="0">
+                <widget class="QLabel" name="gidLabel">
+                  <property name="text"><string>Gid</string></property>
+                  <property name="buddy"><cstring>gidEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="4" column="1">
+                <widget class="QLineEdit" name="gidEdit">
+                  <property name="toolTip"><string>JMS Gid: group ID</string></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <layout class="QFormLayout" name="rightForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="seqLabel">
+                  <property name="text"><string>Seq</string></property>
+                  <property name="buddy"><cstring>seqEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="seqEdit">
+                  <property name="toolTip"><string>JMS Seq: sequence number within group</string></property>
+                  <property name="maxLength"><number>12</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="tmsLabel">
+                  <property name="text"><string>Tms</string></property>
+                  <property name="buddy"><cstring>tmsEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QLineEdit" name="tmsEdit">
+                  <property name="toolTip"><string>JMS Tms: timestamp (ms since epoch)</string></property>
+                  <property name="maxLength"><number>20</number></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="priLabel">
+                  <property name="text"><string>Pri</string></property>
+                  <property name="buddy"><cstring>priEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QLineEdit" name="priEdit">
+                  <property name="toolTip"><string>JMS Pri: message priority (0-9)</string></property>
+                  <property name="maxLength"><number>2</number></property>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="dlvLabel">
+                  <property name="text"><string>Dlv</string></property>
+                  <property name="buddy"><cstring>dlvEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QLineEdit" name="dlvEdit">
+                  <property name="toolTip"><string>JMS Dlv: delivery mode (1=NON_PERSISTENT 2=PERSISTENT)</string></property>
+                  <property name="maxLength"><number>2</number></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QVBoxLayout" name="userDefLayout">
+          <item>
+            <widget class="QLabel" name="userDefLabel">
+              <property name="text"><string>Unrecognized elements</string></property>
+            </widget>
+          </item>
+          <item>
+            <widget class="QPlainTextEdit" name="userDefEdit">
+              <property name="toolTip"><string>Raw XML of unrecognized JMS folder elements</string></property>
+            </widget>
+          </item>
+        </layout>
+      </item>
+    </layout>
+  </widget>
+</ui>

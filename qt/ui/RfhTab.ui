@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>RfhTab</class>
+  <widget class="QWidget" name="RfhTab">
+    <property name="windowTitle">
+      <string>RFH</string>
+    </property>
+    <layout class="QHBoxLayout" name="rootLayout" stretch="1,1">
+      <item>
+        <layout class="QVBoxLayout" name="leftLayout">
+          <item>
+            <layout class="QHBoxLayout" name="includeRow">
+              <item>
+                <widget class="QCheckBox" name="includedCheck">
+                  <property name="toolTip">
+                    <string>Include this RFH header in the message</string>
+                  </property>
+                  <property name="text">
+                    <string>Include RFH</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <spacer name="includeHSpacer">
+                  <property name="orientation">
+                    <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                    <size><width>40</width><height>20</height></size>
+                  </property>
+                </spacer>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <widget class="QGroupBox" name="versionBox">
+              <property name="title">
+                <string>Version</string>
+              </property>
+              <layout class="QHBoxLayout" name="versionLayout">
+                <item>
+                  <widget class="QRadioButton" name="v1Radio">
+                    <property name="toolTip">
+                      <string>RFH version 1 (MQRFH)</string>
+                    </property>
+                    <property name="text">
+                      <string>RFH v1</string>
+                    </property>
+                    <property name="checked">
+                      <bool>false</bool>
+                    </property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QRadioButton" name="v2Radio">
+                    <property name="toolTip">
+                      <string>RFH version 2 (MQRFH2)</string>
+                    </property>
+                    <property name="text">
+                      <string>RFH v2</string>
+                    </property>
+                    <property name="checked">
+                      <bool>true</bool>
+                    </property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <layout class="QFormLayout" name="headerForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="ccsidLabel">
+                  <property name="text"><string>CCSID</string></property>
+                  <property name="buddy"><cstring>ccsidEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="ccsidEdit">
+                  <property name="toolTip"><string>Coded character set ID of data following this header</string></property>
+                  <property name="maxLength"><number>6</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="encodingLabel">
+                  <property name="text"><string>Encoding</string></property>
+                  <property name="buddy"><cstring>encodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QComboBox" name="encodingCombo">
+                  <property name="toolTip"><string>Integer encoding of data following this header</string></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="pdEncodingLabel">
+                  <property name="text"><string>PD Encoding</string></property>
+                  <property name="buddy"><cstring>pdEncodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QComboBox" name="pdEncodingCombo">
+                  <property name="toolTip"><string>Packed-decimal encoding</string></property>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="floatEncodingLabel">
+                  <property name="text"><string>Float Encoding</string></property>
+                  <property name="buddy"><cstring>floatEncodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QComboBox" name="floatEncodingCombo">
+                  <property name="toolTip"><string>Floating-point encoding</string></property>
+                </widget>
+              </item>
+              <item row="4" column="0">
+                <widget class="QLabel" name="formatLabel">
+                  <property name="text"><string>Format</string></property>
+                  <property name="buddy"><cstring>formatEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="4" column="1">
+                <widget class="QLineEdit" name="formatEdit">
+                  <property name="toolTip"><string>Format of data following this header (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+              <item row="5" column="0">
+                <widget class="QLabel" name="flagsLabel">
+                  <property name="text"><string>Flags</string></property>
+                  <property name="buddy"><cstring>flagsEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="5" column="1">
+                <widget class="QLineEdit" name="flagsEdit">
+                  <property name="toolTip"><string>Flags (numeric)</string></property>
+                  <property name="maxLength"><number>10</number></property>
+                </widget>
+              </item>
+              <item row="6" column="0">
+                <widget class="QLabel" name="nvCcsidLabel">
+                  <property name="text"><string>NV CCSID</string></property>
+                  <property name="buddy"><cstring>nvCcsidEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="6" column="1">
+                <widget class="QLineEdit" name="nvCcsidEdit">
+                  <property name="toolTip"><string>NameValueCCSID: encoding of the RFH2 folder XML (typically 1208 for UTF-8)</string></property>
+                  <property name="maxLength"><number>6</number></property>
+                </widget>
+              </item>
+              <item row="7" column="0">
+                <widget class="QLabel" name="appGroupLabel">
+                  <property name="text"><string>App Group</string></property>
+                  <property name="buddy"><cstring>appGroupEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="7" column="1">
+                <widget class="QLineEdit" name="appGroupEdit">
+                  <property name="toolTip"><string>RFH v1 OPT_APP_GRP value</string></property>
+                  <property name="maxLength"><number>128</number></property>
+                </widget>
+              </item>
+              <item row="8" column="0">
+                <widget class="QLabel" name="msgTypeLabel">
+                  <property name="text"><string>Msg Type</string></property>
+                  <property name="buddy"><cstring>msgTypeEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="8" column="1">
+                <widget class="QLineEdit" name="msgTypeEdit">
+                  <property name="toolTip"><string>RFH v1 OPT_MSG_TYPE value</string></property>
+                  <property name="maxLength"><number>128</number></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <spacer name="leftVSpacer">
+              <property name="orientation"><enum>Qt::Vertical</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>20</width><height>40</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QVBoxLayout" name="rightLayout">
+          <item>
+            <widget class="QGroupBox" name="foldersBox">
+              <property name="title"><string>Include Folders</string></property>
+              <layout class="QVBoxLayout" name="foldersLayout">
+                <item>
+                  <widget class="QCheckBox" name="inclMcdCheck">
+                    <property name="toolTip"><string>Include mcd (message content) folder</string></property>
+                    <property name="text"><string>mcd</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="inclJmsCheck">
+                    <property name="toolTip"><string>Include jms folder (RFH v2)</string></property>
+                    <property name="text"><string>jms</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="inclUsrCheck">
+                    <property name="toolTip"><string>Include usr folder</string></property>
+                    <property name="text"><string>usr</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="inclPsCheck">
+                    <property name="toolTip"><string>Include psc (pub/sub command) folder</string></property>
+                    <property name="text"><string>psc</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="inclPscrCheck">
+                    <property name="toolTip"><string>Include pscr (pub/sub create response) folder</string></property>
+                    <property name="text"><string>pscr</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="inclOtherCheck">
+                    <property name="toolTip"><string>Include unrecognized folders (other)</string></property>
+                    <property name="text"><string>other</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="v1InclPubsubCheck">
+                    <property name="toolTip"><string>RFH v1: include pubsub name-value block</string></property>
+                    <property name="text"><string>v1 pubsub</string></property>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QCheckBox" name="v1InclPscrCheck">
+                    <property name="toolTip"><string>RFH v1: include pscr name-value block</string></property>
+                    <property name="text"><string>v1 pscr</string></property>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </item>
+          <item>
+            <spacer name="rightVSpacer">
+              <property name="orientation"><enum>Qt::Vertical</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>20</width><height>40</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+    </layout>
+  </widget>
+</ui>
