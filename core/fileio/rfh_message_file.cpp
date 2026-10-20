@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <memory>
@@ -306,7 +307,22 @@ namespace rfh
 
 		Result write(const std::string & path, const Message & message, const WriteOptions & options)
 		{
-			std::unique_ptr<FILE, int (*)(FILE *)> file(fopen(path.c_str(), "wb"), fclose);
+			// Atomic write: write to a temp file in the same directory, fsync, then rename.
+			// The temp name uses the target's directory so rename() stays on the same filesystem.
+			//
+			// fopen(tmpPath) may succeed even when the target is a directory or read-only
+			// (the .tmp name is a different path), so check the target explicitly first.
+			{
+				struct stat ts;
+				if (stat(path.c_str(), &ts) == 0 &&
+				    (S_ISDIR(ts.st_mode) || access(path.c_str(), W_OK) != 0))
+				{
+					return Result::failure(openOutputError(S_ISDIR(ts.st_mode) ? EISDIR : EACCES));
+				}
+			}
+
+			std::string tmpPath = path + ".tmp";
+			std::unique_ptr<FILE, int (*)(FILE *)> file(fopen(tmpPath.c_str(), "wb"), fclose);
 			if (!file)
 			{
 				return Result::failure(openOutputError(errno));
@@ -333,13 +349,25 @@ namespace rfh
 			{
 				ok = ok && (fwrite(message.body.data(), 1, message.body.size(), output) == message.body.size());
 			}
+			if (ok)
+			{
+				ok = (fsync(fileno(output)) == 0);
+			}
 			if (fclose(file.release()) != 0)
 			{
 				ok = false;
 			}
 			if (!ok)
 			{
-				return Result::failure("Unable to write output file " + path + " - " + strerror(errno));
+				int err = errno;
+				remove(tmpPath.c_str());
+				return Result::failure("Unable to write output file " + path + " - " + strerror(err));
+			}
+			if (rename(tmpPath.c_str(), path.c_str()) != 0)
+			{
+				int err = errno;
+				remove(tmpPath.c_str());
+				return Result::failure("Unable to rename temp file to " + path + " - " + strerror(err));
 			}
 
 			// the breakdown names each header kind, as Windows does

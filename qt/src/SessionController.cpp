@@ -3,6 +3,7 @@
 #include "rfh_trace.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 #include <exception>
 #include <utility>
@@ -75,14 +76,24 @@ namespace rfhqt
 	SessionController::~SessionController()
 	{
 		cancelRequested.store(true);
-		// Queued behind the running job, so it runs after that job has ended (the cancel flag stops a wait).
+		// Queue the disconnect on the worker (runs after any current job ends, since the cancel flag stops a
+		// wait). QueuedConnection: do not block here so the timeout below can fire if the job never returns.
 		rfh::MqSession * s = session.get();
 		QMetaObject::invokeMethod(worker, [s]()
 		{
 			s->disconnect();	// MQDISC commits whatever unit is pending (Windows behaviour)
-		}, Qt::BlockingQueuedConnection);
+		}, Qt::QueuedConnection);
 		thread.quit();
-		thread.wait();
+		static constexpr unsigned long kShutdownTimeoutMs = 10000;
+		if (!thread.wait(kShutdownTimeoutMs))
+		{
+			// The worker is stuck in a blocking MQ call (MQCONN, MQPUT, a PCF request that
+			// never replied). There is no safe way to unblock it from here. Exit immediately
+			// so the window does not hang; MQ will roll back the unit on process exit.
+			fprintf(stderr, "rfhutil: MQ worker did not finish within %lu ms; calling _exit\n", kShutdownTimeoutMs);
+			fflush(stderr);
+			_exit(1);
+		}
 		delete worker;			// the thread has finished: no event can reach it any more
 		session.reset();		// the worker has stopped: nothing else uses it
 	}

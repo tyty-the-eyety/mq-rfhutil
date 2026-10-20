@@ -4,7 +4,8 @@
 // "HH.MM.SS" and a blank. Several messages of one operation are joined with CR LF and stamped once. The log is
 // kept as one string with CR LF line ends, exactly as Windows keeps m_msg_text, and is cut like Windows cuts it:
 // when the text would pass MaxChars (8191, MAX_ERR_MSG_LEN) it is cut to that length and then back to the end of
-// a line, so the oldest entries drop out whole; trailing CR and LF are removed. Clear Data and Clear All do not
+// a line, so the oldest entries drop out whole. A new entry with no line break inside the limit is kept truncated
+// rather than wiped. Trailing CR and LF are removed. Clear Data and Clear All do not
 // clear it (inv 3.2); only clear() does.
 //
 // Threading: GUI thread only. add() and clear() are not synchronised; the worker thread never touches the

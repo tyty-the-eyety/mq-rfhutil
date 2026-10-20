@@ -7,11 +7,9 @@
 // point at (cancelFlag()), which the core polls in slices of at most one second.
 //
 // Shutdown. The destructor cancels what can be cancelled (a waiting get, a purge, a browse previous walk), waits for the
-// running job, backs out any open unit of work (MQDISC would commit it), disconnects and joins the thread. LIMITATION: a
-// job that does not poll the cancel flag (MQCONN, MQPUT, a PCF request to a command server that does not answer) cannot be
-// interrupted, and the wait has no timeout, so closing the window blocks until that call returns. A thread kill would
-// leave the MQ handles and the unit of work in an unknown state, so none is attempted. A rollback that fails is written to
-// the trace and to stderr (the window is going away, so the status log cannot show it).
+// running job up to 10 seconds, then disconnects and joins the thread. A job that does not poll the cancel flag (MQCONN,
+// MQPUT, a PCF request to a command server that does not answer) cannot be interrupted. If the worker does not finish
+// within 10 seconds, _exit(1) is called so the window does not hang indefinitely; MQ rolls back the unit on process exit.
 //
 // Passwords are kept in memory only: connectTo() wipes the controller's copy as soon as the connect returns
 // and nothing here logs or emits a password.

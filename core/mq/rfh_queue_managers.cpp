@@ -23,6 +23,47 @@ namespace rfh
 #ifdef _WIN32
 			return std::string();
 #else
+			// Try to read the data path from the MQ installation descriptor.
+			// Standard Linux location: /etc/opt/mqm/mqinst.ini (or beside the install
+			// given by MQ_INSTALLATION_PATH).  A DataPath= key wins over /var/mqm.
+			const char * instPath = getenv("MQ_INSTALLATION_PATH");
+			std::string iniCandidates[2];
+			int numCandidates = 0;
+			if ((instPath != NULL) && (instPath[0] != 0))
+			{
+				std::string base = instPath;
+				while ((base.size() > 1) && (base[base.size() - 1] == '/'))
+					base.resize(base.size() - 1);
+				iniCandidates[numCandidates++] = base + "/../etc/opt/mqm/mqinst.ini";
+			}
+			iniCandidates[numCandidates++] = "/etc/opt/mqm/mqinst.ini";
+
+			for (int ci = 0; ci < numCandidates; ci++)
+			{
+				FILE * f = fopen(iniCandidates[ci].c_str(), "r");
+				if (f == NULL) continue;
+				char line[512];
+				while (fgets(line, (int)sizeof(line), f) != NULL)
+				{
+					const char * p = line;
+					while (*p == ' ' || *p == '\t') p++;
+					if (strncmp(p, "DataPath", 8) != 0) continue;
+					p += 8;
+					while (*p == ' ' || *p == '\t') p++;
+					if (*p != '=') continue;
+					p++;
+					while (*p == ' ' || *p == '\t') p++;
+					std::string val(p);
+					while (!val.empty() && (val.back() == '\n' || val.back() == '\r' || val.back() == ' '))
+						val.resize(val.size() - 1);
+					if (!val.empty())
+					{
+						fclose(f);
+						return val;
+					}
+				}
+				fclose(f);
+			}
 			return std::string("/var/mqm");
 #endif
 		}

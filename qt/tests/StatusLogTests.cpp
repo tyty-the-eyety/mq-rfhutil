@@ -156,15 +156,16 @@ private slots:
         QCOMPARE(log.text().size(), 8190);
     }
 
-    void anEntryWithNoLineEndInsideTheLimitEmptiesTheWholeLog()
+    void anEntryWithNoLineEndInsideTheLimitIsTruncatedAtMaxChars()
     {
-        // Windows behaviour, pinned: 9 + 8182 = 8191 characters come before the CR, so the first 8191 contain no
-        // CR or LF; the loop at DataArea.cpp 10328-10332 runs down to length 0 and the log, with the older
-        // entries and the new one, is empty.
+        // 9 + 8182 = 8191 characters come before the CR, so the first MaxChars contain no CR or LF.
+        // The Linux port keeps the entry truncated at MaxChars (unlike Windows DataArea.cpp 10328-10332,
+        // which runs the length down to 0 and wipes the log).
         StatusLog log;
         log.add("kept", QTime(0, 0, 0));
         log.add(QString(8182, QChar('a')), QTime(0, 0, 1));
-        QCOMPARE(log.text(), QString());
+        QCOMPARE(log.text().size(), StatusLog::MaxChars);
+        QVERIFY(log.text().startsWith(QStringLiteral("00.00.01 ")));
     }
 
     void aLongEntryWithLineBreaksIsCutAtTheLastLineBreakInsideTheLimit()

@@ -150,7 +150,8 @@ namespace rfhqt
 		// Windows asks before discarding only for Purge Q (General.cpp:900, MB_YESNO). Open File, Clear Data,
 		// Clear All, Exit and every read replace data silently: there is no modified-data prompt.
 		static bool confirmsBeforeDiscard(DiscardAction action);
-		static QString purgeConfirmation(const QString & queueName);	// "Purge all messages from queue <q>?"
+		// "Purge all messages from queue <q>?\n<depth> message(s)[ · Selector: <sel>]"
+		static QString purgeConfirmation(const QString & queueName, MQLONG depth, const std::string & selector);
 
 		// ---- state, read-only access ------------------------------------------------------------------------
 		const rfh::Message & message() const { return msg; }

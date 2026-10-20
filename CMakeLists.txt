@@ -2,7 +2,7 @@
 # The Windows MFC application keeps building with RFHUtil.sln.
 cmake_minimum_required(VERSION 3.21)
 
-project(rfhutil LANGUAGES CXX)
+project(rfhutil VERSION 10.0.0.240 LANGUAGES CXX)
 
 if(WIN32)
     message(FATAL_ERROR "The CMake build is Linux-only for now; on Windows use RFHUtil.sln")

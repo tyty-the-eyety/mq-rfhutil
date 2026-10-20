@@ -439,7 +439,10 @@ private slots:
         {
             QVERIFY(!AppDocument::confirmsBeforeDiscard(a));
         }
-        QCOMPARE(AppDocument::purgeConfirmation("RFHUTIL.TEST.A"), QString("Purge all messages from queue RFHUTIL.TEST.A?"));
+        QVERIFY(AppDocument::purgeConfirmation("RFHUTIL.TEST.A", 5, "").startsWith("Purge all messages from queue RFHUTIL.TEST.A?"));
+        QVERIFY(AppDocument::purgeConfirmation("RFHUTIL.TEST.A", 5, "").contains("5 message"));
+        QVERIFY(AppDocument::purgeConfirmation("RFHUTIL.TEST.A", 3, "JMSType='foo'").contains("Selector:"));
+        QVERIFY(!AppDocument::purgeConfirmation("RFHUTIL.TEST.A", 3, "").contains("Selector:"));
     }
 
     // ---- the document -----------------------------------------------------------------------------------------

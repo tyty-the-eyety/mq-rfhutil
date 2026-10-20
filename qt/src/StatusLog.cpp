@@ -31,16 +31,22 @@ namespace rfhqt
 		QString msg = now.toString(QStringLiteral("HH.mm.ss")) + QLatin1Char(' ') + text
 			+ QStringLiteral("\r\n") + log;
 
-		// Limit: cut to MaxChars, then back to the end of a line (DataArea.cpp 10323-10333). A text with no
-		// line break inside the limit leaves nothing, as in Windows.
+		// Limit: cut to MaxChars, then back to the end of a line (DataArea.cpp 10323-10333). A new entry with
+		// no line break inside the limit keeps the new entry truncated to MaxChars rather than wiping the log.
 		int len = msg.size();
 		if (len > MaxChars)
 		{
 			len = MaxChars;
-			while ((len > 0) && (msg[len - 1] != QLatin1Char('\n')) && (msg[len - 1] != QLatin1Char('\r')))
+			int trimmed = len;
+			while ((trimmed > 0) && (msg[trimmed - 1] != QLatin1Char('\n')) && (msg[trimmed - 1] != QLatin1Char('\r')))
 			{
-				len--;
+				trimmed--;
 			}
+			if (trimmed > 0)
+			{
+				len = trimmed;
+			}
+			// else: no line break in the first MaxChars — keep len=MaxChars so the entry is not wiped
 		}
 
 		// Remove the trailing CR and LF (DataArea.cpp 10335-10339)

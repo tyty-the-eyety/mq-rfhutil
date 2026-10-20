@@ -795,7 +795,7 @@ private slots:
         };
         answer(QMessageBox::No);
         QVERIFY(h.run([&]() { h.button("purgeQButton")->click(); }));
-        QCOMPARE(asked, QString("Purge all messages from queue %1?").arg(kQueue));
+        QCOMPARE(asked, QString("Purge all messages from queue %1?\n3 message(s)").arg(kQueue));
         QCOMPARE((int)fake.queue(kQueue).messages.size(), 3);
         answer(QMessageBox::Yes);
         QVERIFY(h.run([&]() { h.button("purgeQButton")->click(); }));

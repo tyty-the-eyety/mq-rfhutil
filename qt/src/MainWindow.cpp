@@ -11,6 +11,7 @@
 #include "StatusLog.h"
 #include "rfh_trace.h"
 
+#include <QCoreApplication>
 #include <QCloseEvent>
 #include <QKeySequence>
 #include <QLabel>
@@ -103,7 +104,9 @@ namespace rfhqt
 		  ops(new Operations(*doc, *controller, *log)),
 		  tabWidget(new QTabWidget(this))
 	{
-		setWindowTitle("RfhUtil");
+		const QString ver = QCoreApplication::applicationVersion();
+		setWindowTitle(ver.isEmpty() ? QStringLiteral("RfhUtil (Linux)")
+		                             : QStringLiteral("RfhUtil ") + ver + QStringLiteral(" (Linux)"));
 		setCentralWidget(tabWidget);
 
 		mainPage = new MainTab(*doc, *ops, *log, appSettings.get());

@@ -35,6 +35,8 @@ target_compile_options(rfhqt PRIVATE -Wall -Wextra)
 
 add_executable(rfhutil-qt src/main.cpp)
 target_link_libraries(rfhutil-qt PRIVATE rfhqt)
+target_compile_definitions(rfhutil-qt PRIVATE
+    RFHUTIL_VERSION="${PROJECT_VERSION}")
 
 if(RFHUTIL_BUILD_TESTS)
     add_subdirectory(tests)

@@ -1374,7 +1374,7 @@ namespace rfhqt
 				return;
 			}
 			prompting = true;
-			const bool confirmed = prompter->confirm(AppDocument::purgeConfirmation(queue));
+			const bool confirmed = prompter->confirm(AppDocument::purgeConfirmation(queue, r.queue.depth, options.get.selector));
 			prompting = false;
 			if (!confirmed)
 			{

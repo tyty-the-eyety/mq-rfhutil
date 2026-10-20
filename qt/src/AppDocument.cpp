@@ -143,9 +143,15 @@ namespace rfhqt
 		return action == DiscardAction::PurgeQ;
 	}
 
-	QString AppDocument::purgeConfirmation(const QString & queueName)
+	QString AppDocument::purgeConfirmation(const QString & queueName, MQLONG depth, const std::string & selector)
 	{
-		return QString("Purge all messages from queue %1?").arg(queueName);
+		QString text = QString("Purge all messages from queue %1?\n").arg(queueName);
+		text += (depth >= 0) ? QString("%1 message(s)").arg(depth) : QStringLiteral("Depth unknown");
+		if (!selector.empty())
+		{
+			text += QStringLiteral(" \xb7 Selector: ") + QString::fromStdString(selector);
+		}
+		return text;
 	}
 
 	AppDocument::AppDocument(QObject * parent)

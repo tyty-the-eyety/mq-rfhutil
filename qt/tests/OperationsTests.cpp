@@ -3080,7 +3080,7 @@ private slots:
         h.prompter.onAsk = [&]() { connectsWhenAsked = fake.connxCalls; };
         QVERIFY(h.run([&]() { h.ops.purgeQ(); }));
         QCOMPARE(h.lastFlow(), QString("purgeQ"));
-        QCOMPARE(h.prompter.asked, QStringList() << "Purge all messages from queue RFHUTIL.TEST.OPS?");		// General.cpp:911
+        QCOMPARE(h.prompter.asked, QStringList() << "Purge all messages from queue RFHUTIL.TEST.OPS?\n3 message(s)");		// General.cpp:911
         QCOMPARE(connectsWhenAsked, 1);						// getQueueDepth connected first
         QVERIFY(fake.queue(kQueue).messages.empty());
         QCOMPARE(h.entries(), QStringList() << "3 messages purged from RFHUTIL.TEST.OPS");		// DA 10199

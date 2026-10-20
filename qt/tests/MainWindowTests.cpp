@@ -647,7 +647,7 @@ private slots:
 	void theTitleIsRfhUtilThenTheQueueAfterAReadQ()
 	{
 		Harness h;
-		QCOMPARE(h.window->windowTitle(), QString("RfhUtil"));
+		QVERIFY2(h.window->windowTitle().startsWith(QStringLiteral("RfhUtil")), qPrintable(h.window->windowTitle()));
 		rfh_test::FakeMessage m;
 		memcpy(m.md.Format, MQFMT_STRING, 8);
 		m.data = { 'h', 'i' };

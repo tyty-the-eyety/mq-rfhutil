@@ -9,6 +9,7 @@
 #include <memory>
 #include <new>
 #include <string>
+#include <vector>
 
 #include "DataFormatter.h"
 #include "Copybook.h"
@@ -159,6 +160,81 @@ namespace rfh
 			formatter.m_char_format = options.charFormat;
 			formatter.setDisplay(options.display);
 			formatter.conversionTableDir = options.conversionTableDir;
+
+			// Fast path for the character view: one whole-buffer iconv call instead of the
+			// byte-at-a-time loop in DataFormatter::getCharacterData, which takes 2–6 s on
+			// a 10 MB body. Emits the same "NNNNNNNN <32 chars>\r\n" line format as DataFormatter
+			// so that locate() keeps working. Only activates for single-byte encodings where the
+			// source and display code pages both map 1 byte → 1 char (n == bodyLen, outLen == n);
+			// MBCS/EBCDIC/BOM/EDI/crlf cases fall through to DataFormatter.
+			if (view == View::Character && options.charFormat == CHAR_ASCII &&
+			    !options.edi && !options.bom && !options.indent && !options.crlf)
+			{
+				const int bodyLen = (int)message.body.size();
+				if (bodyLen > 0)
+				{
+					std::vector<RFH_UCS2> wcs((size_t)bodyLen);
+					const int srcCp = (options.ccsid != 0) ? options.ccsid : rfh_get_acp();
+					const int n = rfh_MultiByteToWideChar(
+						srcCp, 0, (const char *)message.body.data(), bodyLen, wcs.data(), bodyLen);
+
+					// Single-byte source only: DBCS produces fewer chars than bytes
+					if (n == bodyLen)
+					{
+						// !crlf: ALL control chars (< U+0020) including CR and LF become '.'
+						for (int i = 0; i < n; i++)
+						{
+							if (wcs[i] < 0x0020)
+							{
+								wcs[i] = (RFH_UCS2)'.';
+							}
+						}
+
+						const int displayCp = (options.display.ansi != 0) ? options.display.ansi : rfh_get_acp();
+						std::vector<char> dispBuf((size_t)n * 2 + 1, '\0');
+						const int outLen = rfh_WideCharToMultiByte(
+							displayCp, 0, wcs.data(), n, dispBuf.data(), (int)(dispBuf.size() - 1), nullptr, nullptr);
+
+						// Single-byte display only: MBCS display falls through to DataFormatter.
+						// Also verify non-control source bytes survived the source→UCS-2→display
+						// round-trip unchanged. iconv may alter bytes when the source and display
+						// codepages differ; DataFormatter's comsubs table gives the correct answer
+						// for those cases, so fall through to it.
+						if (outLen == n)
+						{
+							bool roundtripOk = true;
+							const unsigned char * src = message.body.data();
+							for (int i = 0; i < n; i++)
+							{
+								if (src[i] >= 0x20 && (unsigned char)dispBuf[i] != src[i])
+								{
+									roundtripOk = false;
+									break;
+								}
+							}
+							if (roundtripOk)
+							{
+								// Emit "NNNNNNNN <32 chars>\r\n" lines matching DataFormatter's format
+								out.reserve((size_t)(((n + 31) / 32)) * (9 + 32 + 2));
+								char label[12];
+								for (int i = 0; i < n; i += 32)
+								{
+									const int lineChars = (n - i < 32) ? (n - i) : 32;
+									snprintf(label, sizeof(label), "%08d ", i);
+									out.append(label, 9);
+									out.append(dispBuf.data() + i, (size_t)lineChars);
+									if (i + 32 < n)
+									{
+										out.append("\r\n", 2);
+									}
+								}
+								return Result::success();
+							}
+						}
+					}
+					// MBCS source/display, iconv failure, or codepage mismatch: fall through to DataFormatter
+				}
+			}
 
 			const unsigned char * text = NULL;
 			switch (view)
