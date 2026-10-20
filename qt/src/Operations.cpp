@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <time.h>
 
 #include <utility>
 
@@ -1106,6 +1107,10 @@ namespace rfhqt
 		context.setIdentity = shell.setIdentity;
 		context.setAll = shell.setAll;
 		context.osUser = rfh_current_user();
+		time_t now_t = time(nullptr);
+		struct tm now_buf;
+		localtime_r(&now_t, &now_buf);
+		context.now = &now_buf;
 		auto message = std::make_shared<rfh::Message>();
 		message->mqmd = MQMD2 { MQMD2_DEFAULT };
 		rfh::mqmd_fields::toPutMqmd(fields, context, message->mqmd);

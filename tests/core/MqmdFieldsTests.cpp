@@ -953,35 +953,33 @@ TEST(ToPutMqmd, AccountingTokenOfFortyEightBytesStoresThirtyTwo)
     expectMqmd(expected, putBuilt(f, setIdentity()));
 }
 
-TEST(ToPutMqmd, BlankUserIdBecomesZerosNotTheOsUser)
+TEST(ToPutMqmd, BlankUserIdFillsFromOsUserWhenAvailable)
 {
-    // MQMDPAGE.cpp:2573-2604: the OS user is looked up into the local userId and then
-    // setUserId(mqmd) is called, which reads m_mqmd_userid (empty) and so zeroes
-    // UserIdentifier. The looked-up name never reaches the MQMD. If the lookup fails,
-    // nothing is written. Pinned as Windows behaviour (the brief expected the OS user).
     MqmdFields f = cleared();
     PutContext c = setIdentity();
     c.osUser = "someone";
     MQMD2 md = { MQMD2_DEFAULT };
     memset(md.UserIdentifier, 'x', sizeof(md.UserIdentifier));
     rfh::mqmd_fields::toPutMqmd(f, c, md);
-    expectMqmd(clearedPutExpectation(), md);    // baseline has zeros there
+    L::Bytes expected = clearedPutExpectation();
+    memcpy(&expected.data[O::UserIdentifier], "someone", 7);
+    expectMqmd(expected, md);
 
     // without Set Iden or Set All nothing is touched
     md = { MQMD2_DEFAULT };
     memset(md.UserIdentifier, 'x', sizeof(md.UserIdentifier));
     c.setIdentity = false;
     rfh::mqmd_fields::toPutMqmd(f, c, md);
-    L::Bytes expected = clearedPutExpectation();
-    memset(&expected.data[O::UserIdentifier], 'x', 12);
-    expectMqmd(expected, md);
+    L::Bytes unchanged = clearedPutExpectation();
+    memset(&unchanged.data[O::UserIdentifier], 'x', 12);
+    expectMqmd(unchanged, md);
 
-    // lookup failed (empty name): the field stays as it was
+    // lookup failed (empty osUser): the field stays as it was
     c = setAll();
     md = { MQMD2_DEFAULT };
     memset(md.UserIdentifier, 'x', sizeof(md.UserIdentifier));
     rfh::mqmd_fields::toPutMqmd(f, c, md);
-    expectMqmd(expected, md);
+    expectMqmd(unchanged, md);
 }
 
 TEST(ToPutMqmd, ApplFieldsAndPutDateTimeOnlyWithSetAll)
@@ -1003,6 +1001,33 @@ TEST(ToPutMqmd, ApplFieldsAndPutDateTimeOnlyWithSetAll)
     expectMqmd(expected, putBuilt(f, setAll()));
     // Set Iden alone leaves them
     expectMqmd(clearedPutExpectation(), putBuilt(f, setIdentity()));
+}
+
+TEST(ToPutMqmd, BlankDateTimeFillsFromContextNowWhenSetAll)
+{
+    struct tm t = {};
+    t.tm_year = 2026 - 1900;
+    t.tm_mon  = 9;      // October (0-based)
+    t.tm_mday = 20;
+    t.tm_hour = 14;
+    t.tm_min  = 30;
+    t.tm_sec  = 55;
+
+    MqmdFields f = cleared();
+    PutContext c = setAll();
+    c.now = &t;
+
+    L::Bytes expected = clearedPutExpectation();
+    expected.putBytes(O::PutDate, "20261020", 8);
+    expected.putBytes(O::PutTime, "14305500", 8);
+    expectMqmd(expected, putBuilt(f, c));
+
+    // Set Iden alone: PutDate/PutTime not written (setAll not checked)
+    expectMqmd(clearedPutExpectation(), putBuilt(f, setIdentity()));
+
+    // context.now == nullptr: zeros (previous Windows behaviour)
+    c.now = nullptr;
+    expectMqmd(clearedPutExpectation(), putBuilt(f, c));
 }
 
 namespace
@@ -1106,18 +1131,11 @@ TEST(ToPutMqmd, EmptyApplTypeIsZeroWithSetAll)
     expectMqmd(expected, md);
 }
 
-TEST(ToPutMqmd, BlankPutDateTimeIsZerosEvenWhenAClockIsGiven)
+TEST(ToPutMqmd, BlankPutDateTimeIsZerosWhenNoClockIsGiven)
 {
-    // :2668-2674 formats the current time into todaysDate but :2678-2689 read the zeroed
-    // tempToken, so a blank Put Date/Time is written as binary zeros. Pinned.
     MqmdFields f = cleared();
     PutContext c = setAll();
-    struct tm now = {};
-    now.tm_year = 126;
-    now.tm_mon = 9;
-    now.tm_mday = 17;
-    now.tm_hour = 12;
-    c.now = &now;
+    // context.now == nullptr: PutDate and PutTime stay zero (Windows behaviour)
     MQMD2 md = { MQMD2_DEFAULT };
     memset(md.PutDate, 'D', sizeof(md.PutDate));
     memset(md.PutTime, 'T', sizeof(md.PutTime));

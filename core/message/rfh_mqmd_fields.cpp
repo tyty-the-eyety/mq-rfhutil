@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <algorithm>
 
@@ -378,8 +379,8 @@ namespace rfh
 			}
 			else if (!context.osUser.empty())
 			{
-				// setUserId reads the (empty) page field, not the OS user it was meant to use
 				memset(mqmd.UserIdentifier, 0, sizeof(mqmd.UserIdentifier));
+				memcpy(mqmd.UserIdentifier, context.osUser.data(), (std::min)(context.osUser.size(), sizeof(mqmd.UserIdentifier)));
 			}
 
 			if (!f.accountingToken.empty())
@@ -418,18 +419,37 @@ namespace rfh
 
 			mqmd.PutApplType = atoi(f.putApplType.c_str());
 
-			// Put Date and Time: a zeroed 48 byte buffer holds the text (47 characters at
-			// most); an empty text leaves it zero
-			char temp[48];
-			memset(temp, 0, sizeof(temp));
-			memcpy(temp, f.dateTime.data(), (std::min)(f.dateTime.size(), sizeof(temp) - 1));
-			memcpy(mqmd.PutDate, temp, 4);
-			memcpy(mqmd.PutDate + 4, temp + 5, 2);
-			memcpy(mqmd.PutDate + 6, temp + 8, 2);
-			memcpy(mqmd.PutTime, temp + 11, 2);
-			memcpy(mqmd.PutTime + 2, temp + 14, 2);
-			memcpy(mqmd.PutTime + 4, temp + 17, 2);
-			memcpy(mqmd.PutTime + 6, temp + 20, 2);
+			// Put Date and Time: blank dateTime fills from context.now when available,
+			// otherwise zeros (as Windows wrote binary zeros for an empty field)
+			if (!f.dateTime.empty())
+			{
+				char temp[48];
+				memset(temp, 0, sizeof(temp));
+				memcpy(temp, f.dateTime.data(), (std::min)(f.dateTime.size(), sizeof(temp) - 1));
+				memcpy(mqmd.PutDate, temp, 4);
+				memcpy(mqmd.PutDate + 4, temp + 5, 2);
+				memcpy(mqmd.PutDate + 6, temp + 8, 2);
+				memcpy(mqmd.PutTime, temp + 11, 2);
+				memcpy(mqmd.PutTime + 2, temp + 14, 2);
+				memcpy(mqmd.PutTime + 4, temp + 17, 2);
+				memcpy(mqmd.PutTime + 6, temp + 20, 2);
+			}
+			else if (context.now != nullptr)
+			{
+				char date[9];
+				strftime(date, sizeof(date), "%Y%m%d", context.now);
+				memcpy(mqmd.PutDate, date, 8);
+				char time[7];
+				strftime(time, sizeof(time), "%H%M%S", context.now);
+				memcpy(mqmd.PutTime, time, 6);
+				mqmd.PutTime[6] = '0';
+				mqmd.PutTime[7] = '0';
+			}
+			else
+			{
+				memset(mqmd.PutDate, 0, sizeof(mqmd.PutDate));
+				memset(mqmd.PutTime, 0, sizeof(mqmd.PutTime));
+			}
 		}
 
 		void applyAfterPut(const MQMD2 & returned, MQLONG msgLen, MqmdFields & f)

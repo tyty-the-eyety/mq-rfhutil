@@ -1977,9 +1977,8 @@ private slots:
         }
     }
 
-    void writeQSetIdentityWithABlankUserIdPutsZerosNotTheOsUser()
+    void writeQSetIdentityWithABlankUserIdFillsFromOsUser()
     {
-        // Pinned in Task 6: setMessageMQMD looks the OS user up and discards it (MQMDPAGE.cpp:2573-2604)
         Watchdog dog(60);
         Harness h;
         ShellState shell = h.doc.shell();
@@ -1987,10 +1986,10 @@ private slots:
         h.doc.setShell(shell);
         QVERIFY(h.run([&]() { h.ops.writeQ(); }));
         const MQMD & md = fake.putLog.at(0).message.md;
-        for (size_t i = 0; i < sizeof(md.UserIdentifier); i++)
-        {
-            QCOMPARE((int)md.UserIdentifier[i], 0);
-        }
+        std::string osUser = rfh_current_user();
+        QVERIFY2(!osUser.empty(), "rfh_current_user() returned empty — cannot verify");
+        size_t len = (std::min)(osUser.size(), sizeof(md.UserIdentifier));
+        QCOMPARE(std::string(md.UserIdentifier, len), osUser.substr(0, len));
     }
 
     void writeQSetIdentityPutsTheUserIdOfTheTab()

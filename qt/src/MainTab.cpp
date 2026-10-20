@@ -251,7 +251,6 @@ namespace rfhqt
 		o.get.completeMsg = ui->completeMsgCheck->isChecked();
 		o.get.allAvailable = ui->allAvailCheck->isChecked();
 		o.get.selector = ui->selectorEdit->text().toStdString();
-		o.get.inputShared = true;		// Read Q opens MQOO_INPUT_SHARED (inventory 3.2)
 		o.get.waitMs = ui->waitSpin->value() * 1000;
 		switch (propsGroup->checkedId())
 		{

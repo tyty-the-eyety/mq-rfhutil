@@ -164,8 +164,8 @@ namespace rfh
 		// These three belong to the queue handle, not to the single get: a get that changes one of
 		// them closes the open handle (and so resets a browse position) and opens a new one.
 		std::string selector;		// message selector, given to MQOPEN in a version 4 MQOD; needs a queue manager at command level 700
-		std::string alternateUser;	// MQOO_ALTERNATE_USER_AUTHORITY; at most 12 characters are used, as in Windows, and a warning says so
-		bool inputShared = false;	// MQOO_INPUT_SHARED instead of MQOO_INPUT_AS_Q_DEF
+		std::string alternateUser;	// MQOO_ALTERNATE_USER_AUTHORITY; fails if longer than 12 characters
+		bool inputShared = true;	// MQOO_INPUT_SHARED (Windows default); false for MQOO_INPUT_AS_Q_DEF
 
 		// Message properties. A mode other than AsQueue raises the GMO to version 4, as Windows does, and needs
 		// a queue manager at command level 700; below it (or on a level that is known and lower) the option is

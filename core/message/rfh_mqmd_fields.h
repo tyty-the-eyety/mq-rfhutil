@@ -89,9 +89,9 @@ namespace rfh
 		// lookup result from the OS; on Linux "lookup succeeded" is the caller's choice
 		// (empty = lookup failed).
 		std::string osUser;
-		// Not read: setMessageMQMD formats the current time but never uses it, so a blank
-		// Put Date/Time is written as binary zeros. Kept so callers need not change if
-		// that Windows defect is ever fixed.
+		// When dateTime is blank and setAll is true, toPutMqmd fills PutDate and PutTime
+		// from this pointer. nullptr leaves them as binary zeros (Windows behaviour: the
+		// OS time was formatted but never written to the MQMD).
 		const struct tm * now = nullptr;
 	};
 

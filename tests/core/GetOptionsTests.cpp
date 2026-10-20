@@ -84,7 +84,7 @@ TEST_F(GetOptionsFake, ExistingDefaultsAreUnchanged)
 
     ASSERT_EQ(1u, queueOpens().size());
     const rfh_test::OpenRecord & open = queueOpens()[0];
-    EXPECT_EQ(MQOO_INPUT_AS_Q_DEF | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING, open.options);
+    EXPECT_EQ(MQOO_INPUT_SHARED | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING, open.options);
     EXPECT_EQ(MQOD_VERSION_1, open.odVersion);
     EXPECT_EQ("", open.alternateUser);
 }
@@ -280,7 +280,7 @@ TEST_F(GetOptionsFake, SelectorGoesIntoTheOpenDescriptor)
     EXPECT_EQ(MQOD_VERSION_4, open.odVersion);
     EXPECT_EQ("color = 'red'", open.selector);
     EXPECT_GT(open.resObjectStringBufSize, 0) << "V7 answers 2520 when the resolved object string has no buffer (openQ 12102)";
-    EXPECT_EQ(MQOO_INPUT_AS_Q_DEF | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING, open.options) << "the selector adds no open option";
+    EXPECT_EQ(MQOO_INPUT_SHARED | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING, open.options) << "the selector adds no open option";
 }
 
 TEST_F(GetOptionsFake, ASelectorIsNotCutToAnythingShorter)
@@ -421,20 +421,20 @@ TEST_F(GetOptionsFake, AlternateUserSetsTheOpenOptionAndName)
     ASSERT_TRUE(r.ok()) << r.text;
 
     ASSERT_EQ(1u, queueOpens().size());
-    EXPECT_EQ(MQOO_INPUT_AS_Q_DEF | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING | MQOO_ALTERNATE_USER_AUTHORITY, queueOpens()[0].options);
+    EXPECT_EQ(MQOO_INPUT_SHARED | MQOO_BROWSE | MQOO_FAIL_IF_QUIESCING | MQOO_ALTERNATE_USER_AUTHORITY, queueOpens()[0].options);
     EXPECT_EQ("APPUSER", queueOpens()[0].alternateUser);
     EXPECT_TRUE(r.warnings.empty());
 }
 
-TEST_F(GetOptionsFake, AnAlternateUserOverTwelveCharactersIsCutAsWindowsCutsItAndReported)
+TEST_F(GetOptionsFake, AnAlternateUserOverTwelveCharactersFails)
 {
     ASSERT_TRUE(connect().ok());
     GetOptions options;
     options.alternateUser = "ABCDEFGHIJKLMNOP";
     Result r = getWith(options);
-    ASSERT_TRUE(r.ok()) << r.text;
-    EXPECT_EQ("ABCDEFGHIJKL", queueOpens()[0].alternateUser);
-    EXPECT_TRUE(anyWarningContains(r, "12 characters"));
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("12 characters")) << r.text;
+    EXPECT_TRUE(queueOpens().empty()) << "MQOPEN was not called";
 }
 
 TEST_F(GetOptionsFake, ChangingTheAlternateUserReopensTheQueue)

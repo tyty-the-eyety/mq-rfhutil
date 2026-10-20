@@ -1025,19 +1025,16 @@ TEST_F(MqSessionFakeTest, PutAlternateUserIsPassedAtOpen)
     EXPECT_EQ("ALTUSER", fake.openLog[0].alternateUser);
 }
 
-TEST_F(MqSessionFakeTest, PutAlternateUserLongerThan12CharactersIsCutAndSaid)
+TEST_F(MqSessionFakeTest, PutAlternateUserLongerThan12CharactersFails)
 {
     connect();
     PutOptions options;
     options.alternateUser = "ABCDEFGHIJKLMNOP";
     Message m = putText();
     Result r = session.put("Q", m, options);
-    ASSERT_TRUE(r.ok()) << r.text;
-
-    ASSERT_EQ(1u, fake.openLog.size());
-    EXPECT_EQ("ABCDEFGHIJKL", fake.openLog[0].alternateUser) << "openQ 11978-11990 cuts to MQ_USER_ID_LENGTH";
-    ASSERT_EQ(1u, r.warnings.size());
-    EXPECT_NE(std::string::npos, r.warnings[0].find("cut to 12 characters")) << r.warnings[0];
+    EXPECT_FALSE(r.ok());
+    EXPECT_NE(std::string::npos, r.text.find("12 characters")) << r.text;
+    EXPECT_TRUE(fake.openLog.empty()) << "MQOPEN was not called";
 }
 
 TEST_F(MqSessionFakeTest, PutReopensWhenTheAlternateUserChanges)

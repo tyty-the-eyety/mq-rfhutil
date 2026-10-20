@@ -622,13 +622,14 @@ namespace rfh
 			openOpts |= MQOO_SET_IDENTITY_CONTEXT;
 		}
 
+		if (options.alternateUser.size() > MQ_USER_ID_LENGTH)
+		{
+			return Result::failure("Alternate user id cannot be longer than " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
+		}
+
 		std::vector<std::string> notes;
 		OpenExtras extras;
-		extras.alternateUser = alternateUserOf(options.alternateUser);
-		if (extras.alternateUser.size() < options.alternateUser.size())
-		{
-			notes.push_back("The alternate user id was cut to " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
-		}
+		extras.alternateUser = options.alternateUser;
 
 		Result opened = ensureOpen(queue, options.remoteQm, openOpts, extras);
 		if (!opened.ok())
@@ -998,14 +999,15 @@ namespace rfh
 			}
 		}
 
+		if (options.alternateUser.size() > MQ_USER_ID_LENGTH)
+		{
+			return Result::failure("Alternate user id cannot be longer than " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
+		}
+
 		std::vector<std::string> notes;
 		OpenExtras extras;
 		extras.selector = options.selector;
-		extras.alternateUser = alternateUserOf(options.alternateUser);
-		if (extras.alternateUser.size() < options.alternateUser.size())
-		{
-			notes.push_back("The alternate user id was cut to " + std::to_string(MQ_USER_ID_LENGTH) + " characters");
-		}
+		extras.alternateUser = options.alternateUser;
 		const MQLONG openFlags = (options.inputShared ? MQOO_INPUT_SHARED : MQOO_INPUT_AS_Q_DEF) | MQOO_BROWSE;
 
 		// setMQoptions 17819-17855: complete message and logical order need a queue manager that is not
