@@ -40,6 +40,7 @@ add_library(rfhcore STATIC
     message/rfh_mqmd_fields.cpp
     message/rfh_id_display.cpp
     message/rfh_header_chain.cpp
+    message/rfh_parsed_headers.cpp
     fileio/rfh_message_file.cpp
     format/rfh_format.cpp
     ${RFHUTIL_SHARED_SOURCES}
@@ -76,6 +77,7 @@ if(NOT WIN32)
         message/rfh_mqmd_fields.cpp
         message/rfh_id_display.cpp
         message/rfh_header_chain.cpp
+        message/rfh_parsed_headers.cpp
         fileio/rfh_message_file.cpp
         format/rfh_format.cpp
         PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
