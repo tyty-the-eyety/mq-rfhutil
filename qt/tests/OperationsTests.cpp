@@ -308,8 +308,6 @@ namespace
         QSignalSpy finished;
     };
 
-    const QString kKept = "The connection was kept open: a group or segment put is waiting for its commit";
-
     // A group put that is still open, then the browse of a queue with one message.
     void pendGroupThenBrowseOpen(Harness & h, int messages = 1)
     {
@@ -324,16 +322,6 @@ namespace
         QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
         QVERIFY(h.doc.browse().active);
         h.log.clear();
-    }
-
-    void expectGroupStillPendingAndConnected(Harness & h)
-    {
-        QCOMPARE(fake.backCalls, 0);
-        QCOMPARE(fake.pendingPuts.size(), size_t(1));
-        QVERIFY(h.doc.connected());
-        QVERIFY(!h.doc.queueOpen());
-        QCOMPARE(fake.discCalls, 0);
-        QVERIFY(!h.doc.browse().active);
     }
 
     // Peak resident set (VmHWM) of this process in KiB, or -1 without /proc. Writing 5 to clear_refs restarts the peak
@@ -2148,10 +2136,9 @@ private slots:
         }
     }
 
-    void writeQLeavesAGroupPendingAndTheNextCloseBacksItOut()
+    void writeQLeavesAGroupPendingAndTheNextCloseCommitsViaDisconnect()
     {
-        // An incomplete group put under syncpoint is not published by Close Q: the unit of work is rolled back first
-        // (Windows closeQ 12413 rolls back an open unit of work; inventory 3.2 Close Q)
+        // An incomplete group put under syncpoint: Close Q disconnects and MQDISC commits the unit (Windows behaviour)
         Watchdog dog(60);
         Harness h;
         rfh::MqmdFields f;
@@ -2162,12 +2149,11 @@ private slots:
         QCOMPARE(fake.pendingPuts.size(), size_t(1));
         h.log.clear();
         QVERIFY(h.run([&]() { h.ops.closeQ(); }));
-        QCOMPARE(fake.backCalls, 1);
-        QCOMPARE(h.entries(), QStringList() << "Unit of work rolled back");		// rollbackUOW: appendError (DA 12618)
-        QVERIFY(fake.queue(kQueue).messages.empty());
+        QCOMPARE(fake.backCalls, 0);
+        QVERIFY(h.entries().isEmpty());							// no rollback text
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));	// committed by MQDISC
         QVERIFY(!h.doc.connected());
-        // MQBACK came before MQDISC, which would have published it
-        QCOMPARE(fake.callOrder, (std::vector<std::string>{ "back", "disc" }));
+        QCOMPARE(fake.callOrder, (std::vector<std::string>{ "disc" }));
     }
 
     void writeQCompletingTheGroupCommitsEverythingAndClearsThePendingUnit()
@@ -2190,7 +2176,7 @@ private slots:
         QVERIFY(h.log.text().isEmpty());
     }
 
-    void writeQDisconnectWithAPendingGroupBacksItOutToo()
+    void writeQDisconnectWithAPendingGroupCommitsViaDisconnect()
     {
         Watchdog dog(60);
         Harness h;
@@ -2200,16 +2186,16 @@ private slots:
         QVERIFY(h.run([&]() { h.ops.writeQ(); }));
         h.log.clear();
         QVERIFY(h.run([&]() { h.ops.disconnectQm(); }));
-        QCOMPARE(fake.backCalls, 1);
-        QVERIFY(fake.queue(kQueue).messages.empty());
-        QVERIFY2(h.newest().startsWith("Unit of work rolled back\r\nQueue closed\r\nDisconnected from queue manager"), qPrintable(h.newest()));
+        QCOMPARE(fake.backCalls, 0);
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));	// committed by MQDISC
+        QVERIFY2(h.newest().startsWith("Queue closed\r\nDisconnected from queue manager"), qPrintable(h.newest()));
     }
 
     // ---- review follow-ups: a pending unit of work is the put flows' alone ------------------------------------------
 
-    void aGroupGoesOnPendingAfterAQueueManagerChangeBackedOutTheOldOne()
+    void aGroupGoesOnPendingAfterAQueueManagerChangeCommitsViaDisconnect()
     {
-        // The rollback that checkConnection does for the OLD connection is not the outcome of the new group member
+        // checkConnection disconnects the old QM (MQDISC commits its unit); new group member is pending on QM2
         Watchdog dog(60);
         Harness h;
         rfh::MqmdFields f;
@@ -2219,53 +2205,56 @@ private slots:
         QCOMPARE(fake.pendingPuts.size(), size_t(1));
         h.doc.setQueueManager("QM2");
         QVERIFY(h.run([&]() { h.ops.writeQ(); }));
-        QCOMPARE(fake.backCalls, 1);									// the old unit
-        QCOMPARE(fake.pendingPuts.size(), size_t(1));					// the new member waits
+        QCOMPARE(fake.backCalls, 0);								// MQDISC committed the old unit (no MQBACK)
+        QCOMPARE(fake.pendingPuts.size(), size_t(1));				// new member on QM2 is pending
         h.log.clear();
         QVERIFY(h.run([&]() { h.ops.closeQ(); }));
-        QCOMPARE(fake.backCalls, 2);									// the new unit is backed out, not committed by MQDISC
-        QVERIFY(fake.queue(kQueue).messages.empty());
+        QCOMPARE(fake.backCalls, 0);								// MQDISC committed the new unit too
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(2));	// both committed by MQDISC
         QCOMPARE(fake.callOrder.back(), std::string("disc"));
-        QCOMPARE(fake.callOrder.at(fake.callOrder.size() - 2), std::string("back"));
+        QVERIFY(std::find(fake.callOrder.begin(), fake.callOrder.end(), "back") == fake.callOrder.end());
     }
 
-    void browseToTheEndLeavesAPendingGroupAndTheConnectionAlone()
+    void browseToTheEndWithAPendingGroupDisconnectsAndCommitsViaDisconnect()
     {
         Watchdog dog(60);
         Harness h;
         pendGroupThenBrowseOpen(h);
         QVERIFY(h.run([&]() { h.ops.browseNext(); }));					// 2033: the browse ends
-        expectGroupStillPendingAndConnected(h);
-        QCOMPARE(h.entries(), QStringList() << ("No more messages in queue\r\n" + kKept));
-        h.log.clear();
-        QVERIFY(h.run([&]() { h.ops.closeQ(); }));						// the put flows still own the unit
-        QCOMPARE(fake.backCalls, 1);
-        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));
+        QCOMPARE(fake.discCalls, 1);
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(fake.backCalls, 0);
+        QVERIFY(fake.pendingPuts.empty());								// committed by MQDISC
+        QCOMPARE(h.entries(), QStringList() << "No more messages in queue");
     }
 
-    void endBrowseLeavesAPendingGroupAndTheConnectionAlone()
+    void endBrowseWithAPendingGroupDisconnects()
     {
         Watchdog dog(60);
         Harness h;
         pendGroupThenBrowseOpen(h);
         QVERIFY(h.run([&]() { h.ops.endBrowse(); }));
-        expectGroupStillPendingAndConnected(h);
-        QCOMPARE(h.entries(), QStringList() << (kKept + "\r\nBrowse operation ended"));
+        QCOMPARE(fake.discCalls, 1);
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(fake.backCalls, 0);
+        QCOMPARE(h.entries(), QStringList() << "Browse operation ended");
     }
 
-    void aFailedBrowseNextLeavesAPendingGroupAndTheConnectionAlone()
+    void aFailedBrowseNextWithAPendingGroupDisconnects()
     {
         Watchdog dog(60);
         Harness h;
         pendGroupThenBrowseOpen(h);
         fake.getRc = MQRC_NOT_AUTHORIZED;
         QVERIFY(h.run([&]() { h.ops.browseNext(); }));
-        expectGroupStillPendingAndConnected(h);
+        QCOMPARE(fake.discCalls, 1);
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(fake.backCalls, 0);
         QVERIFY2(h.newest().startsWith("2035 Not authorized (BrowseNext)"), qPrintable(h.newest()));
-        QVERIFY2(h.newest().endsWith(kKept), qPrintable(h.newest()));
+        QVERIFY2(!h.newest().contains("kept"), qPrintable(h.newest()));
     }
 
-    void aFailedBrowsePrevLeavesAPendingGroupAndTheConnectionAlone()
+    void aFailedBrowsePrevWithAPendingGroupDisconnects()
     {
         Watchdog dog(60);
         Harness h;
@@ -2275,21 +2264,24 @@ private slots:
         h.log.clear();
         fake.getRc = MQRC_NOT_AUTHORIZED;
         QVERIFY(h.run([&]() { h.ops.browsePrev(); }));
-        expectGroupStillPendingAndConnected(h);
-        QVERIFY2(h.newest().endsWith(kKept), qPrintable(h.newest()));
+        QCOMPARE(fake.discCalls, 1);
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(fake.backCalls, 0);
+        QVERIFY2(!h.newest().contains("kept"), qPrintable(h.newest()));
     }
 
-    void aFailedStartBrowseLeavesAPendingGroupAndTheConnectionAlone()
+    void aFailedStartBrowseWithAPendingGroupDisconnects()
     {
         Watchdog dog(60);
         Harness h;
         pendGroupThenBrowseOpen(h);
-        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));					// the browse over, the group still open
+        QVERIFY(h.run([&]() { h.ops.endBrowse(); }));					// browse over; group committed by MQDISC
         h.log.clear();
         fake.queue(kQueue).messages.clear();							// nothing to browse: 2033
         QVERIFY(h.run([&]() { h.ops.startBrowse(); }));
-        expectGroupStillPendingAndConnected(h);
-        QCOMPARE(h.entries(), QStringList() << ("No messages in RFHUTIL.TEST.OPS queue\r\n" + kKept));
+        QVERIFY(!h.doc.connected());
+        QCOMPARE(fake.backCalls, 0);
+        QCOMPARE(h.entries(), QStringList() << "No messages in RFHUTIL.TEST.OPS queue");
     }
 
     void anExceptionInAJobShowsItsTextInTheStatusLog()
@@ -2303,10 +2295,9 @@ private slots:
         QCOMPARE(h.entries(), QStringList() << "The operation failed with an exception: boom");
     }
 
-    void aFailedCommitShowsTheCommitTextBacksTheUnitOutAndDisconnects()
+    void aFailedCommitShowsTheCommitTextAndDisconnects()
     {
-        // commitUOW (DA 12584-12588): setErrorMsg(cc, rc, "commit"), discQM. The core's MQDISC would commit what
-        // the failed MQCMIT did not, so the unit is rolled back first.
+        // commitUOW (DA 12584-12588): setErrorMsg(cc, rc, "commit"), discQM. MQDISC commits what MQCMIT did not.
         Watchdog dog(60);
         fake.cmitRc = MQRC_NOT_AUTHORIZED;
         Harness h;
@@ -2319,10 +2310,10 @@ private slots:
         const QStringList lines = entries.at(0).split("\r\n");
         QCOMPARE(lines.at(0), QString("Message sent to RFHUTIL.TEST.OPS length=0"));
         QCOMPARE(lines.at(1), QString("2035 Not authorized (commit)"));
-        QVERIFY2(entries.at(0).contains("Unit of work rolled back"), qPrintable(entries.at(0)));
+        QVERIFY2(!entries.at(0).contains("rolled back"), qPrintable(entries.at(0)));
         QVERIFY(!h.doc.connected());
-        QCOMPARE(fake.backCalls, 1);
-        QVERIFY(fake.queue(kQueue).messages.empty());
+        QCOMPARE(fake.backCalls, 0);
+        QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));		// committed by MQDISC
         QCOMPARE(fake.callOrder.back(), std::string("disc"));
     }
 

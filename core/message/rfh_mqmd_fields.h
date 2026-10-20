@@ -49,7 +49,7 @@ namespace rfh
 		int persistence = MQPERSIST_NO;		// MQPERSIST_NO / MQPERSIST_YES / MQPERSIST_AS_Q
 		int encoding = NUMERIC_PC;			// NUMERIC_PC / NUMERIC_HOST
 		int pdEncoding = NUMERIC_PC;
-		int floatEncoding = FLOAT_PC;		// FLOAT_PC / FLOAT_UNIX / FLOAT_390 / FLOAT_TNS
+		int floatEncoding = -1;				// -1 = no selection (Windows default); FLOAT_PC / FLOAT_UNIX / FLOAT_390 / FLOAT_TNS
 		int reportException = -1;
 		int reportExpiration = -1;
 		int reportCoa = -1;

@@ -748,8 +748,9 @@ TEST_F(ListQueues, NotConnectedFails)
 // Failures of the command server, timeouts and lost connections (DataArea::getListOfNames)
 // ---------------------------------------------------------------------------------------------------
 
-TEST_F(ListQueues, ACommandServerRejectionIsReportedWithItsReason)
+TEST_F(ListQueues, ACommandServerRejectionIsDroppedSilently)
 {
+    // Windows silently drops command-server rejections and returns whatever names were collected
     Wire rejection;
     header(rejection, MQCFT_XR_ITEM, 1, MQCC_FAILED, MQRCCF_CFH_COMMAND_ERROR, 1);
     integer(rejection, MQIACF_PARAMETER_ID, 2016);
@@ -759,28 +760,26 @@ TEST_F(ListQueues, ACommandServerRejectionIsReportedWithItsReason)
 
     std::vector<std::string> names;
     Result r = list(names);
-    EXPECT_FALSE(r.ok());
-    EXPECT_EQ(MQCC_FAILED, r.cc);
-    EXPECT_EQ(3007, r.rc);
-    EXPECT_NE(std::string::npos, r.text.find("3007")) << r.text;
-    EXPECT_NE(std::string::npos, r.text.find("2016")) << "the parameter the server objected to: " << r.text;
-    EXPECT_EQ((std::vector<std::string>{"R1"}), names) << "the other types are still listed, as Windows does";
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_EQ((std::vector<std::string>{"R1"}), names) << "the other types are still listed";
     expectNoLeaks();
 }
 
-TEST_F(ListQueues, ANotAuthorizedReplyKeepsTheMqReasonCode)
+TEST_F(ListQueues, ANotAuthorizedReplyIsDroppedSilently)
 {
+    // Windows silently drops command-server rejections; names from the other types are returned
     script[kLocal].messages = {bareReply(MQCFT_RESPONSE, 1, MQCC_FAILED, MQRC_NOT_AUTHORIZED)};
     connect();
 
     std::vector<std::string> names;
     Result r = list(names);
-    EXPECT_EQ(MQCC_FAILED, r.cc);
-    EXPECT_EQ(MQRC_NOT_AUTHORIZED, r.rc);
+    EXPECT_TRUE(r.ok()) << r.text;
+    EXPECT_TRUE(names.empty());
 }
 
-TEST_F(ListQueues, ALaterTypeThatFailsIsOnlyAWarning)
+TEST_F(ListQueues, ALaterTypeThatFailsIsDroppedSilently)
 {
+    // Windows drops command-server rejections without a trace; names from the other types are returned
     script[kLocal].messages = {queueReply("Q1", kLocal, 1)};
     script[kRemote].messages = {bareReply(MQCFT_XR_ITEM, 1, MQCC_FAILED, MQRCCF_CFH_COMMAND_ERROR)};
     script[kAlias].messages = {queueReply("A1", kAlias, 1)};
@@ -790,7 +789,7 @@ TEST_F(ListQueues, ALaterTypeThatFailsIsOnlyAWarning)
     Result r = list(names);
     EXPECT_TRUE(r.ok()) << r.text;
     EXPECT_EQ((std::vector<std::string>{"Q1", "A1"}), names);
-    EXPECT_TRUE(anyWarningContains(r, "3007")) << "Windows drops this failure without a trace";
+    EXPECT_FALSE(anyWarningContains(r, "3007"));
 }
 
 TEST_F(ListQueues, NoReplyAtAllIsReportedAsATimeout)

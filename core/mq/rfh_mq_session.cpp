@@ -1356,18 +1356,8 @@ namespace rfh
 
 			if (reply.compCode == MQCC_FAILED)
 			{
-				// "none found" is how a command server says there is no queue of the type: an empty list, not an error
-				if (reply.reason != MQRCCF_NONE_FOUND)
-				{
-					outcome = Result();
-					outcome.cc = MQCC_FAILED;
-					outcome.rc = reply.reason;
-					outcome.text = std::string("The command server rejected the request for ") + typeLabel(queueType) + ": reason " + std::to_string(reply.reason);
-					if (reply.parameterId != 0)
-					{
-						outcome.text += " (parameter " + std::to_string(reply.parameterId) + ")";
-					}
-				}
+				// NONE_FOUND and command server rejections return the names collected so far (Windows: silent drop)
+				return outcome;
 			}
 			else if (reply.hasQueue && (reply.queueType > 0) && (reply.queueType != MQQT_MODEL) && (reply.name != replyName) && (seen.count(reply.name) == 0))
 			{

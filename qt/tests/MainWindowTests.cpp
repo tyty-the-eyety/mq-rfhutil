@@ -773,7 +773,7 @@ private slots:
 		QVERIFY2(h.window->statusLog().text().contains("trace"), qPrintable(h.window->statusLog().text()));
 	}
 
-	void closingRollsBackAPendingUnitInsteadOfCommittingIt()
+	void closingCommitsAPendingUnitViaDisconnect()
 	{
 		for (int how = 0; how < 3; how++)		// destroy, close, Exit button
 		{
@@ -802,9 +802,9 @@ private slots:
 				h.button("exitButton")->click();
 			}
 			h.window.reset();
-			QVERIFY2(fake.backCalls > backs, "the unit was not backed out");
+			QCOMPARE(fake.backCalls, backs);								// no explicit rollback
 			QCOMPARE(fake.pendingPuts.size(), size_t(0));
-			QCOMPARE(fake.queue(kQueue).messages.size(), size_t(0));		// nothing became visible
+			QCOMPARE(fake.queue(kQueue).messages.size(), size_t(1));		// committed via MQDISC
 		}
 	}
 

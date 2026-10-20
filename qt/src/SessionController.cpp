@@ -79,19 +79,7 @@ namespace rfhqt
 		rfh::MqSession * s = session.get();
 		QMetaObject::invokeMethod(worker, [s]()
 		{
-			// MQDISC commits a unit of work that is still open, which would publish half a group or segment set the user
-			// never finished. Back it out first (a rollback with nothing pending does nothing).
-			if (s->isConnected())
-			{
-				const rfh::Result back = s->rollback();
-				if (!back.ok())
-				{
-					const std::string line = "The unit of work could not be backed out before the disconnect: " + back.text;
-					rfhGetTrace()->logTraceEntry(line.c_str());
-					fprintf(stderr, "%s\n", line.c_str());
-				}
-			}
-			s->disconnect();
+			s->disconnect();	// MQDISC commits whatever unit is pending (Windows behaviour)
 		}, Qt::BlockingQueuedConnection);
 		thread.quit();
 		thread.wait();

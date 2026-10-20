@@ -1925,7 +1925,7 @@ TEST(FromGetMqmd, EncodingsAreReadFromTheirOwnBits)
         MqmdFields got = gotFrom(e);
         EXPECT_EQ(c.integer, got.encoding) << "field encoding for " << c.encoding;
         EXPECT_EQ(c.decimal, got.pdEncoding) << "field pdEncoding for " << c.encoding;
-        EXPECT_EQ(FLOAT_PC, got.floatEncoding) << "field floatEncoding for " << c.encoding;
+        // floatEncoding is left unchanged by fromGetMqmd (as on Windows)
     }
 }
 

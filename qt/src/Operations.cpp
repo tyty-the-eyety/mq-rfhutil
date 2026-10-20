@@ -42,37 +42,21 @@ namespace rfhqt
 			}
 		}
 
-		// DataArea::closeQ (12397): a unit of work that is still open is rolled back first (the inventory's reading of
-		// 12413; Windows' unitOfWorkActive is never set, so there the disconnect that follows commits it).
-		void closeQueue(rfh::MqSession & s, bool pendingUnit, rfh::CloseOption option, JobResult & r)
+		// DataArea::closeQ (12397): Windows' unitOfWorkActive is never set, so MQDISC commits whatever unit is pending.
+		void closeQueue(rfh::MqSession & s, rfh::CloseOption option, JobResult & r)
 		{
-			if (pendingUnit && s.isConnected())
-			{
-				addStep(r, "rollback", s.rollback());
-			}
 			if (s.isConnected())
 			{
 				record(s, r, "Close", s.closeQueue(option));
 			}
 		}
 
-		const char * const kKeptConnection = "The connection was kept open: a group or segment put is waiting for its commit";
-
-		// The end of a browse (discQM after a browse that ended or failed: DA 8281, 8648, 9208, 8438). A browse never
-		// touches the unit of work of the put flows: the queue handle is closed without a rollback, and when a unit is
-		// pending the connection stays, because MQDISC would commit it. Windows would commit it at the disconnect; the
-		// Qt program does not publish an unfinished group as a side effect of a browse, and says why.
-		void leaveBrowse(rfh::MqSession & s, bool pendingUnit, JobResult & r)
+		// The end of a browse (discQM after a browse that ended or failed: DA 8281, 8648, 9208, 8438).
+		// MQDISC commits whatever unit is pending (Windows behaviour).
+		void leaveBrowse(rfh::MqSession & s, JobResult & r)
 		{
-			closeQueue(s, false, rfh::CloseOption::None, r);
-			if (pendingUnit && s.isConnected())
-			{
-				r.notes.push_back(kKeptConnection);
-			}
-			else
-			{
-				addStep(r, "Disc", s.disconnect());
-			}
+			closeQueue(s, rfh::CloseOption::None, r);
+			addStep(r, "Disc", s.disconnect());
 		}
 
 		// DataArea::checkConnection (12489). False when the flow must stop because the connect failed.
@@ -81,7 +65,7 @@ namespace rfhqt
 		{
 			if (s.isConnected() && (connectedQm != qm))
 			{
-				closeQueue(s, pendingUnit, rfh::CloseOption::None, r);
+				closeQueue(s, rfh::CloseOption::None, r);
 				addStep(r, "Disc", s.disconnect());
 			}
 			if (!s.isConnected())
@@ -426,11 +410,7 @@ namespace rfhqt
 			JobResult r;
 			if (s.isQueueOpen())
 			{
-				closeQueue(s, env.pendingUnit, env.closeOption, r);		// explicitCloseQ -> closeQ(m_close_option)
-			}
-			else if (env.pendingUnit && s.isConnected())
-			{
-				addStep(r, "rollback", s.rollback());
+				closeQueue(s, env.closeOption, r);		// explicitCloseQ -> closeQ(m_close_option)
 			}
 			addStep(r, "Disc", s.disconnect());
 			return r;
@@ -465,7 +445,7 @@ namespace rfhqt
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
 			JobResult r;
-			closeQueue(s, env.pendingUnit, env.closeOption, r);
+			closeQueue(s, env.closeOption, r);
 			return r;
 		}, [this, flow](const JobResult & r)
 		{
@@ -488,8 +468,8 @@ namespace rfhqt
 		submitFlow(flow, env, false, [env](rfh::MqSession & s)
 		{
 			JobResult r;
-			closeQueue(s, env.pendingUnit, env.closeOption, r);			// closeQ(m_close_options)
-			addStep(r, "Disc", s.disconnect());							// discQM()
+			closeQueue(s, env.closeOption, r);		// closeQ(m_close_options)
+			addStep(r, "Disc", s.disconnect());		// discQM()
 			return r;
 		}, [this, flow](const JobResult & r)
 		{
@@ -567,7 +547,7 @@ namespace rfhqt
 			JobResult r;
 			if (s.isConnected())
 			{
-				closeQueue(s, env.pendingUnit, rfh::CloseOption::None, r);
+				closeQueue(s, rfh::CloseOption::None, r);
 				addStep(r, "Disc", s.disconnect());
 			}
 			env.connect->qmName = env.qm;
@@ -891,7 +871,7 @@ namespace rfhqt
 				}
 				else if (s.isConnected())
 				{
-					leaveBrowse(s, env.pendingUnit, r);		// discQM closes the queue and disconnects
+					leaveBrowse(s, r);		// discQM closes the queue and disconnects
 
 				}
 			}
@@ -963,7 +943,7 @@ namespace rfhqt
 				// getCurrentDepth, then discQM: the browse ends whatever went wrong (DA 8638-8648)
 				r.hasQueueInfo = true;
 				s.queueInfo(env.queue, r.queue);
-				leaveBrowse(s, env.pendingUnit, r);
+				leaveBrowse(s, r);
 			}
 			return r;
 		}, [this, flow, queue](const JobResult & r)
@@ -1031,7 +1011,7 @@ namespace rfhqt
 			}
 			else if (s.isConnected() && !cancelFlag->load())
 			{
-				leaveBrowse(s, env.pendingUnit, r);		// the previous message cannot be found: discQM (DA 9208)
+				leaveBrowse(s, r);		// the previous message cannot be found: discQM (DA 9208)
 			}
 			return r;
 		}, [this, flow, queue](const JobResult & r)
@@ -1085,7 +1065,7 @@ namespace rfhqt
 			{
 				r.hasQueueInfo = true;
 				s.queueInfo(env.queue, r.queue);										// getCurrentDepth
-				leaveBrowse(s, env.pendingUnit, r);
+				leaveBrowse(s, r);
 			}
 			return r;
 		}, [this, flow](const JobResult & r)
@@ -1164,9 +1144,7 @@ namespace rfhqt
 						addStep(r, "commit", c, true);
 						if (!c.ok() && s.isConnected())
 						{
-							// commitUOW disconnects after a failure (DA 12586); MQDISC would commit what MQCMIT did not,
-							// so the unit of work is backed out first
-							addStep(r, "rollback", s.rollback(), true);
+							// commitUOW disconnects after a failure (DA 12586); MQDISC commits what MQCMIT did not
 							addStep(r, "Disc", s.disconnect());
 						}
 					}
