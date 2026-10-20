@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+  <class>ImsTab</class>
+  <widget class="QWidget" name="ImsTab">
+    <property name="windowTitle"><string>IMS</string></property>
+    <layout class="QVBoxLayout" name="rootLayout">
+      <item>
+        <layout class="QHBoxLayout" name="topRow">
+          <item>
+            <widget class="QCheckBox" name="includedCheck">
+              <property name="toolTip"><string>Include the MQIIH IMS header</string></property>
+              <property name="text"><string>Include IMS header</string></property>
+            </widget>
+          </item>
+          <item>
+            <spacer name="topHSpacer">
+              <property name="orientation"><enum>Qt::Horizontal</enum></property>
+              <property name="sizeHint" stdset="0">
+                <size><width>40</width><height>20</height></size>
+              </property>
+            </spacer>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <layout class="QHBoxLayout" name="columnsLayout" stretch="1,1">
+          <item>
+            <layout class="QFormLayout" name="leftForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="ccsidLabel">
+                  <property name="text"><string>CCSID</string></property>
+                  <property name="buddy"><cstring>ccsidEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="ccsidEdit">
+                  <property name="toolTip"><string>Coded character set ID of data following this header</string></property>
+                  <property name="maxLength"><number>6</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="encodingLabel">
+                  <property name="text"><string>Encoding</string></property>
+                  <property name="buddy"><cstring>encodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QComboBox" name="encodingCombo">
+                  <property name="toolTip"><string>Integer encoding</string></property>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="pdEncodingLabel">
+                  <property name="text"><string>PD Encoding</string></property>
+                  <property name="buddy"><cstring>pdEncodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QComboBox" name="pdEncodingCombo">
+                  <property name="toolTip"><string>Packed-decimal encoding</string></property>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="floatEncodingLabel">
+                  <property name="text"><string>Float Encoding</string></property>
+                  <property name="buddy"><cstring>floatEncodingCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QComboBox" name="floatEncodingCombo">
+                  <property name="toolTip"><string>Floating-point encoding</string></property>
+                </widget>
+              </item>
+              <item row="4" column="0">
+                <widget class="QLabel" name="formatLabel">
+                  <property name="text"><string>Format</string></property>
+                  <property name="buddy"><cstring>formatEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="4" column="1">
+                <widget class="QLineEdit" name="formatEdit">
+                  <property name="toolTip"><string>Format of data following this header (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+              <item row="5" column="0">
+                <widget class="QLabel" name="flagsLabel">
+                  <property name="text"><string>Flags</string></property>
+                  <property name="buddy"><cstring>flagsEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="5" column="1">
+                <widget class="QLineEdit" name="flagsEdit">
+                  <property name="toolTip"><string>Flags (numeric)</string></property>
+                  <property name="maxLength"><number>10</number></property>
+                </widget>
+              </item>
+              <item row="6" column="0">
+                <widget class="QLabel" name="lTermLabel">
+                  <property name="text"><string>LTerm</string></property>
+                  <property name="buddy"><cstring>lTermEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="6" column="1">
+                <widget class="QLineEdit" name="lTermEdit">
+                  <property name="toolTip"><string>Logical terminal name (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+              <item row="7" column="0">
+                <widget class="QLabel" name="mapNameLabel">
+                  <property name="text"><string>Map Name</string></property>
+                  <property name="buddy"><cstring>mapNameEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="7" column="1">
+                <widget class="QLineEdit" name="mapNameEdit">
+                  <property name="toolTip"><string>Map name (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+              <item row="8" column="0">
+                <widget class="QLabel" name="replyToFmtLabel">
+                  <property name="text"><string>Reply-To Fmt</string></property>
+                  <property name="buddy"><cstring>replyToFmtEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="8" column="1">
+                <widget class="QLineEdit" name="replyToFmtEdit">
+                  <property name="toolTip"><string>Reply-to message format (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+          <item>
+            <layout class="QFormLayout" name="rightForm">
+              <item row="0" column="0">
+                <widget class="QLabel" name="authenticatorLabel">
+                  <property name="text"><string>Authenticator</string></property>
+                  <property name="buddy"><cstring>authenticatorEdit</cstring></property>
+                </widget>
+              </item>
+              <item row="0" column="1">
+                <widget class="QLineEdit" name="authenticatorEdit">
+                  <property name="toolTip"><string>Authenticator (8 chars)</string></property>
+                  <property name="maxLength"><number>8</number></property>
+                </widget>
+              </item>
+              <item row="1" column="0">
+                <widget class="QLabel" name="commitModeLabel">
+                  <property name="text"><string>Commit Mode</string></property>
+                  <property name="buddy"><cstring>commitModeCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="1" column="1">
+                <widget class="QComboBox" name="commitModeCombo">
+                  <property name="toolTip"><string>Commit mode: 0=commit then send, 1=send then commit</string></property>
+                  <item><property name="text"><string>0 - Commit then send</string></property></item>
+                  <item><property name="text"><string>1 - Send then commit</string></property></item>
+                </widget>
+              </item>
+              <item row="2" column="0">
+                <widget class="QLabel" name="transStateLabel">
+                  <property name="text"><string>Trans State</string></property>
+                  <property name="buddy"><cstring>transStateCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="2" column="1">
+                <widget class="QComboBox" name="transStateCombo">
+                  <property name="toolTip"><string>Transaction state</string></property>
+                  <item><property name="text"><string>0 - Not in transaction</string></property></item>
+                  <item><property name="text"><string>1 - In transaction</string></property></item>
+                  <item><property name="text"><string>2 - Begin transaction</string></property></item>
+                </widget>
+              </item>
+              <item row="3" column="0">
+                <widget class="QLabel" name="securityScopeLabel">
+                  <property name="text"><string>Security Scope</string></property>
+                  <property name="buddy"><cstring>securityScopeCombo</cstring></property>
+                </widget>
+              </item>
+              <item row="3" column="1">
+                <widget class="QComboBox" name="securityScopeCombo">
+                  <property name="toolTip"><string>Security scope for LU6.2 sessions</string></property>
+                  <item><property name="text"><string>0 - Local</string></property></item>
+                  <item><property name="text"><string>1 - Full</string></property></item>
+                </widget>
+              </item>
+              <item row="4" column="0">
+                <widget class="QLabel" name="passExpirationLabel">
+                  <property name="text"><string>Pass Expiration</string></property>
+                </widget>
+              </item>
+              <item row="4" column="1">
+                <widget class="QCheckBox" name="passExpirationCheck">
+                  <property name="toolTip"><string>Pass expiration flag</string></property>
+                  <property name="text"><string></string></property>
+                </widget>
+              </item>
+              <item row="5" column="0">
+                <widget class="QLabel" name="addLengthLabel">
+                  <property name="text"><string>Add Length</string></property>
+                </widget>
+              </item>
+              <item row="5" column="1">
+                <widget class="QCheckBox" name="addLengthCheck">
+                  <property name="toolTip"><string>Add message length flag</string></property>
+                  <property name="text"><string></string></property>
+                </widget>
+              </item>
+              <item row="6" column="0">
+                <widget class="QLabel" name="noReplyFmtLabel">
+                  <property name="text"><string>No Reply Format</string></property>
+                </widget>
+              </item>
+              <item row="6" column="1">
+                <widget class="QCheckBox" name="noReplyFmtCheck">
+                  <property name="toolTip"><string>Suppress reply format flag</string></property>
+                  <property name="text"><string></string></property>
+                </widget>
+              </item>
+            </layout>
+          </item>
+        </layout>
+      </item>
+      <item>
+        <spacer name="bottomVSpacer">
+          <property name="orientation"><enum>Qt::Vertical</enum></property>
+          <property name="sizeHint" stdset="0">
+            <size><width>20</width><height>40</height></size>
+          </property>
+        </spacer>
+      </item>
+    </layout>
+  </widget>
+</ui>
