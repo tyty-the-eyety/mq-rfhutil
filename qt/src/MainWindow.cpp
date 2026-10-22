@@ -2,6 +2,7 @@
 
 #include "AppDocument.h"
 #include "AppSettings.h"
+#include "rfh_parsed_headers.h"
 #include "CicsTab.h"
 #include "ConnTab.h"
 #include "DataTab.h"
@@ -341,8 +342,93 @@ namespace rfhqt
 		connect(mqmdPage, &MqmdTab::statusMessage, log.get(), [this](const QString & text) { log->add(text); });
 		connect(ops.get(), &Operations::titleChanged, this, [this](const QString & queue) { setWindowTitle(queue); });
 		connect(doc.get(), &AppDocument::stateChanged, this, &MainWindow::applyMenuEnables);
+		connect(doc.get(), &AppDocument::stateChanged, this, &MainWindow::applyTabEnables);
+		connect(doc.get(), &AppDocument::messageChanged, this, &MainWindow::loadHeaderTabs);
 		connect(tabWidget, &QTabWidget::currentChanged, this, &MainWindow::tabChanged);
 		shownTab = tabWidget->currentIndex();
+
+		// Header tab edits: any field change rebuilds the header bytes in the document.
+		connect(rfhPage,    &RfhTab::fieldsEdited,    this, &MainWindow::gatherHeaderTabs);
+		connect(pubSubPage, &PubSubTab::fieldsEdited, this, &MainWindow::gatherHeaderTabs);
+		connect(pscrPage,   &PscrTab::fieldsEdited,   this, &MainWindow::gatherHeaderTabs);
+		connect(jmsPage,    &JmsTab::fieldsEdited,    this, &MainWindow::gatherHeaderTabs);
+		connect(usrPage,    &UsrTab::fieldsEdited,    this, &MainWindow::gatherHeaderTabs);
+		connect(cicsPage,   &CicsTab::fieldsEdited,   this, &MainWindow::gatherHeaderTabs);
+		connect(imsPage,    &ImsTab::fieldsEdited,    this, &MainWindow::gatherHeaderTabs);
+		connect(dlqPage,    &DlqTab::fieldsEdited,    this, &MainWindow::gatherHeaderTabs);
+		// OtherTab is read-only; no fieldsEdited signal.
+	}
+
+	void MainWindow::applyTabEnables()
+	{
+		const Enables e = doc->enables();
+		for (int i = 0; i < TabCount; i++)
+		{
+			const bool enabled = e.tabEnabled((rfhqt::Tab)i);
+			tabWidget->setTabEnabled(i, enabled);
+			if (!enabled)
+			{
+				if (tabWidget->tabToolTip(i).isEmpty())
+					tabWidget->setTabToolTip(i, "Enabled when data is present");
+			}
+			else
+			{
+				tabWidget->setTabToolTip(i, "");
+			}
+		}
+	}
+
+	void MainWindow::loadHeaderTabs()
+	{
+		if (updatingHeaders)
+			return;
+		updatingHeaders = true;
+		const rfh::ParsedHeaders & h = doc->headers();
+		if (h.rfh2.included)
+			rfhPage->setRfh2(h.rfh2);
+		else
+			rfhPage->setRfh1(h.rfh1);
+		pubSubPage->setFields(h.rfh2.psXml, h.rfh2.hasPs);
+		pscrPage->setFields(h.rfh2.pscrXml, h.rfh2.hasPscr);
+		jmsPage->setFields(h.rfh2.jms, h.rfh2.hasJms);
+		usrPage->setFields(h.rfh2.usrXml, h.rfh2.hasUsr);
+		otherPage->setXml(h.rfh2.otherXml);
+		cicsPage->setFields(h.cics);
+		imsPage->setFields(h.ims);
+		dlqPage->setFields(h.dlq);
+		updatingHeaders = false;
+	}
+
+	void MainWindow::gatherHeaderTabs()
+	{
+		if (updatingHeaders)
+			return;
+		updatingHeaders = true;
+		rfh::ParsedHeaders h;
+		if (rfhPage->isV2())
+		{
+			h.rfh2             = rfhPage->rfh2Fields();
+			h.rfh2.psXml       = pubSubPage->xml();
+			h.rfh2.hasPs       = pubSubPage->isIncluded();
+			h.rfh2.pscrXml     = pscrPage->xml();
+			h.rfh2.hasPscr     = pscrPage->isIncluded();
+			h.rfh2.jms         = jmsPage->fields();
+			h.rfh2.hasJms      = jmsPage->isIncluded();
+			h.rfh2.usrXml      = usrPage->xml();
+			h.rfh2.hasUsr      = usrPage->isIncluded();
+			// otherTab is read-only: preserve the current value rather than discarding it
+			h.rfh2.otherXml    = doc->headers().rfh2.otherXml;
+			h.rfh2.hasOther    = doc->headers().rfh2.hasOther;
+		}
+		else
+		{
+			h.rfh1 = rfhPage->rfh1Fields();
+		}
+		h.cics = cicsPage->fields();
+		h.ims  = imsPage->fields();
+		h.dlq  = dlqPage->fields();
+		updatingHeaders = false;
+		doc->setHeaders(std::move(h));
 	}
 
 	void MainWindow::tabChanged(int index)

@@ -121,6 +121,9 @@ namespace rfhqt
 		void wireTabs();
 		void wireShortcuts();
 		void applyMenuEnables();
+		void applyTabEnables();
+		void loadHeaderTabs();
+		void gatherHeaderTabs();
 		void fileOptionsChanged();
 		void tabChanged(int index);
 		void step(bool forward);
@@ -151,6 +154,7 @@ namespace rfhqt
 		DlqTab * dlqPage = nullptr;
 		ConnTab * connPage = nullptr;
 		int shownTab = 0;
+		bool updatingHeaders = false;
 		QAction * readRemoveCrLf = nullptr;
 		QAction * readUnixText = nullptr;
 		QAction * readIgnoreHeaders = nullptr;

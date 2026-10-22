@@ -227,11 +227,19 @@ namespace rfhqt
 		}
 	}
 
+	// MQENC_INTEGER_REVERSED (2) = little-endian PC encoding → NUMERIC_PC=0; otherwise NUMERIC_HOST=1 (rfhconst.h)
+	static int initialEncodingFrom(MQLONG mqmdEncoding)
+	{
+		return ((mqmdEncoding & MQENC_INTEGER_REVERSED) != 0) ? 0 : 1;
+	}
+
 	void AppDocument::setMessage(rfh::Message && message, std::string dataSource, bool dirty)
 	{
 		unsigned changes = CMessage;
 		msg = std::move(message);
 		source = std::move(dataSource);
+		rfh::parseHeaders(msg.headers.data(), msg.headers.size(),
+		                  msg.mqmd.CodedCharSetId, initialEncodingFrom(msg.mqmd.Encoding), parsedHeaders);
 		setDirty(dirty, changes);
 		publish(changes);
 	}
@@ -244,7 +252,18 @@ namespace rfhqt
 		source = std::move(dataSource);
 		fields = mqmdFields;
 		renderOptions = options;
+		rfh::parseHeaders(msg.headers.data(), msg.headers.size(),
+		                  msg.mqmd.CodedCharSetId, initialEncodingFrom(msg.mqmd.Encoding), parsedHeaders);
 		setDirty(dirty, changes);
+		publish(changes);
+	}
+
+	void AppDocument::setHeaders(rfh::ParsedHeaders headers)
+	{
+		parsedHeaders = std::move(headers);
+		msg.headers = rfh::buildHeaders(parsedHeaders);
+		unsigned changes = CMessage;
+		setDirty(true, changes);
 		publish(changes);
 	}
 
@@ -411,6 +430,7 @@ namespace rfhqt
 		// DeleteContents: copy book, ClearData (data, depth, file name), MQMD, header tabs
 		unsigned changes = CMessage | CMqmd | CRender;
 		msg = rfh::Message();
+		parsedHeaders = rfh::ParsedHeaders{};
 		source = EmptySource;
 		rfh::mqmd_fields::clear(fields);
 		renderOptions.ccsid = 0;

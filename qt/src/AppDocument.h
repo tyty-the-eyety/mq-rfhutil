@@ -35,6 +35,7 @@
 #include "rfh_message.h"
 #include "rfh_mq_session.h"
 #include "rfh_mqmd_fields.h"
+#include "rfh_parsed_headers.h"
 #include "SessionController.h"
 
 namespace rfhqt
@@ -156,6 +157,7 @@ namespace rfhqt
 		// ---- state, read-only access ------------------------------------------------------------------------
 		const rfh::Message & message() const { return msg; }
 		const rfh::MqmdFields & mqmd() const { return fields; }
+		const rfh::ParsedHeaders & headers() const { return parsedHeaders; }
 		const std::string & dataSource() const { return source; }				// "Message Data", "Message Data (N) from <path>", ...
 		const rfh::format::RenderOptions & render() const { return renderOptions; }	// formats, user's display choices, copy book path
 		size_t dataSize() const { return msg.body.size(); }						// Windows fileSize: the body only
@@ -185,6 +187,8 @@ namespace rfhqt
 		// dirty says whether the data is unsaved (true for a message from a queue or an edit, false when it
 		// was just read from a file).
 		void setMessage(rfh::Message && message, std::string dataSource = EmptySource, bool dirty = true);
+		// Replace the parsed headers: rebuilds msg.headers via buildHeaders(), marks dirty, emits messageChanged().
+		void setHeaders(rfh::ParsedHeaders headers);
 		// A message and the things that come with it (the MQMD tab's fields and the display formats), as one change:
 		// one set of signals, so a tab that redraws on them draws once and never shows the new formats with the old
 		// message or the reverse. Operations uses it for a get and for a file read.
@@ -241,6 +245,7 @@ namespace rfhqt
 		void publish(unsigned changes);
 
 		rfh::Message msg;
+		rfh::ParsedHeaders parsedHeaders;
 		rfh::MqmdFields fields;
 		std::string source = EmptySource;
 		rfh::format::RenderOptions renderOptions;
