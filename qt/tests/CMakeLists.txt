@@ -23,6 +23,8 @@ rfhqt_add_test(rfhqt_maintab_tests MainTabTests.cpp)
 rfhqt_add_test(rfhqt_mqmdtab_tests MqmdTabTests.cpp)
 rfhqt_add_test(rfhqt_datatab_tests DataTabTests.cpp)
 rfhqt_add_test(rfhqt_finddialogs_tests FindDialogsTests.cpp)
+rfhqt_add_test(rfhqt_headertab_tests HeaderTabTests.cpp)
+target_compile_definitions(rfhqt_headertab_tests PRIVATE RFH_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/core/golden")
 
 # GUI smoke tests against a real queue manager (TEST_QM). They skip, with a message, when none is reachable.
 rfhqt_add_test(rfhqt_guismoke_tests GuiSmokeTests.cpp)
