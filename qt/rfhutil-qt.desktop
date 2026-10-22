@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=RfhUtil
+GenericName=IBM MQ Message Utility
+Comment=View, edit and transfer IBM MQ messages
+Exec=rfhutil-qt
+Icon=rfhutil-qt
+Categories=Development;Utility;
+Terminal=false
+Keywords=MQ;IBM;message;queue;

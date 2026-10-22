@@ -50,6 +50,9 @@ target_link_libraries(rfhutil-qt PRIVATE rfhqt)
 target_compile_definitions(rfhutil-qt PRIVATE
     RFHUTIL_VERSION="${PROJECT_VERSION}")
 
+install(TARGETS rfhutil-qt RUNTIME DESTINATION bin)
+install(FILES rfhutil-qt.desktop DESTINATION share/applications)
+
 if(RFHUTIL_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
