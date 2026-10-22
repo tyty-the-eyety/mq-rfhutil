@@ -343,6 +343,7 @@ namespace rfhqt
 		connect(ops.get(), &Operations::titleChanged, this, [this](const QString & queue) { setWindowTitle(queue); });
 		connect(doc.get(), &AppDocument::stateChanged, this, &MainWindow::applyMenuEnables);
 		connect(doc.get(), &AppDocument::stateChanged, this, &MainWindow::applyTabEnables);
+		connect(connPage, &ConnTab::settingsApplied, mainPage, &MainTab::refreshConnectionTls);
 		connect(doc.get(), &AppDocument::messageChanged, this, &MainWindow::loadHeaderTabs);
 		connect(tabWidget, &QTabWidget::currentChanged, this, &MainWindow::tabChanged);
 		shownTab = tabWidget->currentIndex();

@@ -108,6 +108,10 @@ namespace rfhqt
 		void saveFileDialog();
 		void setConnectionDialog();
 
+		// Update the TLS and heartbeat fields of `connection` from AppSettings when the Conn tab applies
+		// changes. Does not touch the mode, channel, connName, ccdtUrl or password fields.
+		void refreshConnectionTls();
+
 	signals:
 		void exitRequested();		// the Exit button (OnExitButton 1029); the window closes itself
 

@@ -213,6 +213,21 @@ namespace rfhqt
 		return c;
 	}
 
+	void MainTab::refreshConnectionTls()
+	{
+		if (settings == nullptr)
+			return;
+		const rfh::ConnectOptions saved = settings->connection();
+		// Update only the ConnTab-owned fields; leave mode, channel, connName, ccdtUrl,
+		// userId, password and the Set-Conn-Id-owned fields (securityExit, localAddress, etc.) alone.
+		connection.heartbeat     = saved.heartbeat;
+		connection.sslEnabled    = saved.sslEnabled;
+		connection.cipherSpec    = saved.cipherSpec;
+		connection.keyRepository = saved.keyRepository;
+		connection.sslPeerName   = saved.sslPeerName;
+		connection.sslResetCount = saved.sslResetCount;
+	}
+
 	void MainTab::applyConnect(const rfh::ConnectOptions & saved)
 	{
 		connection.wipePassword();
