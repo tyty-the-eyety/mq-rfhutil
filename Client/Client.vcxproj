@@ -375,6 +375,7 @@
     <ClCompile Include="..\core\platform\rfh_trace.cpp" />
     <ClCompile Include="..\core\message\rfh_mqmd_fields.cpp" />
     <ClCompile Include="..\core\message\rfh_id_display.cpp" />
+    <ClCompile Include="..\core\message\rfh_parsed_headers.cpp" />
     <ClCompile Include="..\RFHUtil\ConnSettings.cpp" />
     <ClCompile Include="..\RFHUtil\ConnUser.cpp" />
     <ClCompile Include="..\RFHUtil\Copybook.cpp" />
