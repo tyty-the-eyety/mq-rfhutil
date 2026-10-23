@@ -45,7 +45,8 @@ add_executable(rfhutil_core_tests core/ResultTests.cpp core/MqsubsTests.cpp core
     core/GuardMallocTests.cpp core/DataFormatterTests.cpp
     core/FormatTests.cpp core/FormatFuzzTests.cpp core/StatusTextTests.cpp core/IdDisplayTests.cpp
     core/QueueManagersTests.cpp core/ConnectStringTests.cpp
-    core/ParsedHeadersTests.cpp)
+    core/ParsedHeadersTests.cpp
+    core/CopybookTests.cpp)
 if(NOT MSVC)
     # ResultTests.cpp includes <cmqstrc.h> on purpose; its tables trigger these warnings.
     set_source_files_properties(core/ResultTests.cpp PROPERTIES COMPILE_OPTIONS "-Wno-write-strings;-Wno-unused-function")

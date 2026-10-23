@@ -117,6 +117,7 @@
     <ClCompile Include="..\..\RFHUtil\XMLParse.cpp" />
     <ClCompile Include="..\..\RFHUtil\Names.cpp" />
     <ClCompile Include="..\..\RFHUtil\mqerror.cpp" />
+    <ClCompile Include="..\..\RFHUtil\Copybook.cpp" />
     <ClCompile Include="..\..\core\platform\rfh_platform.cpp" />
     <ClCompile Include="..\..\core\platform\rfh_codepage.cpp" />
     <ClCompile Include="..\..\core\platform\rfh_trace.cpp" />
@@ -137,6 +138,7 @@
     <ClCompile Include="MQErrorTests.cpp" />
     <ClCompile Include="..\core\PlatformTests.cpp" />
     <ClCompile Include="..\core\SharedSourcesTests.cpp" />
+    <ClCompile Include="..\core\CopybookTests.cpp" />
   </ItemGroup>
 
   <!-- Headers -->
