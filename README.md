@@ -257,6 +257,87 @@ build.cmd all        # Build all Win32 projects
 Running the programs may require that you run `setmqenv` to set a suitable environment for the programs to locate the MQ
 libraries.
 
+### Linux Qt6 GUI (rfhutil-qt)
+
+This branch adds a native Linux GUI application built with Qt6 that provides
+the same core functionality as the Windows version.
+
+#### What works
+
+- Connect to a local queue manager (bindings) or a remote one (client mode,
+  including TLS)
+- Put, Get, Browse messages; full MQMD control
+- Display Queue — scan up to 10,000 messages, select one, open it
+- Save Q / Load Q — message files byte-for-byte compatible with the Windows version
+- View and edit RFH2, JMS, USR, CICS, IMS, and DLQ headers on received messages,
+  then re-queue them
+- Data tab with hex, character, COBOL copybook, JSON, and XML views
+- RPM and DEB packages
+
+#### What is not yet implemented
+
+- Authoring RFH2 headers on a **new blank message** — header tabs are enabled
+  only after receiving a message that already carries them
+- Native MQ user properties (UsrPropTab rows are visible but not sent on put)
+
+#### Requirements
+
+| Distro | Packages |
+|--------|----------|
+| Fedora / RHEL | `cmake gcc-c++ qt6-qtbase-devel gtest-devel` |
+| Ubuntu / Debian | `cmake g++ qt6-base-dev libgtest-dev` |
+
+IBM MQ SDK is required for the MQ headers (default `/opt/mqm`). Install the
+`MQSeriesSDK` package from your IBM MQ distribution, or override the path:
+
+```bash
+cmake --preset linux-release -DMQ_HOME=/path/to/mq
+```
+
+Without an installed GoogleTest, add `-DRFHUTIL_FETCH_GTEST=ON`.
+
+#### Build
+
+```bash
+cmake --preset linux-release
+cmake --build --preset linux-release -j$(nproc)
+```
+
+Binary: `build/linux-release/qt/rfhutil-qt`
+
+#### Run
+
+```bash
+# Bindings mode — local queue manager
+build/linux-release/qt/rfhutil-qt
+
+# Client mode — fill in the queue manager name and channel in the Connection tab,
+# or set MQ_CHANNEL before launching:
+MQ_CHANNEL="MYCHANNEL/TCP/hostname(1414)" build/linux-release/qt/rfhutil-qt
+```
+
+> **Note:** The AppImage (`rfhutil-qt-*.AppImage`) crashes on Fedora 44 due to a
+> bundled `libxcb-util` ABI mismatch. Use the binary directly or install the RPM/DEB
+> package instead.
+
+#### Packages
+
+Build a release first (`cmake --preset linux-release && cmake --build --preset linux-release`),
+then:
+
+```bash
+# RPM (Fedora / RHEL / SUSE)
+cpack -G RPM --config build/linux-release/CPackConfig.cmake
+
+# DEB (Ubuntu / Debian)
+cpack -G DEB --config build/linux-release/CPackConfig.cmake
+```
+
+Both packages install the binary to `/usr/bin/rfhutil-qt` and add a desktop
+entry so the app appears in your application launcher.
+
+---
+
 ### Building the portable core on Linux
 CMake is Linux-only for now; on Windows keep using RFHUtil.sln.
 
