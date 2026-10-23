@@ -74,7 +74,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <!-- Test project dir FIRST so our stubs are found on /I search (after source dir) -->
-      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;$(MQ_HOME)\tools\c\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Force-include prelude.h before each TU to block rfhutil.h → DataArea.h → cmqc.h -->
       <ForcedIncludeFiles>prelude.h</ForcedIncludeFiles>
@@ -96,7 +96,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);..\..\RFHUtil;..\..\core\platform;$(MQ_HOME)\tools\c\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_WIN64;_CRT_SECURE_NO_WARNINGS;_CRT_NON_CONFORMING_SWPRINTFS;_WINDOWS;_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <!-- Force-include prelude.h before each TU to block rfhutil.h → DataArea.h → cmqc.h -->
       <ForcedIncludeFiles>prelude.h</ForcedIncludeFiles>

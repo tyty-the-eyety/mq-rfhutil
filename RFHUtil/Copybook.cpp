@@ -2532,8 +2532,12 @@ char * CCopybook::handleElement(char *pic, char *type, int *len)
 			loc++;
 		}
 
-		// get the count of the number of characters
-		length = atoi(pic + 2);
+		// parse length; strtoll detects values that overflow int on any platform
+		{
+			char *endptr;
+			long long bigval = strtoll(pic + 2, &endptr, 10);
+			length = (bigval > INT_MAX || bigval < INT_MIN) ? 0 : (int)bigval;
+		}
 	}
 
 	// Check for DBCS character
