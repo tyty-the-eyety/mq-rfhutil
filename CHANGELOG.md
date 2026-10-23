@@ -40,11 +40,22 @@ Newest updates are at the top of this file
 - A seeded fuzz test runs every view over pseudo-random messages (500 normally,
   3000 under memcheck).
 - Edit scripts in `tools/port/` (`port-parser-fixes.pl`, `port-formatters.pl`,
-  `port-copybook.pl`, `harden-copybook.pl`) make the changes to IBM's files; each
-  checks every edit before writing and refuses a second run.
-- Pending, not in this release yet: making `DataArea` show its views through
-  `DataFormatter` and deleting its own copies. This changes Windows-only files and
-  waits for a Windows build of the portable core.
+  `port-copybook.pl`, `harden-copybook.pl`, `port-mqmdpage.pl`,
+  `port-dataarea-formatters.pl`) make the changes to IBM's files; each checks every
+  edit before writing and refuses a second run.
+- `DataArea` shows its Data tab views through `DataFormatter` and no longer has its
+  own copies of the formatters; about 4,300 lines removed from `DataArea.cpp`.
+  `MQMDPAGE::buildMQMD` and `processMQMD` delegate to `rfh::mqmd_fields::toMqmd` /
+  `fromMqmd` through `getFields` / `setFields` adapters; the put path uses
+  `toPutMqmd` and `applyAfterPut`, and the get path uses `fromGetMqmd`. A big-endian
+  MQMD now keeps its AccountingToken unreversed, as on Linux. Both projects compile
+  `core/message/rfh_mqmd_fields.cpp`.
+- Parsed header structs (`rfh::ParsedHeaders`) and parse / build functions for MQDLH,
+  MQCIH, MQIIH, MQRFH (v1) and MQRFH2 headers (`core/message/rfh_parsed_headers.{h,cpp}`).
+  RFH2 sub-folders: `mcd` and `jms` as structured fields; `usr`, `psc`, `pscr` and
+  other folders as verbatim XML. Handles ASCII, EBCDIC and UCS-2 LE/BE name–value
+  encoding. `parseHeaders` chains DLQ → CICS → IMS → RFH1 → RFH2. Compiled and
+  verified under MSVC (Windows run 5).
 - The Qt6 application `rfhutil-qt` (`qt/`, Fedora 44, Qt 6.11): Main, Data and MQMD tabs with the Windows wording and flows; connect in
   bindings or client mode (a Connection box, MQSERVER-style strings, TLS, security exit, local address), Read Q, Write Q, Browse
   (start, next, previous, end), Close Q, Purge Q, Load Names, Open File, Save File, Clear Data and Clear All, the eight Data tab views with Find,
@@ -61,8 +72,12 @@ Newest updates are at the top of this file
 - Tests: Qt Test executables for each class (`ctest -L qt`, run offscreen), a test that fails the build if `core/` mentions a dialog, an exit call
   or a UI toolkit, a shared fake MQ (`tests/core/fake_mq.h`), memcheck suites for the connect string, the connect security options and `locate`, and
   a golden message file set (`tests/core/golden/`, `tools/golden/`) with its round-trip tests and a script that compares it with Windows output.
-- Pending, not in this release yet: `MQMDPAGE`'s put, get and ID display paths delegating to the core (Plan 3 Task 30), which changes Windows-only
-  files and waits for a Windows build.
+- The Qt6 application gains all eleven header tabs: RFH (v1), PubSub, PSCR, JMS, Usr, Other, CICS, IMS, DLQ, PS (user properties mode) and
+  Conn (connection-level TLS and alternate user). The tabs read and display the parsed headers of a loaded message; editing and saving headers
+  is not yet supported. The TLS settings on the Conn tab refresh the Main tab connection on Apply.
+- CPack packaging for Linux: `cpack -G RPM` produces an RPM for Fedora / RHEL / SUSE; `cpack -G DEB` produces a DEB for Debian / Ubuntu.
+  The binary installs to `/usr/bin/rfhutil-qt`; the desktop entry to `/usr/share/applications/rfhutil-qt.desktop`. RPM auto-requires the Qt6
+  shared libraries from the ELF NEEDED entries; DEB depends on `libqt6widgets6`.
 
 ### Differences from the Windows program (the Qt application)
 Deliberate; the owner decided the first group on 2026-10-17. Listed with the other differences in spec section 9.
@@ -82,8 +97,8 @@ Deliberate; the owner decided the first group on 2026-10-17. Listed with the oth
 - An open unit of work is backed out before the connection closes (a disconnect would commit it).
 - The settings file and the trace file are private to the user (mode 0600), and the trace file is rotated at 10 MiB (Windows never rotates it).
   The trace is switched on with `RFHUTIL_TRACE_FILE` as on Windows; the value `stdout` is not supported.
-- Not ported in this release: Save Q, Load Q, Move Q, Display Q, Save Headers, audit records, the MQ menu's Open items, Ids, Cluster Queues,
-  Theme, Help, automatic reconnect and the header tabs.
+- Not ported in this release: Save Q, Load Q, Move Q, Display Q, Save Headers, editing message headers, the user properties `Yes` mode,
+  audit records, the MQ menu's Open items, Ids, Cluster Queues, Theme, Help and automatic reconnect.
 
 ### Changed
 - `MqSession`'s converted-too-big browse retry re-reads the message under the cursor (`MQGMO_BROWSE_MSG_UNDER_CURSOR`) instead of restarting with
