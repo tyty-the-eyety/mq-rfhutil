@@ -224,7 +224,7 @@ namespace rfhqt
         if (hexDelim && delimLen > 0)
         {
             delimLen >>= 1;
-            HexToAscii(reinterpret_cast<const unsigned char *>(delimRaw.constData()),
+            HexToAscii(const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(delimRaw.constData())),
                        delimRaw.size(),
                        opts.delimiter);
         }
@@ -240,7 +240,7 @@ namespace rfhqt
         if (hexDelim && propLen > 0)
         {
             propLen >>= 1;
-            HexToAscii(reinterpret_cast<const unsigned char *>(propRaw.constData()),
+            HexToAscii(const_cast<unsigned char *>(reinterpret_cast<const unsigned char *>(propRaw.constData())),
                        propRaw.size(),
                        opts.propDelim);
         }
