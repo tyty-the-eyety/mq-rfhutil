@@ -112,6 +112,7 @@ namespace rfhqt
 		// ---- save/load queue messages to/from files (Main tab) --------------------------------------------------------
 		void saveQ(QWidget * parent);	// SaveQ button: shows SaveQDialog, calls rfh::saveQueue (General.cpp:2519)
 		void loadQ(QWidget * parent);	// LoadQ button: shows LoadQDialog, calls rfh::loadQueue (General.cpp:2507)
+		void displayQ(QWidget * parent);	// DisplayQ button: browses all messages, shows list, reads/browses/starts browse on selected (General.cpp:1774)
 
 		// Stops the running job that polls the cancel flag (a waiting get, a purge, a Browse Prev walk).
 		void cancelGet();

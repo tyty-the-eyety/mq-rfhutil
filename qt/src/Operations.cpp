@@ -6,7 +6,11 @@
 
 #include <utility>
 
+#include <array>
+#include <cstring>
+
 #include "AppSettings.h"
+#include "DisplayQDialog.h"
 #include "LoadQDialog.h"
 #include "SaveQDialog.h"
 #include "rfh_format.h"
@@ -1506,6 +1510,181 @@ namespace rfhqt
 			rememberQueue(queue);
 			addStatus(lines);
 			finishFlow(flow);
+		});
+	}
+
+	// ---- Display Q -----------------------------------------------------------------------------------------------
+
+	void Operations::displayQ(QWidget * parent)
+	{
+		const QString flow = QStringLiteral("displayQ");
+		if (!admit(flow, doc.enables().displayQ))
+			return;
+
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::displayQ QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required*"));
+			finishFlow(flow);
+			return;
+		}
+
+		const Env env = capture(true);
+		auto entries = std::make_shared<std::vector<rfhqt::DisplayQEntry>>();
+
+		submitFlow(flow, env, false, [env, entries](rfh::MqSession & s)
+		{
+			JobResult r;
+			if (!checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+				return r;
+
+			rfh::GetOptions g;
+			g.mode = rfh::GetMode::BrowseFirst;
+
+			rfh::Message m;
+			rfh::Result got = s.get(env.queue, m, g);
+
+			constexpr int kMaxDisplay = 10000;
+			while (got.cc != MQCC_FAILED && (int)entries->size() < kMaxDisplay)
+			{
+				rfhqt::DisplayQEntry e;
+				e.mqmd   = m.mqmd;
+				e.msgLen = (int)(m.headers.size() + m.body.size());
+				entries->push_back(std::move(e));
+
+				g.mode = rfh::GetMode::BrowseNext;
+				m = rfh::Message{};
+				got = s.get(env.queue, m, g);
+			}
+
+			addStep(r, "Close", s.closeQueue());
+			return r;
+		}, [this, flow, queue, entries, parent](const JobResult & r)
+		{
+			QStringList scanLines;
+			for (const JobStep & step : r.steps)
+				scanLines += describeStep(step, false);
+
+			rfhqt::DisplayQDialog dlg(queue, *entries, parent);
+			if (dlg.exec() != QDialog::Accepted || dlg.selectedRow() < 0)
+			{
+				addStatus(scanLines);
+				finishFlow(flow);
+				return;
+			}
+
+			const int sel = dlg.selectedRow();
+			const rfhqt::DispQAction action = dlg.selectedAction();
+			std::array<unsigned char, MQ_MSG_ID_LENGTH> msgId = {};
+			std::memcpy(msgId.data(), entries->at(sel).mqmd.MsgId, MQ_MSG_ID_LENGTH);
+
+			addStatus(scanLines);
+			finishFlow(flow);
+
+			const bool isRead        = (action == rfhqt::DispQAction::ReadQ);
+			const bool isBrowse      = (action == rfhqt::DispQAction::BrowseQ);
+			const bool isStartBrowse = (action == rfhqt::DispQAction::StartBrowse);
+			const QString followFlow = isRead        ? QStringLiteral("readQ")
+			                         : isBrowse      ? QStringLiteral("browseQ")
+			                         :                 QStringLiteral("startBrowse");
+			const bool followEnabled = isRead        ? doc.enables().readQ
+			                         : isBrowse      ? doc.enables().browseQ
+			                         :                 doc.enables().startBrowse;
+
+			if (!admit(followFlow, followEnabled))
+				return;
+
+			const Env env2 = capture(true);
+			rfh::GetOptions g = options.get;
+			g.cancel        = controller.cancelFlag();
+			g.waitMs        = 0;
+			g.matchMsgId    = true;
+			g.matchCorrelId = false;
+			g.matchGroupId  = false;
+			std::memcpy(g.msgId, msgId.data(), MQ_MSG_ID_LENGTH);
+			g.alternateUser = doc.shell().alternateUser ? doc.mqmd().userId : std::string();
+			g.mode          = isRead ? rfh::GetMode::Destructive : rfh::GetMode::BrowseFirst;
+
+			submitFlow(followFlow, env2, false,
+				[env2, g, isBrowse, isStartBrowse](rfh::MqSession & s)
+				{
+					JobResult r2;
+					if (checkConnection(s, env2.qm, env2.connectedQm, env2.pendingUnit, env2.connect, r2))
+					{
+						rfh::Message m;
+						const rfh::Result got = s.get(env2.queue, m, g);
+						r2.browsePosition = s.browsePosition();
+						record(s, r2, isStartBrowse ? "StartBr" : "Get", got);
+						if (got.cc != MQCC_FAILED)
+						{
+							r2.message     = std::move(m);
+							r2.hasMessage  = true;
+							r2.hasQueueInfo = true;
+							s.queueInfo(env2.queue, r2.queue);
+							if (isBrowse)
+								record(s, r2, "Close", s.closeQueue());
+						}
+						else if (isStartBrowse && s.isConnected())
+						{
+							leaveBrowse(s, r2);
+						}
+					}
+					return r2;
+				},
+				[this, followFlow, queue, isBrowse, isStartBrowse](const JobResult & r2)
+				{
+					logResolvedName(r2);
+					QStringList lines;
+					if (r2.hasMessage)
+					{
+						const QString source = QStringLiteral("Message Data (%1) from %2").arg(r2.message.body.size()).arg(queue);
+						QStringList warnings;
+						acceptMessage(r2.message, source.toStdString(), warnings);
+						lines += describe(r2);
+						lines += warnings;
+						const QString verb = isStartBrowse ? QStringLiteral("startBrowse")
+						                   : isBrowse      ? QStringLiteral("browse")
+						                   :                  QStringLiteral("read");
+						lines << QStringLiteral("Msg %1 from %2 length=%3%4")
+							.arg(verb, queue)
+							.arg(r2.message.body.size()).arg(headerSuffix(r2.message));
+						if (isStartBrowse)
+						{
+							BrowseState state;
+							state.active   = true;
+							state.position = (r2.browsePosition > 0) ? r2.browsePosition : 1;
+							doc.setBrowse(state);
+							if (doc.hasFile())
+								doc.setFilePath(QString());
+							emit titleChanged(queue);
+							rememberQueue(queue);
+						}
+						else
+						{
+							clearAfterGet(true);
+							if (r2.hasMessage || r2.queueOpen)
+								rememberQueue(queue);
+							emit titleChanged(queue);
+						}
+					}
+					else if (isStartBrowse && reasonOfStep(r2, "StartBr") == MQRC_NO_MSG_AVAILABLE)
+					{
+						lines << QStringLiteral("No messages in %1 queue").arg(queue);
+						lines += noteLines(r2);
+					}
+					else
+					{
+						lines += describe(r2);
+						if (!isStartBrowse)
+						{
+							clearAfterGet(true);
+							emit titleChanged(queue);
+						}
+					}
+					addStatus(lines);
+					finishFlow(followFlow);
+				});
 		});
 	}
 

@@ -36,6 +36,7 @@ add_library(rfhqt STATIC
     src/UsrTab.cpp
     src/IdEdit.h
     src/Operations.cpp
+    src/DisplayQDialog.cpp
     src/LoadQDialog.cpp
     src/SaveQDialog.cpp
     src/ProcessSetup.cpp

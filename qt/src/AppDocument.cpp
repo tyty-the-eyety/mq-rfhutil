@@ -85,9 +85,10 @@ namespace rfhqt
 		e.closeQ = !browsing && in.connected && idle;	// the connection, not the open queue (General.cpp:615)
 		e.loadNames = !browsing && idle;
 		// Display Q, Load Q, Save Q and Move Q follow Load Names in Windows (General.cpp:560-562, 567, 600-602, 607).
-		// Save Q and Load Q are now ported; Display Q and Move Q remain off.
-		e.loadQ = !browsing && idle;
-		e.saveQ = !browsing && idle;
+		// Display Q, Save Q and Load Q are now ported; Move Q remains off.
+		e.displayQ = !browsing && idle;
+		e.loadQ    = !browsing && idle;
+		e.saveQ    = !browsing && idle;
 		e.setConnId = true;								// never changed
 		e.exit = true;									// never changed
 		e.cancel = in.busy && in.cancellable;
