@@ -68,3 +68,5 @@ docs/P1_3_64BIT_IMPLEMENTATION.md
 # Code index (tools/index), never committed
 .index/
 __pycache__/
+*.rpm
+*.deb
