@@ -274,6 +274,29 @@ the same core functionality as the Windows version.
 - Data tab with hex, character, COBOL copybook, JSON, and XML views
 - RPM and DEB packages
 
+#### Installing a pre-built package
+
+Download the RPM or DEB from the
+[Releases page](https://github.com/tyty-the-eyety/mq-rfhutil/releases).
+
+**Fedora / RHEL — install the RPM:**
+```bash
+sudo dnf install qt6-qtbase          # runtime dependency
+sudo dnf install rfhutil-qt-*.rpm
+```
+
+**Ubuntu / Debian — install the DEB:**
+```bash
+sudo apt install libqt6widgets6      # runtime dependency
+sudo dpkg -i rfhutil-qt_*.deb
+```
+
+IBM MQ is **not** included in the package. The app loads MQ at runtime from
+`/opt/mqm` — it will launch and show the UI without MQ installed, but cannot
+connect to a queue manager until MQ is present.
+
+---
+
 #### What is not yet implemented
 
 - Authoring RFH2 headers on a **new blank message** — header tabs are enabled
