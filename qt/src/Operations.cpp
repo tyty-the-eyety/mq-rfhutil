@@ -7,11 +7,14 @@
 #include <utility>
 
 #include "AppSettings.h"
+#include "LoadQDialog.h"
+#include "SaveQDialog.h"
 #include "rfh_format.h"
 #include "rfh_header_chain.h"
 #include "rfh_id_display.h"
 #include "rfh_mqmd_fields.h"
 #include "rfh_platform.h"
+#include "rfh_queue_file.h"
 #include "rfh_status_text.h"
 #include "rfh_trace.h"
 
@@ -1454,5 +1457,106 @@ namespace rfhqt
 			addStatus(QStringList() << QStringLiteral("Another operation is still running"));
 			finishFlow(flow);
 		}
+	}
+
+	// ---- Save Q -------------------------------------------------------------------------------------------------
+
+	void Operations::saveQ(QWidget * parent)
+	{
+		const QString flow = QStringLiteral("saveQ");
+		if (!admit(flow, doc.enables().saveQ))
+			return;
+
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::saveQ QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required*"));
+			finishFlow(flow);
+			return;
+		}
+
+		SaveQDialog dlg(queue, parent);
+		if (dlg.exec() != QDialog::Accepted)
+		{
+			finishFlow(flow);
+			return;
+		}
+
+		rfh::SaveQueueOptions opts = dlg.values();
+		opts.qmName = doc.queueManager().toStdString();
+
+		const Env env = capture(true);
+		submitFlow(flow, env, false, [env, opts](rfh::MqSession & s) mutable
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				rfh::Result res = rfh::saveQueue(s, opts, r.count);
+				addStep(r, "SaveQ", res);
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			QStringList lines;
+			for (const JobStep & step : r.steps)
+				lines += describeStep(step, false);
+			if (r.steps.empty() || r.steps.back().result.ok())
+				lines << QStringLiteral("%1 messages saved from %2").arg(r.count).arg(queue);
+			rememberQueue(queue);
+			addStatus(lines);
+			finishFlow(flow);
+		});
+	}
+
+	// ---- Load Q -------------------------------------------------------------------------------------------------
+
+	void Operations::loadQ(QWidget * parent)
+	{
+		const QString flow = QStringLiteral("loadQ");
+		if (!admit(flow, doc.enables().loadQ))
+			return;
+
+		const QString queue = doc.queueName();
+		trace(QStringLiteral("Entering Operations::loadQ QM=%1 Q=%2").arg(doc.queueManager(), queue));
+		if (queue.isEmpty())
+		{
+			addStatus(QStringList() << QStringLiteral("*Queue Name required*"));
+			finishFlow(flow);
+			return;
+		}
+
+		LoadQDialog dlg(queue, parent);
+		if (dlg.exec() != QDialog::Accepted)
+		{
+			finishFlow(flow);
+			return;
+		}
+
+		rfh::LoadQueueOptions opts = dlg.values();
+		opts.qmName = doc.queueManager().toStdString();
+
+		const Env env = capture(true);
+		submitFlow(flow, env, false, [env, opts](rfh::MqSession & s) mutable
+		{
+			JobResult r;
+			if (checkConnection(s, env.qm, env.connectedQm, env.pendingUnit, env.connect, r))
+			{
+				rfh::Result res = rfh::loadQueue(s, opts, r.count);
+				addStep(r, "LoadQ", res);
+			}
+			return r;
+		}, [this, flow, queue](const JobResult & r)
+		{
+			QStringList lines;
+			for (const JobStep & step : r.steps)
+				lines += describeStep(step, false);
+			if (r.steps.empty() || r.steps.back().result.ok())
+				lines << QStringLiteral("%1 messages loaded to %2").arg(r.count).arg(queue);
+			rememberQueue(queue);
+			emit titleChanged(queue);
+			addStatus(lines);
+			finishFlow(flow);
+		});
 	}
 }

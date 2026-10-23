@@ -345,6 +345,8 @@ namespace rfhqt
 		onClick(ui->endBrowseButton, [this]() { ops.endBrowse(); });
 		onClick(ui->closeQButton, [this]() { ops.closeQ(); });
 		onClick(ui->purgeQButton, [this]() { ops.purgeQ(); });
+		connect(ui->saveQButton, &QAbstractButton::clicked, this, [this]() { ops.saveQ(this); });
+		connect(ui->loadQButton, &QAbstractButton::clicked, this, [this]() { ops.loadQ(this); });
 		onClick(ui->clearDataButton, [this]() { ops.clearData(); });
 		onClick(ui->clearAllButton, [this]() { ops.clearAll(); });
 		onClick(ui->loadNamesButton, [this]() { ops.loadNames(); });
